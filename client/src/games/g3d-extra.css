@@ -1,0 +1,35 @@
+/* CSS riêng của các bản 3D — nằm trong chunk 3D tải lười. */
+.g3d-label.pad {
+  font-size: clamp(20px, 4.6vh, 42px);
+  font-weight: 900;
+  color: #fff;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 16px rgba(0, 0, 0, 0.7);
+}
+.g3d-label.pad.right { color: #3ddc97; }
+.g3d-label.pad.wrong { opacity: 0.4; }
+.g3d-label.lane {
+  font-size: 12px;
+  font-weight: 900;
+  padding: 3px 10px;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  background: rgba(10, 12, 30, 0.72);
+}
+.g3d-stage.clickable { cursor: pointer; }
+.g3d-game > .math-head,
+.g3d-game > .tw-head,
+.g3d-game > .track-standings { flex: none; }
+.g3d-hud .seq-keys { margin: 0; }
+.g3d-hud .seq-round { margin: 0 0 6px; text-align: center; }
+.g3d-hud .seq-done { margin: 0; }
+.g3d-stage .judge,
+.g3d-stage .combo { z-index: 3; pointer-events: none; }
+.g3d-big.go { color: #3ddc97; }
+.g3d-big.fake { color: #ff5c7a; }
+.g3d-big.wait { color: #ffd166; }
+.g3d-big.danger { color: #ff2d55; }
+.g3d-hud .math-status { margin: 0; }
+.g3d-chip.timer { font-size: 18px; min-width: 56px; text-align: center; }
