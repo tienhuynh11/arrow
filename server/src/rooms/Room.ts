@@ -17,10 +17,10 @@ import {
   type ScoreRow,
   type ServerMessage,
   type StandingRow,
-} from '../../../shared/protocol';
-import { GAMES, gameById, gameCatalog, pickMatchGames } from '../games';
-import type { GameContext, GameDefinition } from '../games/types';
-import type { Connection } from '../network/connection';
+} from '../../../shared/protocol.js';
+import { GAMES, gameById, gameCatalog, pickMatchGames } from '../games/index.js';
+import type { GameContext, GameDefinition } from '../games/types.js';
+import type { Connection } from '../network/connection.js';
 
 /** test một mình: `npm run dev:solo` (thêm cờ --solo) hoặc biến môi trường ALLOW_SOLO=1 */
 const ALLOW_SOLO = process.env.ALLOW_SOLO === '1' || process.argv.includes('--solo');

@@ -1,13 +1,13 @@
-import type { GameDefinition } from './types';
-import { rhythmGame } from './rhythm';
-import { reactionGame } from './reaction';
-import { sequenceGame } from './sequence';
-import { raceGame } from './race';
-import { buttonBattleGame } from './buttonBattle';
-import { mathRushGame } from './mathRush';
-import { dodgeGame } from './dodge';
-import { hotPotatoGame } from './hotPotato';
-import { tugWarGame } from './tugWar';
+import type { GameDefinition } from './types.js';
+import { rhythmGame } from './rhythm.js';
+import { reactionGame } from './reaction.js';
+import { sequenceGame } from './sequence.js';
+import { raceGame } from './race.js';
+import { buttonBattleGame } from './buttonBattle.js';
+import { mathRushGame } from './mathRush.js';
+import { dodgeGame } from './dodge.js';
+import { hotPotatoGame } from './hotPotato.js';
+import { tugWarGame } from './tugWar.js';
 
 /** Add a new minigame here and the match loop picks it up automatically. */
 export const GAMES: GameDefinition[] = [

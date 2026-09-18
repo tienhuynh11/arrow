@@ -1,5 +1,5 @@
-import type { GameDefinition, PlayerResult } from './types';
-import type { GameInput } from '../../../shared/protocol';
+import type { GameDefinition, PlayerResult } from './types.js';
+import type { GameInput } from '../../../shared/protocol.js';
 
 export type ObstacleKind = 'ufo' | 'saw' | 'blob' | 'crystal' | 'eye' | 'bomb' | 'star' | 'worm';
 

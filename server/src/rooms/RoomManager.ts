@@ -1,4 +1,4 @@
-import { Room } from './Room';
+import { Room } from './Room.js';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1 to avoid typos
 const IDLE_ROOM_MS = 60 * 60 * 1000;

@@ -1,4 +1,4 @@
-import { NAME_MAX } from '../../../shared/protocol';
+import { NAME_MAX } from '../../../shared/protocol.js';
 
 const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
 

@@ -1,5 +1,5 @@
-import type { GameDefinition, PlayerResult } from './types';
-import type { GameInput } from '../../../shared/protocol';
+import type { GameDefinition, PlayerResult } from './types.js';
+import type { GameInput } from '../../../shared/protocol.js';
 
 interface Config {
   distance: number;

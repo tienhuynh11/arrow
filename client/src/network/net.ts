@@ -9,7 +9,8 @@ type Listener = (msg: ServerMessage) => void;
  * Khi deploy bản build tĩnh mà không có proxy thì đặt VITE_WS_URL để trỏ thẳng.
  */
 const WS_URL =
-  import.meta.env.VITE_WS_URL ?? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+  import.meta.env.VITE_WS_URL ??
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${import.meta.env.BASE_URL}ws`;
 
 /**
  * Thin WebSocket wrapper with clock synchronisation.

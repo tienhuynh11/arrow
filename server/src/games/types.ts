@@ -1,4 +1,4 @@
-import type { ControlHint, GameInput } from '../../../shared/protocol';
+import type { ControlHint, GameInput } from '../../../shared/protocol.js';
 
 export interface GameContext {
   /** ids of players actually competing in this round */

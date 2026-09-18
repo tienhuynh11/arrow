@@ -1,12 +1,12 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
-import { normalizeLook, type ClientMessage, type PlayerLook, type ServerMessage } from '../../../shared/protocol';
-import { gameCatalog } from '../games';
-import { RoomManager } from '../rooms/RoomManager';
-import type { Room } from '../rooms/Room';
-import type { Connection } from './connection';
-import { RateLimiter, sanitizeCode, sanitizeName } from '../validation/input';
+import { normalizeLook, type ClientMessage, type PlayerLook, type ServerMessage } from '../../../shared/protocol.js';
+import { gameCatalog } from '../games/index.js';
+import { RoomManager } from '../rooms/RoomManager.js';
+import type { Room } from '../rooms/Room.js';
+import type { Connection } from './connection.js';
+import { RateLimiter, sanitizeCode, sanitizeName } from '../validation/input.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
 /** generous enough for SPACE spamming, low enough to stop a flood */
