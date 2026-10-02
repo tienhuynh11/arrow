@@ -15,6 +15,7 @@ import { createEngine, type Engine } from './engine';
 import { createCharacterKit, type CharacterKit } from './character';
 import { Effects } from './effects';
 import { initialTier, TIER_LABEL, type Tier } from './quality';
+import { buildStage, STAGES, type StageOptions } from './stage';
 
 export interface LitParams {
   color?: ColorRepresentation;
@@ -40,6 +41,8 @@ export interface SceneOptions {
   sun?: [number, number, number];
   /** nửa cạnh vùng đổ bóng của mặt trời */
   shadowBox?: number;
+  /** trời sáng + đồi + mây kiểu game show (thay cho nền tối). Đèn, sương mù, tone màu theo bảng màu của sân */
+  stage?: StageOptions;
 }
 
 /** Bộ công cụ mỗi cảnh minigame nhận được — mọi thứ lặp lại giữa các game nằm ở đây. */
@@ -80,17 +83,18 @@ export function runScene(
   options: SceneOptions,
   build: (k: SceneKit) => SceneBody,
 ): { dispose(): void } {
-  const engine = createEngine(host, initialTier(), () => hooks.onFail?.());
+  const pal = options.stage ? STAGES[options.stage.name] : null;
+  const engine = createEngine(host, initialTier(), () => hooks.onFail?.(), !!pal);
   const { scene, camera } = engine;
   const low = engine.tier === 'low';
 
-  const bg = options.background ?? '#0b0d1f';
+  const bg = pal?.fog ?? options.background ?? '#0b0d1f';
   scene.background = new Color(bg);
-  const [fogNear, fogFar] = options.fog ?? [28, 70];
+  const [fogNear, fogFar] = options.fog ?? (pal ? [55, 190] : [28, 70]);
   scene.fog = new Fog(bg, fogNear, fogFar);
 
-  scene.add(new HemisphereLight('#c9dcff', '#2a1f3d', 1.1));
-  const sun = new DirectionalLight('#fff1dc', 2.1);
+  scene.add(new HemisphereLight(pal?.hemiSky ?? '#c9dcff', pal?.hemiGround ?? '#2a1f3d', pal?.hemiIntensity ?? 1.1));
+  const sun = new DirectionalLight(pal?.sun ?? '#fff1dc', pal?.sunIntensity ?? 2.1);
   const [sx, sy, sz] = options.sun ?? [7, 16, 9];
   sun.position.set(sx, sy, sz);
   sun.castShadow = !low;
@@ -168,10 +172,12 @@ export function runScene(
   });
   hooks.onQuality?.(TIER_LABEL[engine.tier]);
 
+  const stage = options.stage ? buildStage(scene, options.stage, low) : null;
   const body = build(k);
 
   engine.start((dt, time) => {
     body.frame(dt, time);
+    stage?.update(dt);
     effects.update(dt);
     shakeAmount *= Math.exp(-dt * 6);
   });
@@ -179,6 +185,7 @@ export function runScene(
   return {
     dispose() {
       body.dispose?.();
+      stage?.dispose();
       effects.dispose();
       kit.dispose();
       for (const t of textures) t.dispose();

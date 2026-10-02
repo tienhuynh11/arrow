@@ -1,6 +1,7 @@
 import {
   ACESFilmicToneMapping,
   BasicShadowMap,
+  NeutralToneMapping,
   NoToneMapping,
   PCFSoftShadowMap,
   PerspectiveCamera,
@@ -48,7 +49,7 @@ function disposeMaterial(m: Material) {
  * Lớp 3D dùng chung: renderer, camera, co giãn theo khung, và đo FPS để tự hạ
  * mức đồ hoạ khi máy yếu (tắt bóng đổ, giảm độ phân giải).
  */
-export function createEngine(host: HTMLElement, startTier: Tier, onLost: () => void): Engine {
+export function createEngine(host: HTMLElement, startTier: Tier, onLost: () => void, vivid = false): Engine {
   const renderer = new WebGLRenderer({
     antialias: startTier !== 'low',
     powerPreference: 'high-performance',
@@ -72,7 +73,7 @@ export function createEngine(host: HTMLElement, startTier: Tier, onLost: () => v
     renderer.setPixelRatio(tier === 'high' ? Math.min(dpr, 2) : tier === 'medium' ? Math.min(dpr, 1.5) : 1);
     renderer.shadowMap.enabled = tier !== 'low';
     renderer.shadowMap.type = tier === 'high' ? PCFSoftShadowMap : BasicShadowMap;
-    renderer.toneMapping = tier === 'low' ? NoToneMapping : ACESFilmicToneMapping;
+    renderer.toneMapping = tier === 'low' ? NoToneMapping : vivid ? NeutralToneMapping : ACESFilmicToneMapping;
   };
 
   const resize = () => {

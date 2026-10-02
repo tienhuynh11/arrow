@@ -55,5 +55,5 @@ export default function Button3D({ game, players, meId }: { game: ButtonGameStat
 }
 
 function ButtonHint() {
-  return <p className="hint">Spam SPACE - nút chuyển ĐỎ thì dừng ngay, nhấn lúc đỏ bị trừ 3 điểm</p>;
+  return <p className="hint">Spam SPACE - nút chuyển ĐỎ thì dừng ngay, nhấn lúc đỏ bị trừ 15 lượt và đơ tay</p>;
 }

@@ -1,4 +1,5 @@
 import type { RoomState, StandingRow } from '@shared/protocol';
+import { TILES } from '@shared/board';
 import { actions, useStore } from '../state/store';
 import Character from '../components/Character';
 
@@ -9,6 +10,9 @@ export default function Final({ room, final }: { room: RoomState; final: { stand
   const me = room.players.find((p) => p.id === meId);
   const winner = room.players.find((p) => p.id === final.winnerId);
   const winnerScore = final.standings.find((s) => s.playerId === final.winnerId)?.total ?? 0;
+  const journey = room.mode === 'journey';
+  /** huy hiệu đặc sản (emoji) mỗi người đã thu thập ở chế độ Hành Trình Xuyên Việt */
+  const badgesOf = (id: string) => (room.board?.badges[id] ?? []).map((i) => TILES[i].emoji).join('');
 
   return (
     // màn rộng: nhà vô địch bên trái, bảng điểm bên phải để vừa một màn hình
@@ -22,11 +26,12 @@ export default function Final({ room, final }: { room: RoomState; final: { stand
       <div className="final-hero">
         <div className="trophy">🏆</div>
         {winner && <Character color={winner.color} state="win" size={104} />}
-        <div className="final-label">WINNER</div>
+        <div className="final-label">{journey ? 'NHÀ VĂN HOÁ XUYÊN VIỆT' : 'WINNER'}</div>
         <div className="final-winner" style={{ color: winner?.color }}>
           {winner?.name ?? '-'}
         </div>
-        <div className="final-score">{winnerScore}</div>
+        <div className="final-score">{winnerScore}{journey ? ' điểm' : ''}</div>
+        {journey && winner && badgesOf(winner.id) && <div className="final-badges">{badgesOf(winner.id)}</div>}
       </div>
 
       <div className="final-side">
@@ -39,6 +44,7 @@ export default function Final({ room, final }: { room: RoomState; final: { stand
                 <span className="ft-rank">{MEDAL[s.rank - 1] ?? s.rank}</span>
                 <Character color={p.color} state={s.rank === 1 ? 'win' : 'lose'} size={26} />
                 <span className="ft-name">{p.name}</span>
+                {journey && <span className="ft-badges">{badgesOf(p.id)}</span>}
                 <span className="ft-total">{s.total}</span>
               </div>
             );

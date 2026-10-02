@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { DEFAULT_MAX_PLAYERS, NAME_MAX, PLAYER_COLORS, ROOM_SIZE_OPTIONS } from '@shared/protocol';
+import { DEFAULT_MAX_PLAYERS, NAME_MAX, PLAYER_COLORS, ROOM_SIZE_OPTIONS, type GameMode } from '@shared/protocol';
 import { actions, useStore } from '../state/store';
 import Character from '../components/Character';
 import CharacterEditor from '../components/CharacterEditor';
+import ModePicker, { JourneyInfo } from '../components/ModePicker';
 
 export default function Home() {
   const name = useStore((s) => s.name);
@@ -16,6 +17,7 @@ export default function Home() {
   const [mode, setMode] = useState<'none' | 'join' | 'create'>('none');
   const [maxPlayers, setMaxPlayers] = useState<number>(DEFAULT_MAX_PLAYERS);
   const [picked, setPicked] = useState<string[] | null>(null);
+  const [gameMode, setGameMode] = useState<GameMode>('classic');
 
   const canPlay = name.trim().length > 0 && connected && !joining;
   const selected = picked ?? catalog.map((g) => g.id);
@@ -34,7 +36,7 @@ export default function Home() {
         <h1 className="logo">
           ARROW<span>PARTY</span>
         </h1>
-        <p className="tagline">Tối đa 16 người · 9 minigame · 1 nhà vô địch</p>
+        <p className="tagline">Tối đa 16 người · 10 minigame · 1 nhà vô địch</p>
 
         <label className="field">
           <span>ENTER YOUR NAME</span>
@@ -116,6 +118,11 @@ export default function Home() {
 
       {creating && (
         <div className="home-games setup-block">
+          <div className="setup-label">CHẾ ĐỘ CHƠI</div>
+          <ModePicker value={gameMode} onChange={setGameMode} />
+          {gameMode === 'journey' && <JourneyInfo />}
+          {gameMode === 'classic' && (
+            <>
           <div className="setup-label">
             CHỌN MINIGAME{' '}
             <span className="setup-count">
@@ -148,9 +155,11 @@ export default function Home() {
             </button>
           </div>
           <p className="setup-note">
-            Mỗi trận chơi hết các game đã chọn (~{Math.max(1, Math.round(selected.length * 0.9))} phút), thứ tự ngẫu
+            Mỗi trận chơi hết các game đã chọn (~{Math.max(1, Math.round(selected.length * 1))} phút), thứ tự ngẫu
             nhiên.
           </p>
+            </>
+          )}
         </div>
       )}
 
@@ -159,7 +168,7 @@ export default function Home() {
           <button
             className="btn primary"
             disabled={!canPlay || selected.length === 0}
-            onClick={() => actions.createRoom({ maxPlayers, gameIds: selected })}
+            onClick={() => actions.createRoom({ maxPlayers, gameIds: selected, mode: gameMode })}
           >
             TẠO PHÒNG
           </button>

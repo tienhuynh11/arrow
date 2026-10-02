@@ -8,8 +8,11 @@ import {
   SCOREBOARD_MS,
   EMOTES,
   EMOTE_COOLDOWN_MS,
+  type BoardAward,
+  type BoardState,
   type Emote,
   type GameInput,
+  type GameMode,
   type Phase,
   type PlayerLook,
   type PlayerState,
@@ -17,7 +20,10 @@ import {
   type ScoreRow,
   type ServerMessage,
   type StandingRow,
+  type TileInfo,
 } from '../../../shared/protocol.js';
+import { TILES } from '../../../shared/board.js';
+import { awardTurn, beginTurn, createBoard, pickRoller, rollAll, tileInfo } from './journey.js';
 import { GAMES, gameById, gameCatalog, pickMatchGames } from '../games/index.js';
 import type { GameContext, GameDefinition } from '../games/types.js';
 import type { Connection } from '../network/connection.js';
@@ -36,6 +42,13 @@ const COMEBACK_MULTIPLIER = 1.1;
 const TICK_MS = 50;
 /** ở sảnh chờ, người rớt mạng được giữ chỗ chừng này rồi mới bị xoá */
 const LOBBY_GRACE_MS = 8000;
+/** chế độ journey: bảng điểm lâu hơn một chút để kịp đọc Điểm Văn Hoá + huy hiệu */
+const JOURNEY_SCOREBOARD_MS = 6000;
+
+/** FORCE_GAMES=rhythm,race ghim danh sách game khi đang phát triển một minigame */
+function forcedGames(): string[] {
+  return (process.env.FORCE_GAMES?.split(',').map((s) => s.trim()) ?? []).filter((s) => gameById(s));
+}
 
 export interface Player {
   id: string;
@@ -74,6 +87,12 @@ export class Room {
   /** minigame host chọn cho phòng; rỗng = chơi tất cả */
   selectedGameIds: string[] = gameCatalog().map((g) => g.id);
   round = 0;
+  /** classic: lần lượt các minigame đã chọn · journey: board game đi qua các tỉnh */
+  mode: GameMode = 'classic';
+  /** trạng thái bàn cờ; null ngoài chế độ journey */
+  private board: BoardState | null = null;
+  /** ô tỉnh của minigame đang chơi (journey) */
+  private tile: TileInfo | null = null;
   private active: ActiveRound | null = null;
   // tin gần nhất của từng giai đoạn, để gửi lại cho người vào lại giữa trận
   private lastStart: ServerMessage | null = null;
@@ -116,7 +135,7 @@ export class Room {
    * Host đặt sức chứa và danh sách minigame. Chỉ đổi được khi đang ở sảnh chờ,
    * và không hạ sức chứa xuống dưới số người đang có trong phòng.
    */
-  setSettings(playerId: string, maxPlayers?: number, gameIds?: string[]): string | null {
+  setSettings(playerId: string, maxPlayers?: number, gameIds?: string[], mode?: GameMode): string | null {
     if (playerId !== this.hostId) return 'Chỉ host mới đổi được cài đặt';
     if (this.phase !== 'lobby') return 'Không đổi được khi đang chơi';
 
@@ -131,6 +150,8 @@ export class Room {
       const unique = [...new Set(valid)];
       if (unique.length > 0) this.selectedGameIds = unique;
     }
+
+    if (mode === 'classic' || mode === 'journey') this.mode = mode;
 
     this.broadcastState();
     return null;
@@ -237,11 +258,13 @@ export class Room {
       players,
       hostId: this.hostId,
       round: this.round,
-      totalRounds: this.gameIds.length,
+      totalRounds: this.board ? this.board.totalTurns : this.gameIds.length,
       gameIds: this.gameIds.slice(0, Math.max(this.round, 0)),
       maxPlayers: this.maxPlayers,
       selectedGameIds: this.selectedGameIds,
       minPlayers: MIN_TO_START,
+      mode: this.mode,
+      board: this.board,
     };
   }
 
@@ -273,19 +296,90 @@ export class Room {
       p.ready = false;
       if (p.spectator && p.connected) p.spectator = false;
     }
-    // FORCE_GAMES=rhythm,race pins the rotation - handy while developing a minigame
-    const forced = process.env.FORCE_GAMES?.split(',').map((s) => s.trim()).filter((s) => gameById(s));
-    this.gameIds = forced?.length ? forced : pickMatchGames(count, this.selectedGameIds);
     this.round = 0;
+    this.tile = null;
+
+    if (this.mode === 'journey') {
+      // bàn cờ: mỗi lượt một ô tỉnh quyết định minigame, nên không cần xáo danh sách game trước
+      this.gameIds = [];
+      this.board = createBoard(this.activePlayers.map((p) => p.id));
+      this.startTurn();
+      return null;
+    }
+
+    this.board = null;
+    const forced = forcedGames();
+    this.gameIds = forced.length ? forced : pickMatchGames(count, this.selectedGameIds);
     this.nextRound();
     return null;
+  }
+
+  /* ------------------------------ journey ------------------------------ */
+
+  /** Mở lượt mới: chọn chủ xúc xắc rồi chờ họ tung. */
+  private startTurn() {
+    const board = this.board;
+    if (!board) return;
+    const connected = this.activePlayers
+      .filter((p) => p.connected)
+      .sort((a, b) => a.slot - b.slot)
+      .map((p) => p.id);
+    beginTurn(board, pickRoller(board.turn + 1, connected), Date.now());
+    this.round = board.turn;
+    this.phase = 'board';
+    this.lastStart = this.lastScore = null;
+    this.broadcastState();
+  }
+
+  /** Chủ xúc xắc bấm tung (hoặc server tự tung khi hết giờ / họ rớt mạng). */
+  rollDice(playerId: string): string | null {
+    const board = this.board;
+    if (this.phase !== 'board' || !board || board.stage !== 'roll') return 'Chưa tới lúc tung xúc xắc';
+    if (playerId !== board.rollerId) return 'Chưa tới lượt bạn tung xúc xắc';
+    this.doRoll();
+    return null;
+  }
+
+  private doRoll() {
+    const board = this.board;
+    if (!board) return;
+    rollAll(board, Date.now());
+    this.broadcastState();
+  }
+
+  /** Hết hoạt hình di chuyển: vào minigame của ô tỉnh. */
+  private launchTileGame() {
+    const board = this.board;
+    if (!board) return;
+    const tile = TILES[board.tileIndex];
+    const count = this.activePlayers.length;
+
+    // game không hợp số người (vd. KÉO CO cần từ 2 người) thì thay bằng BẤM NHANH TAY nhưng vẫn giữ chủ đề tỉnh
+    let gameId = forcedGames()[0] ?? tile.gameId;
+    const def = gameById(gameId);
+    if (!def || count < def.minPlayers || count > def.maxPlayers) gameId = 'button';
+
+    this.tile = tileInfo(board.tileIndex);
+    this.gameIds.push(gameId);
+    this.startRound(gameId, tile.intro);
+  }
+
+  /** Sau bảng điểm: hết lượt cuối thì kết thúc, không thì sang lượt kế. */
+  private afterJourneyScoreboard() {
+    const board = this.board;
+    if (!board || board.turn >= board.totalTurns) return this.endMatch();
+    this.startTurn();
   }
 
   private nextRound() {
     this.round += 1;
     if (this.round > this.gameIds.length) return this.endMatch();
+    this.startRound(this.gameIds[this.round - 1]);
+  }
 
-    const def = gameById(this.gameIds[this.round - 1]) ?? GAMES[0];
+  /** `tileIntro` chỉ có ở chế độ journey: lời dẫn theo tỉnh ghép vào trước luật chơi gốc. */
+  private startRound(gameId: string, tileIntro?: string) {
+    const def = gameById(gameId) ?? GAMES[0];
     const playerIds = this.activePlayers.map((p) => p.id);
     const startAt = Date.now() + COUNTDOWN_MS;
     const endAt = startAt + def.duration;
@@ -301,7 +395,8 @@ export class Room {
 
     const config = def.createConfig(ctx);
     const state = def.createState(ctx, config);
-    const comebackPlayerId = this.pickComebackPlayer();
+    // journey tính điểm theo ô tỉnh nên không có người được cộng bù
+    const comebackPlayerId = this.board ? null : this.pickComebackPlayer();
 
     this.active = { def, config, state, ctx, startAt, endAt, started: false, comebackPlayerId };
     this.phase = 'countdown';
@@ -310,15 +405,16 @@ export class Room {
     this.lastStart = {
       t: 'game:start',
       gameId: def.id,
-      name: def.name,
-      instructions: def.instructions,
+      name: this.tile ? `${this.tile.emoji} ${this.tile.title}` : def.name,
+      instructions: tileIntro ? `${tileIntro} ${def.instructions}` : def.instructions,
       controls: def.controls,
       config,
       startAt,
       endAt,
       round: this.round,
-      totalRounds: this.gameIds.length,
+      totalRounds: this.board ? this.board.totalTurns : this.gameIds.length,
       comebackPlayerId,
+      ...(this.tile ? { tile: this.tile } : {}),
     };
     this.lastScore = null;
     this.broadcast(this.lastStart);
@@ -367,8 +463,21 @@ export class Room {
     }
 
     if (this.phase === 'scoreboard' && now >= this.phaseDeadline) {
-      this.nextRound();
+      if (this.board) this.afterJourneyScoreboard();
+      else this.nextRound();
       return;
+    }
+
+    if (this.phase === 'board' && this.board) {
+      const board = this.board;
+      if (board.stage === 'roll') {
+        // hết giờ, hoặc chủ xúc xắc đã rớt mạng: server tung giúp để cả phòng không phải chờ
+        const roller = this.players.get(board.rollerId);
+        if (now >= board.deadline || !roller || !roller.connected) this.doRoll();
+      } else if (now >= board.deadline) {
+        this.launchTileGame();
+        return;
+      }
     }
 
     // sảnh chờ: xoá hẳn người rớt mạng quá lâu (trong trận thì chuyển sang khán giả ở dưới)
@@ -404,14 +513,20 @@ export class Room {
 
     const maxRaw = Math.max(...entries.map((e) => e.raw), 0);
     const rows: ScoreRow[] = [];
+    // journey: điểm tính riêng (Điểm Văn Hoá theo hạng + ô tỉnh) sau khi đã có hạng của mọi người
+    const journeyRanks: { playerId: string; rank: number }[] = [];
 
     entries.forEach((e, i) => {
       // ties share a rank
       let rank = i + 1;
       if (i > 0 && e.raw === entries[i - 1].raw) rank = rows[i - 1].rank;
 
+      journeyRanks.push({ playerId: e.id, rank });
+
       let points: number;
-      if (e.raw < 0) {
+      if (this.board) {
+        points = 0; // điền sau bằng awardTurn
+      } else if (e.raw < 0) {
         points = -30; // false start / penalty
       } else {
         const base = rankPoints(rank, entries.length);
@@ -421,13 +536,24 @@ export class Room {
       if (e.id === a.comebackPlayerId && points > 0) points = Math.round(points * COMEBACK_MULTIPLIER);
 
       const player = this.players.get(e.id);
-      if (player) player.total = Math.max(0, player.total + points);
+      if (player && !this.board) player.total = Math.max(0, player.total + points);
 
       rows.push({ playerId: e.id, rank, raw: e.raw, points, detail: e.detail });
     });
 
+    let boardInfo: { tileIndex: number; awards: Record<string, BoardAward> } | undefined;
+    if (this.board) {
+      const awards = awardTurn(this.board, journeyRanks);
+      for (const row of rows) {
+        row.points = awards[row.playerId]?.points ?? 0;
+        const player = this.players.get(row.playerId);
+        if (player) player.total += row.points;
+      }
+      boardInfo = { tileIndex: this.board.tileIndex, awards };
+    }
+
     this.phase = 'scoreboard';
-    this.phaseDeadline = Date.now() + SCOREBOARD_MS;
+    this.phaseDeadline = Date.now() + (this.board ? JOURNEY_SCOREBOARD_MS : SCOREBOARD_MS);
     this.active = null;
 
     this.lastScore = {
@@ -436,6 +562,7 @@ export class Room {
       rows,
       standings: this.standings(),
       nextAt: this.phaseDeadline,
+      ...(boardInfo ? { board: boardInfo } : {}),
     };
     this.broadcast(this.lastScore);
     this.broadcastState();
@@ -478,6 +605,8 @@ export class Room {
     this.phase = 'lobby';
     this.round = 0;
     this.gameIds = [];
+    this.board = null;
+    this.tile = null;
     for (const p of this.players.values()) {
       p.total = 0;
       p.ready = false;

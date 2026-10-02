@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { ControlHint } from '@shared/protocol';
+import { COUNTDOWN_MS, type ControlHint } from '@shared/protocol';
 import { sfx } from '../utils/sound';
 import { useServerClock } from '../utils/hooks';
 
@@ -67,7 +67,7 @@ export default function Countdown({
         <div className="ht-wait">
           Bắt đầu sau <b>{n}</b> giây…
           <div className="ht-bar">
-            <div className="ht-bar-fill" style={{ width: `${(1 - remain / 10_000) * 100}%` }} />
+            <div className="ht-bar-fill" style={{ width: `${(1 - remain / COUNTDOWN_MS) * 100}%` }} />
           </div>
         </div>
       ) : (

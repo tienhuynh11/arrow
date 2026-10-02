@@ -1,86 +1,137 @@
 import type { GameDefinition, PlayerResult } from './types.js';
 import type { GameInput } from '../../../shared/protocol.js';
+import { stepBody, type ArenaBox, type ArenaCfg } from '../../../shared/bombArena.js';
 
-interface Pillar {
-  x: number;
-  y: number;
-  r: number;
-}
-
-interface Config {
-  w: number;
-  h: number;
+/**
+ * Đuổi bắt bom: vài người ôm bom đang cháy ngòi và phải đuổi theo CHẠM người khác để chuyền bom đi.
+ * Hết ngòi, ai đang ôm bom thì nổ và bị loại; vòng sau bom gắn cho người khác (ngòi ngắn dần) cho tới khi còn một người.
+ * Sân rộng có thùng, bục và cột: nhảy (SPACE) lên bục để né; người ôm bom chạy nhanh hơn một chút.
+ */
+interface Config extends ArenaCfg {
   speed: number;
   /** người ôm bom chạy nhanh hơn một chút để còn đuổi kịp */
   carrierBoost: number;
   tagRadius: number;
-  playerRadius: number;
-  pillars: Pillar[];
-  lives: number;
   endsAt: number;
+  spawns: Record<string, [number, number]>;
 }
 
 interface PState {
   x: number;
   y: number;
+  z: number;
+  vz: number;
   dx: number;
   dy: number;
   moveAt: number;
-  lives: number;
+  /** lúc bấm nhảy gần nhất; còn hiệu lực một lúc để bấm hơi sớm vẫn nhảy */
+  jumpAt: number;
   tags: number;
-  blasts: number;
   /** vừa chuyền/nhận bom xong thì miễn nhiễm một lúc, tránh chạm qua chạm lại */
   safeUntil: number;
+  /** người vừa chuyền bom cho mình: tạm thời không được tống ngược lại */
+  backId: string;
+  backUntil: number;
   outAt: number | null;
+  outRound: number;
 }
 
 interface State {
   players: Record<string, PState>;
   order: string[];
-  holder: string;
+  holders: string[];
   fuseEnd: number;
+  fuseLen: number;
   round: number;
+  lastBlast: number;
   lastTick: number;
   lastBroadcast: number;
 }
 
-const W = 200;
-const H = 128;
-const SPEED = 48;
-const CARRIER_BOOST = 1.16;
+const W = 320;
+const H = 210;
+const SPEED = 50;
+const CARRIER_BOOST = 1.14;
 const TAG_RADIUS = 11;
-const PLAYER_R = 6;
-const LIVES = 3;
-const TAG_IMMUNITY = 850;
+const TAG_DZ = 6.5;
+const PLAYER_R = 5;
+const TAG_IMMUNITY = 900;
 const HOLD_TIMEOUT = 900;
-const DURATION = 52_000;
+const JUMP_BUFFER = 150;
+const BACK_BLOCK = 2600;
+const BLAST_GRACE = 1700;
+const DURATION = 95_000;
 
-const fuseFor = (round: number) => 7000 - Math.min(3300, round * 380) + Math.random() * 1400;
+/** ngòi ngắn dần theo vòng: 14 giây → 7 giây */
+const fuseFor = (round: number) => Math.max(7000, 14_000 - round * 1500);
+/** luôn đúng một quả bom */
+const bombsFor = () => 1;
+
+/** bố cục đối xứng trái-phải: bục sân khấu giữa sân, các cụm thùng/bục để leo, tường thấp để nhảy qua, cột cao để núp */
+function makeBoxes(): ArenaBox[] {
+  const half: ArenaBox[] = [
+    { x: 70, y: 50, w: 22, d: 22, h: 6, kind: 'crate' },
+    { x: 92, y: 50, w: 22, d: 22, h: 12, kind: 'block' },
+    { x: 60, y: 150, w: 20, d: 20, h: 6, kind: 'crate' },
+    { x: 60, y: 172, w: 20, d: 20, h: 6, kind: 'crate' },
+    { x: 112, y: 150, w: 8, d: 50, h: 6, kind: 'wall' },
+    { x: 106, y: 96, w: 14, d: 14, h: 24, kind: 'pillar' },
+    { x: 36, y: 104, w: 16, d: 16, h: 6, kind: 'crate' },
+    { x: 132, y: 28, w: 18, d: 14, h: 6, kind: 'crate' },
+    { x: 140, y: 184, w: 18, d: 14, h: 12, kind: 'block' },
+  ];
+  const out: ArenaBox[] = [{ x: W / 2, y: H / 2, w: 60, d: 44, h: 6, kind: 'stage' }, { x: W / 2, y: H / 2, w: 28, d: 20, h: 12, kind: 'block' }];
+  for (const b of half) {
+    out.push(b, { ...b, x: W - b.x });
+  }
+  return out;
+}
+
+function freeSpot(boxes: ArenaBox[], x: number, y: number): boolean {
+  if (x < PLAYER_R + 4 || x > W - PLAYER_R - 4 || y < PLAYER_R + 4 || y > H - PLAYER_R - 4) return false;
+  for (const b of boxes) {
+    const nx = Math.max(b.x - b.w / 2, Math.min(b.x + b.w / 2, x));
+    const ny = Math.max(b.y - b.d / 2, Math.min(b.y + b.d / 2, y));
+    if (Math.hypot(nx - x, ny - y) < PLAYER_R + 4) return false;
+  }
+  return true;
+}
 
 export const hotPotatoGame: GameDefinition<Config, State> = {
   id: 'bomb',
   name: 'ĐUỔI BẮT BOM',
   instructions:
-    'Cả phòng chạy tự do trong một đấu trường. Một người bị gắn quả bom đang cháy ngòi - ' +
-    'người đó phải ĐUỔI THEO và CHẠM vào người khác để tống quả bom sang cho họ, ' +
-    'còn những người kia phải chạy trốn! Người ôm bom chạy nhanh hơn một chút nên trốn mãi không được đâu. ' +
-    'Vừa chuyền xong thì cả hai miễn nhiễm gần 1 giây, không chạm lại ngay được. ' +
-    'Khi ngòi cháy hết, ai đang ôm bom thì NỔ và mất 1 mạng (mỗi người 3 mạng), ' +
-    'rồi bom gắn cho người khác với ngòi ngắn hơn. Trong sân có mấy cột đá để né và cắt đuôi. ' +
-    'Hết mạng là bị loại - còn nhiều mạng nhất thì thắng!',
-  controls: [{ keys: ['←', '↑', '→', '↓'], desc: 'Giữ để chạy mọi hướng trong đấu trường' }],
+    'Người ôm BOM phải đuổi và CHẠM người khác để chuyền bom đi. Hết giờ, ai đang ôm bom thì NỔ và bị loại. ' +
+    'Nhấn SPACE để nhảy lên thùng, bục mà né. Người sống sót cuối cùng thắng.',
+  controls: [
+    { keys: ['←', '↑', '→', '↓'], desc: 'Giữ để chạy mọi hướng' },
+    { keys: ['SPACE'], desc: 'Nhảy lên thùng, bục · nhảy qua tường thấp' },
+  ],
   duration: DURATION + 2500,
   minPlayers: 2,
   maxPlayers: 16,
 
-  createConfig() {
-    const pillars: Pillar[] = [
-      { x: W * 0.28, y: H * 0.34, r: 13 },
-      { x: W * 0.72, y: H * 0.34, r: 13 },
-      { x: W * 0.5, y: H * 0.68, r: 16 },
-      { x: W * 0.14, y: H * 0.78, r: 10 },
-      { x: W * 0.86, y: H * 0.78, r: 10 },
-    ];
+  createConfig(ctx) {
+    const boxes = makeBoxes();
+    const n = ctx.playerIds.length;
+    const spawns: Record<string, [number, number]> = {};
+    const ids = [...ctx.playerIds];
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    // xếp đều trên một vòng elip; vướng khối thì thu/phóng vòng cho tới khi trống chỗ
+    ids.forEach((id, i) => {
+      const a = (i / n) * Math.PI * 2 + 0.2;
+      for (const f of [1, 0.9, 1.1, 0.8, 1.2, 0.7, 0.6, 0.5]) {
+        const x = W / 2 + Math.cos(a) * W * 0.36 * f;
+        const y = H / 2 + Math.sin(a) * H * 0.36 * f;
+        if (freeSpot(boxes, x, y) || f === 0.5) {
+          spawns[id] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+          break;
+        }
+      }
+    });
     return {
       w: W,
       h: H,
@@ -88,52 +139,48 @@ export const hotPotatoGame: GameDefinition<Config, State> = {
       carrierBoost: CARRIER_BOOST,
       tagRadius: TAG_RADIUS,
       playerRadius: PLAYER_R,
-      pillars,
-      lives: LIVES,
+      boxes,
       endsAt: DURATION,
+      spawns,
     };
   },
 
-  createState(ctx) {
+  createState(ctx, config) {
     const players: Record<string, PState> = {};
-    const n = ctx.playerIds.length;
-    ctx.playerIds.forEach((id, i) => {
-      // xếp đều trên một vòng tròn để không ai bị dồn vào góc
-      const a = (i / n) * Math.PI * 2;
-      players[id] = {
-        x: W / 2 + Math.cos(a) * W * 0.32,
-        y: H / 2 + Math.sin(a) * H * 0.3,
-        dx: 0,
-        dy: 0,
-        moveAt: 0,
-        lives: LIVES,
-        tags: 0,
-        blasts: 0,
-        safeUntil: 0,
-        outAt: null,
-      };
-    });
+    for (const id of ctx.playerIds) {
+      const [x, y] = config.spawns[id];
+      players[id] = { x, y, z: 0, vz: 0, dx: 0, dy: 0, moveAt: 0, jumpAt: 0, tags: 0, safeUntil: 0, backId: '', backUntil: 0, outAt: null, outRound: 0 };
+    }
     const order = [...ctx.playerIds];
-    const holder = order[Math.floor(Math.random() * order.length)];
+    const pool = [...order];
+    const holders: string[] = [];
+    for (let i = bombsFor(); i > 0; i--) holders.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    const fuseLen = fuseFor(0);
     return {
       players,
       order,
-      holder,
-      fuseEnd: ctx.startAt + fuseFor(0),
+      holders,
+      fuseEnd: ctx.startAt + fuseLen,
+      fuseLen,
       round: 0,
+      lastBlast: 0,
       lastTick: ctx.startAt,
       lastBroadcast: 0,
     };
   },
 
   onStart(ctx, state) {
-    ctx.broadcast({ type: 'bomb', holder: state.holder, fuseEnd: state.fuseEnd, round: 0 });
+    ctx.broadcast({ type: 'bomb', holders: state.holders, fuseEnd: state.fuseEnd, fuseLen: state.fuseLen, round: 0 });
   },
 
   handleInput(ctx, state, _config, playerId, input: GameInput) {
-    if (input.type !== 'moveXY') return;
     const p = state.players[playerId];
     if (!p || p.outAt !== null) return;
+    if (input.type === 'jump') {
+      if (ctx.now() >= ctx.startAt) p.jumpAt = ctx.now();
+      return;
+    }
+    if (input.type !== 'moveXY') return;
     // chỉ nhận -1 / 0 / 1, tự chuẩn hoá để không ai đi chéo nhanh hơn
     p.dx = Math.max(-1, Math.min(1, Math.round(Number(input.dx) || 0)));
     p.dy = Math.max(-1, Math.min(1, Math.round(Number(input.dy) || 0)));
@@ -142,10 +189,11 @@ export const hotPotatoGame: GameDefinition<Config, State> = {
 
   update(ctx, state, config) {
     const now = ctx.now();
+    const rel = now - ctx.startAt;
     const dt = Math.min(now - state.lastTick, 200) / 1000;
     state.lastTick = now;
 
-    if (dt > 0) {
+    if (dt > 0 && now >= ctx.startAt) {
       for (const id of ctx.playerIds) {
         const p = state.players[id];
         if (p.outAt !== null) continue;
@@ -153,110 +201,103 @@ export const hotPotatoGame: GameDefinition<Config, State> = {
           p.dx = 0;
           p.dy = 0;
         }
-        if (p.dx === 0 && p.dy === 0) continue;
-
-        const len = Math.hypot(p.dx, p.dy) || 1;
-        const sp = config.speed * (id === state.holder ? config.carrierBoost : 1);
-        p.x += (p.dx / len) * sp * dt;
-        p.y += (p.dy / len) * sp * dt;
-
-        // giữ trong sân
-        p.x = Math.max(config.playerRadius, Math.min(config.w - config.playerRadius, p.x));
-        p.y = Math.max(config.playerRadius, Math.min(config.h - config.playerRadius, p.y));
-
-        // đẩy ra khỏi cột đá
-        for (const c of config.pillars) {
-          const ddx = p.x - c.x;
-          const ddy = p.y - c.y;
-          const d = Math.hypot(ddx, ddy);
-          const min = c.r + config.playerRadius;
-          if (d < min && d > 0.001) {
-            p.x = c.x + (ddx / d) * min;
-            p.y = c.y + (ddy / d) * min;
-          }
-        }
+        const sp = config.speed * (state.holders.includes(id) ? config.carrierBoost : 1);
+        stepBody(config, p, p.dx, p.dy, sp, now - p.jumpAt < JUMP_BUFFER, dt);
+        if (p.vz > 0) p.jumpAt = 0;
       }
     }
 
-    // người ôm bom chạm được ai thì tống bom sang người đó
-    const holder = state.players[state.holder];
-    if (holder && holder.outAt === null && now >= holder.safeUntil) {
+    // người ôm bom chạm được ai (cùng độ cao) thì tống bom sang người đó
+    for (const hid of [...state.holders]) {
+      const h = state.players[hid];
+      if (!h || h.outAt !== null || now < h.safeUntil) continue;
       for (const id of ctx.playerIds) {
-        if (id === state.holder) continue;
+        if (id === hid || state.holders.includes(id)) continue;
         const t = state.players[id];
         if (t.outAt !== null || now < t.safeUntil) continue;
-        if (Math.hypot(holder.x - t.x, holder.y - t.y) <= config.tagRadius) {
-          holder.tags += 1;
-          holder.safeUntil = now + TAG_IMMUNITY;
+        if (h.backId === id && now < h.backUntil) continue;
+        if (Math.hypot(h.x - t.x, h.y - t.y) <= config.tagRadius && Math.abs(h.z - t.z) <= TAG_DZ) {
+          h.tags += 1;
+          h.safeUntil = now + TAG_IMMUNITY;
           t.safeUntil = now + TAG_IMMUNITY;
-          const from = state.holder;
-          state.holder = id;
-          ctx.broadcast({ type: 'tag', from, to: id, fuseEnd: state.fuseEnd });
+          t.backId = hid;
+          t.backUntil = now + BACK_BLOCK;
+          state.holders[state.holders.indexOf(hid)] = id;
+          ctx.broadcast({ type: 'tag', from: hid, to: id });
           break;
         }
       }
     }
 
     if (now >= state.fuseEnd) {
-      const victim = state.players[state.holder];
-      if (victim) {
-        victim.lives -= 1;
-        victim.blasts += 1;
-        victim.safeUntil = now + TAG_IMMUNITY;
-        if (victim.lives <= 0) victim.outAt = now;
+      for (const hid of state.holders) {
+        const v = state.players[hid];
+        v.outAt = now;
+        v.outRound = state.round + 1;
+        v.dx = v.dy = 0;
+        ctx.broadcast({ type: 'blast', playerId: hid, at: rel });
       }
-      ctx.broadcast({ type: 'blast', playerId: state.holder, lives: Math.max(0, victim?.lives ?? 0) });
-
+      state.lastBlast = now;
       const alive = state.order.filter((id) => state.players[id].outAt === null);
+      state.holders = [];
       if (alive.length <= 1) {
         state.fuseEnd = Number.POSITIVE_INFINITY;
       } else {
         state.round += 1;
-        state.holder = alive[Math.floor(Math.random() * alive.length)];
-        state.players[state.holder].safeUntil = now + TAG_IMMUNITY;
-        state.fuseEnd = now + fuseFor(state.round);
-        ctx.broadcast({ type: 'bomb', holder: state.holder, fuseEnd: state.fuseEnd, round: state.round });
+        const pool = [...alive];
+        for (let i = bombsFor(); i > 0; i--) state.holders.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+        for (const hid of state.holders) state.players[hid].safeUntil = now + TAG_IMMUNITY;
+        state.fuseLen = fuseFor(state.round);
+        state.fuseEnd = now + state.fuseLen + 1200;
+        ctx.broadcast({ type: 'bomb', holders: state.holders, fuseEnd: state.fuseEnd, fuseLen: state.fuseLen + 1200, round: state.round });
       }
     }
 
     if (now - state.lastBroadcast < 60) return;
     state.lastBroadcast = now;
-    const pos: Record<string, { x: number; y: number; safe: boolean; out: boolean }> = {};
+    const pos: Record<string, { x: number; y: number; z: number; safe: boolean; out: boolean }> = {};
     for (const id of ctx.playerIds) {
       const p = state.players[id];
       pos[id] = {
         x: Math.round(p.x * 10) / 10,
         y: Math.round(p.y * 10) / 10,
+        z: Math.round(p.z * 10) / 10,
         safe: now < p.safeUntil,
         out: p.outAt !== null,
       };
     }
-    // kèm fuseEnd để người vừa kết nối lại giữa ván vẫn thấy được ngòi nổ
+    // kèm danh sách người ôm bom + ngòi nổ để người vừa kết nối lại giữa ván vẫn thấy đủ
     ctx.broadcast({
       type: 'pos',
       positions: pos,
-      holder: state.holder,
+      holders: state.holders,
+      round: state.round,
       fuseEnd: Number.isFinite(state.fuseEnd) ? state.fuseEnd : null,
+      fuseLen: state.fuseLen + (state.round > 0 ? 1200 : 0),
     });
   },
 
   isFinished(ctx, state, config) {
-    if (ctx.now() - ctx.startAt >= config.endsAt) return true;
-    return state.order.filter((id) => state.players[id].outAt === null).length <= 1;
+    const now = ctx.now();
+    if (now - ctx.startAt >= config.endsAt) return true;
+    const alive = state.order.filter((id) => state.players[id].outAt === null).length;
+    // chờ vụ nổ cuối diễn xong rồi mới chốt kết quả
+    return alive <= 1 && state.lastBlast > 0 && now - state.lastBlast >= BLAST_GRACE;
   },
 
   calculateScore(ctx, state) {
+    const alive = ctx.playerIds.filter((id) => state.players[id].outAt === null).length;
     const out: Record<string, PlayerResult> = {};
     for (const id of ctx.playerIds) {
       const p = state.players[id];
-      const raw = Math.max(0, p.lives) * 1000 + p.tags * 25;
-      out[id] = {
-        raw,
-        detail:
-          p.outAt !== null
-            ? `nổ ${p.blasts} lần · bị loại`
-            : `còn ${p.lives} ❤ · nổ ${p.blasts} · chuyền ${p.tags}`,
-      };
+      if (p.outAt !== null) {
+        out[id] = { raw: Math.max(0, p.outAt - ctx.startAt) + p.tags, detail: `nổ ở vòng ${p.outRound} · chuyền ${p.tags}` };
+      } else {
+        out[id] = {
+          raw: 1_000_000 + p.tags,
+          detail: alive === 1 ? `🏆 sống sót cuối cùng · chuyền ${p.tags}` : `sống sót đến hết giờ · chuyền ${p.tags}`,
+        };
+      }
     }
     return out;
   },

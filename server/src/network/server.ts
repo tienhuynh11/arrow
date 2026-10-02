@@ -90,7 +90,7 @@ function handle(session: Session, msg: ClientMessage, rooms: RoomManager, fail: 
       const room = rooms.create();
       const playerId = joinRoom(session, room, sanitizeName(msg.name), normalizeLook(msg.look));
       // người tạo phòng là host nên áp được cài đặt ngay
-      room.setSettings(playerId, msg.maxPlayers, msg.gameIds);
+      room.setSettings(playerId, msg.maxPlayers, msg.gameIds, msg.mode);
       return;
     }
 
@@ -131,7 +131,14 @@ function handle(session: Session, msg: ClientMessage, rooms: RoomManager, fail: 
 
     case 'room:settings': {
       if (!session.room || !session.playerId) return;
-      const err = session.room.setSettings(session.playerId, msg.maxPlayers, msg.gameIds);
+      const err = session.room.setSettings(session.playerId, msg.maxPlayers, msg.gameIds, msg.mode);
+      if (err) fail(err);
+      return;
+    }
+
+    case 'board:roll': {
+      if (!session.room || !session.playerId) return;
+      const err = session.room.rollDice(session.playerId);
       if (err) fail(err);
       return;
     }

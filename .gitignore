@@ -4,3 +4,6 @@ dist/
 .env.local
 *.log
 .DS_Store
+
+# GitNexus: index cuc bo + cau hinh/skills cua Claude Code
+/.claude/

@@ -45,6 +45,9 @@ export interface CharacterUpdate {
   holder?: boolean;
 }
 
+/** nhân vật nhỏ hơn mô hình gốc để cân với các map; mọi game dùng chung, scale riêng của từng cảnh nhân thêm lên trên */
+const BODY_SCALE = 0.8;
+
 export interface Character3D {
   root: Group;
   update(dt: number, s: CharacterUpdate): void;
@@ -75,8 +78,10 @@ const GRAY = new Color('#5d6275');
  */
 export function createCharacterKit(shading: Shading): CharacterKit {
   const geos = {
-    torso: new CapsuleGeometry(0.27, 0.34, 6, 16),
-    head: new SphereGeometry(0.33, 28, 20),
+    torso: new CapsuleGeometry(0.37, 0.3, 8, 24),
+    head: new SphereGeometry(0.33, 32, 24),
+    facePatch: new SphereGeometry(0.3, 24, 16),
+    sclera: new SphereGeometry(0.1, 14, 12),
     hairCap: new SphereGeometry(0.35, 26, 12, 0, Math.PI * 2, 0, Math.PI * 0.52),
     ear: new SphereGeometry(0.065, 10, 8),
     eye: new SphereGeometry(0.058, 12, 10),
@@ -89,11 +94,11 @@ export function createCharacterKit(shading: Shading): CharacterKit {
     brow: new BoxGeometry(0.12, 0.025, 0.02),
     dot: new SphereGeometry(0.012, 5, 4),
     mustache: new CapsuleGeometry(0.02, 0.08, 3, 6),
-    arm: new CapsuleGeometry(0.07, 0.24, 4, 10),
-    hand: new SphereGeometry(0.075, 12, 10),
-    leg: new CapsuleGeometry(0.09, 0.2, 4, 10),
-    shoe: new SphereGeometry(0.11, 14, 10),
-    blob: new CircleGeometry(0.42, 18),
+    arm: new CapsuleGeometry(0.075, 0.2, 6, 12),
+    hand: new SphereGeometry(0.1, 14, 12),
+    leg: new CapsuleGeometry(0.115, 0.14, 6, 12),
+    shoe: new SphereGeometry(0.13, 16, 12),
+    blob: new CircleGeometry(0.5, 20),
     marker: new ConeGeometry(0.13, 0.26, 8),
     // tóc
     spike: new ConeGeometry(0.1, 0.28, 8),
@@ -137,7 +142,7 @@ export function createCharacterKit(shading: Shading): CharacterKit {
   const textures: Texture[] = [];
   const lit = (color: Color | string, map?: Texture) => {
     const params = { color, map: map ?? null };
-    const m = shading === 'lambert' ? new MeshLambertMaterial(params) : new MeshStandardMaterial({ ...params, roughness: 0.7, metalness: 0.02 });
+    const m = shading === 'lambert' ? new MeshLambertMaterial(params) : new MeshStandardMaterial({ ...params, roughness: 0.38, metalness: 0.0 });
     owned.push(m);
     return m;
   };
@@ -205,12 +210,13 @@ export function createCharacterKit(shading: Shading): CharacterKit {
       const base = new Color(color);
       const bodyMat = look.outfit === 1 ? lit('#ffffff', stripeTexture(color)) : lit(base.clone());
       if (dress) bodyMat.side = DoubleSide;
+      const bodyBase = bodyMat.color.clone();
       const darkMat = lit(base.clone().multiplyScalar(0.6));
       const sleeveMat = lit(base.clone().multiplyScalar(0.88));
       const hc = hairColor(look);
       const hairMat = hc ? litCached(hc) : lit(base.clone().multiplyScalar(0.52));
       const skinMat = litCached(skinColor(look));
-      const legMat = dress ? skinMat : pantsMat;
+      const legMat = dress ? skinMat : sleeveMat;
       const shoeMat = litCached(shoeColor(look));
 
       const root = new Group();
@@ -219,7 +225,9 @@ export function createCharacterKit(shading: Shading): CharacterKit {
       blob.position.y = 0.012;
       root.add(blob);
 
+      blob.scale.setScalar(BODY_SCALE);
       const rig = new Group();
+      rig.scale.setScalar(BODY_SCALE);
       root.add(rig);
 
       const casters: Mesh[] = [];
@@ -233,18 +241,27 @@ export function createCharacterKit(shading: Shading): CharacterKit {
       // chi tiết nhỏ trên mặt không cần đổ bóng
       const deco = (parent: Object3D, geo: BufferGeometry, mat: Material, x = 0, y = 0, z = 0) => add(parent, geo, mat, x, y, z, false);
 
-      const torso = add(rig, geos.torso, bodyMat, 0, 0.86, 0);
-      if (female) torso.scale.set(0.94, 1, 0.92);
-      const head = add(rig, geos.head, skinMat, 0, 1.4, 0);
+      const torso = add(rig, geos.torso, bodyMat, 0, 0.84, 0);
+      if (female) torso.scale.set(0.95, 1, 0.94);
+      // đầu là phần trên của "hạt đậu": cùng màu trang phục, chỉ có mảng mặt là màu da
+      const head = add(rig, geos.head, bodyMat, 0, 1.27, 0);
+      head.scale.setScalar(1.13);
+      const face = new Group();
+      face.position.z = 0.05;
+      head.add(face);
+      const patch = new Mesh(geos.facePatch, skinMat);
+      patch.position.set(0, -0.015, 0.2);
+      patch.scale.set(0.95, 0.82, 0.55);
+      head.add(patch);
 
       /* ---------------- khuôn mặt ---------------- */
       const Z = 0.3;
       const longHair = female && (look.hair === 0 || look.hair === 4);
-      if (!longHair) for (const side of [-1, 1]) add(head, geos.ear, skinMat, side * 0.325, -0.02, 0);
 
       for (const side of [-1, 1]) {
-        const eye = deco(head, geos.eye, eyeMat, 0.115 * side, 0.02, Z);
-        eye.scale.set(1, 1.25, 0.6);
+        const eye = deco(face, geos.eye, eyeMat, 0.115 * side, 0.02, Z + 0.012);
+        eye.scale.set(1.1, 1.35, 0.6);
+        if (look.eyes <= 1) deco(face, geos.sclera, whiteMat, 0.115 * side, 0.035, Z - 0.012).scale.set(1, 1.18, 0.5);
         const shine = deco(eye, geos.shine, shineMat, 0.022, 0.03, 0.05);
         switch (look.eyes) {
           case 1:
@@ -252,7 +269,7 @@ export function createCharacterKit(shading: Shading): CharacterKit {
             break;
           case 2: {
             eye.visible = false;
-            deco(head, geos.arc, eyeMat, 0.115 * side, 0.0, Z + 0.01);
+            deco(face, geos.arc, eyeMat, 0.115 * side, 0.0, Z + 0.01);
             break;
           }
           case 3:
@@ -265,35 +282,35 @@ export function createCharacterKit(shading: Shading): CharacterKit {
             break;
           case 5: {
             eye.scale.set(0.8, 0.85, 0.6);
-            const brow = deco(head, geos.brow, eyeMat, 0.11 * side, 0.13, Z - 0.005);
+            const brow = deco(face, geos.brow, eyeMat, 0.11 * side, 0.13, Z - 0.005);
             brow.rotation.z = side * 0.45;
             break;
           }
         }
       }
       if (female || look.face === 1) {
-        for (const side of [-1, 1]) deco(head, geos.blush, blushMat, 0.19 * side, -0.08, 0.255).scale.set(1.3, 0.7, 0.4);
+        for (const side of [-1, 1]) deco(face, geos.blush, blushMat, 0.19 * side, -0.08, 0.255).scale.set(1.3, 0.7, 0.4);
       }
 
       const mouthY = -0.12;
       const mouthZ = 0.305;
       switch (look.mouth) {
         case 1:
-          deco(head, geos.mouthOpen, eyeMat, 0, mouthY, mouthZ).scale.set(1.3, 0.9, 0.5);
-          deco(head, geos.blush, tongueMat, 0, mouthY - 0.02, mouthZ + 0.015).scale.set(0.7, 0.5, 0.4);
+          deco(face, geos.mouthOpen, eyeMat, 0, mouthY, mouthZ).scale.set(1.3, 0.9, 0.5);
+          deco(face, geos.blush, tongueMat, 0, mouthY - 0.02, mouthZ + 0.015).scale.set(0.7, 0.5, 0.4);
           break;
         case 2:
-          for (const s of [-1, 1]) deco(head, geos.smallArc, eyeMat, 0.027 * s, mouthY, mouthZ).rotation.z = Math.PI;
+          for (const s of [-1, 1]) deco(face, geos.smallArc, eyeMat, 0.027 * s, mouthY, mouthZ).rotation.z = Math.PI;
           break;
         case 3:
-          deco(head, geos.arc, female ? lipMat : eyeMat, 0, mouthY + 0.02, mouthZ).rotation.z = Math.PI;
-          deco(head, geos.blush, tongueMat, 0.02, mouthY - 0.04, mouthZ).scale.set(0.6, 0.8, 0.4);
+          deco(face, geos.arc, female ? lipMat : eyeMat, 0, mouthY + 0.02, mouthZ).rotation.z = Math.PI;
+          deco(face, geos.blush, tongueMat, 0.02, mouthY - 0.04, mouthZ).scale.set(0.6, 0.8, 0.4);
           break;
         case 4:
-          deco(head, geos.pout, lipMat, 0, mouthY, mouthZ);
+          deco(face, geos.pout, lipMat, 0, mouthY, mouthZ);
           break;
         default:
-          deco(head, geos.arc, female ? lipMat : eyeMat, 0, mouthY + 0.02, mouthZ).rotation.z = Math.PI;
+          deco(face, geos.arc, female ? lipMat : eyeMat, 0, mouthY + 0.02, mouthZ).rotation.z = Math.PI;
       }
 
       switch (look.face) {
@@ -304,18 +321,18 @@ export function createCharacterKit(shading: Shading): CharacterKit {
               [0.035, -0.02],
               [-0.03, -0.03],
             ]) {
-              deco(head, geos.dot, freckleMat, side * (0.19 + dx), -0.04 + dy, 0.26);
+              deco(face, geos.dot, freckleMat, side * (0.19 + dx), -0.04 + dy, 0.26);
             }
           }
           break;
         case 3:
-          deco(head, geos.dot, eyeMat, 0.14, -0.16, 0.28).scale.setScalar(1.4);
+          deco(face, geos.dot, eyeMat, 0.14, -0.16, 0.28).scale.setScalar(1.4);
           break;
         case 4:
-          for (const s of [-1, 1]) deco(head, geos.mustache, hairMat, 0.05 * s, -0.085, 0.312).rotation.z = s * 1.2;
+          for (const s of [-1, 1]) deco(face, geos.mustache, hairMat, 0.05 * s, -0.085, 0.312).rotation.z = s * 1.2;
           break;
         case 5:
-          deco(head, geos.blush, gold, 0.2, -0.09, 0.26).scale.set(0.7, 0.7, 0.3);
+          deco(face, geos.blush, gold, 0.2, -0.09, 0.26).scale.set(0.7, 0.7, 0.3);
           break;
       }
 
@@ -409,11 +426,11 @@ export function createCharacterKit(shading: Shading): CharacterKit {
 
       /* ---------------- kính ---------------- */
       for (const side of [-1, 1]) {
-        if (look.glasses === 1) deco(head, geos.lens, eyeMat, 0.115 * side, 0.02, Z + 0.02);
-        if (look.glasses === 2) deco(head, geos.shade, eyeMat, 0.115 * side, 0.02, Z + 0.03);
-        if (look.glasses === 3) deco(head, geos.blush, cupMat, 0.115 * side, 0.02, Z + 0.03).scale.set(1.5, 1.3, 0.4);
+        if (look.glasses === 1) deco(face, geos.lens, eyeMat, 0.115 * side, 0.02, Z + 0.02);
+        if (look.glasses === 2) deco(face, geos.shade, eyeMat, 0.115 * side, 0.02, Z + 0.03);
+        if (look.glasses === 3) deco(face, geos.blush, cupMat, 0.115 * side, 0.02, Z + 0.03).scale.set(1.5, 1.3, 0.4);
       }
-      if (look.glasses === 2) deco(head, geos.bridge, eyeMat, 0, 0.04, Z + 0.035);
+      if (look.glasses === 2) deco(face, geos.bridge, eyeMat, 0, 0.04, Z + 0.035);
 
       /* ---------------- đội đầu ---------------- */
       let halo: Mesh | null = null;
@@ -471,12 +488,12 @@ export function createCharacterKit(shading: Shading): CharacterKit {
         rig.add(pivot);
         return { pivot, mesh: add(pivot, geo, mat, 0, offset, 0) };
       };
-      const armL = limb(geos.arm, sleeveMat, 0.34, 1.07, -0.16);
-      const armR = limb(geos.arm, sleeveMat, -0.34, 1.07, -0.16);
-      for (const a of [armL, armR]) add(a.pivot, geos.hand, skinMat, 0, -0.35, 0);
-      const legL = limb(geos.leg, legMat, 0.13, 0.43, -0.17);
-      const legR = limb(geos.leg, legMat, -0.13, 0.43, -0.17);
-      for (const l of [legL, legR]) add(l.pivot, geos.shoe, shoeMat, 0, -0.38, 0.04).scale.set(0.95, 0.55, 1.35);
+      const armL = limb(geos.arm, bodyMat, 0.42, 1.04, -0.14);
+      const armR = limb(geos.arm, bodyMat, -0.42, 1.04, -0.14);
+      for (const a of [armL, armR]) add(a.pivot, geos.hand, bodyMat, 0, -0.32, 0);
+      const legL = limb(geos.leg, legMat, 0.17, 0.4, -0.12);
+      const legR = limb(geos.leg, legMat, -0.17, 0.4, -0.12);
+      for (const l of [legL, legR]) add(l.pivot, geos.shoe, shoeMat, 0, -0.3, 0.05).scale.set(1, 0.62, 1.4);
 
       /* ---------------- xếp bét: băng bó ---------------- */
       if (hurt) {
@@ -489,13 +506,15 @@ export function createCharacterKit(shading: Shading): CharacterKit {
       if (isMe) {
         marker = new Mesh(geos.marker, markerMat);
         marker.rotation.x = Math.PI; // mũi nhọn chỉ xuống đầu mình
-        marker.position.y = 2.5;
+        marker.position.y = 2.5 * BODY_SCALE;
+        marker.scale.setScalar(BODY_SCALE);
         root.add(marker);
       }
 
       let phase = Math.random() * 6;
       let yaw = 0;
       let fall = 0;
+      let squash = 1;
 
       const approach = (current: number, target: number, k: number) => current + (target - current) * k;
 
@@ -520,7 +539,9 @@ export function createCharacterKit(shading: Shading): CharacterKit {
           const k = 1 - Math.exp(-dt * 10);
           const smooth = 1 - Math.exp(-dt * 20);
           fall += ((s.dead ? 1 : 0) - fall) * k;
+          // chết thì xám dần; còn sống thì trả về màu áo (nhân vật có thể đứng dậy ở vòng sau)
           if (s.dead) bodyMat.color.lerp(GRAY, k * 0.5);
+          else if (!bodyMat.color.equals(bodyBase)) bodyMat.color.lerp(bodyBase, k);
 
           const speed = s.speed;
           phase += dt * (5 + 9 * speed);
@@ -640,9 +661,18 @@ export function createCharacterKit(shading: Shading): CharacterKit {
           // chết thì ngã SANG NGANG: camera nhìn chéo từ phía trước, ngã ngửa sẽ bị dẹt hình trông như vẫn đứng
           rig.rotation.z = fall * 1.45 + sway * alive;
 
+          // bóp/giãn kiểu hoạt hình: dậm chân thì dẹt nhẹ, bật nhảy thì vươn cao, bị đánh thì méo
+          let sy = 1 + Math.sin(phase * 2 - 0.6) * 0.04 * speed + (1 - speed) * Math.sin(t * 2.2) * 0.014;
+          if (pose === 'jump') sy = 1.1;
+          else if (pose === 'hit') sy = 0.93 + Math.sin(t * 22) * 0.03;
+          else if (pose === 'cheer') sy = 1 + Math.sin(t * 7) * 0.06;
+          squash = approach(squash, sy, smooth);
+          const sxz = 1 / Math.sqrt(squash);
+          rig.scale.set(sxz * BODY_SCALE, squash * BODY_SCALE, sxz * BODY_SCALE);
+
           root.visible = s.safe ? Math.floor(t * 14) % 2 === 0 : true;
           if (marker) {
-            marker.position.y = 2.5 + Math.sin(t * 4) * 0.07;
+            marker.position.y = (2.5 + Math.sin(t * 4) * 0.07) * BODY_SCALE;
             marker.visible = !s.dead;
           }
         },

@@ -23,22 +23,17 @@ interface State {
   lastBroadcast: number;
 }
 
-const GOAL = 100;
+const GOAL = 150;
 const MIN_INTERVAL = 45; // trần ~22 cú kéo/giây, giống các game spam khác
-const DURATION = 28_000;
+const DURATION = 40_000;
 /** lực mỗi cú kéo, chia cho sĩ số để đội ít người không bị thiệt */
-const PULL_POWER = 5.2;
+const PULL_POWER = 3.4;
 
 export const tugWarGame: GameDefinition<Config, State> = {
   id: 'tug',
-  name: 'KÉO CO',
+  name: 'KÉO CO - CHƯA CẬP NHẬT',
   instructions:
-    'Cả phòng chia làm HAI ĐỘI: đội XANH bên trái, đội ĐỎ bên phải. ' +
-    'Nhấn SPACE thật nhanh để kéo sợi dây về phía đội mình. ' +
-    'Lực của mỗi cú kéo được chia đều theo sĩ số nên đội ít người không bị thiệt - ' +
-    'ai chăm kéo hơn thì đội đó thắng. Kéo dây qua vạch của đối phương là thắng ngay; ' +
-    'hết giờ thì đội nào đang kéo dây về phía mình nhiều hơn sẽ thắng. ' +
-    'Cả đội thắng đều được điểm cao, trong đội ai kéo nhiều nhất xếp trên.',
+    'Chia hai đội XANH và ĐỎ. Nhấn SPACE thật nhanh để kéo dây về phía đội mình. Kéo qua vạch đối phương, hoặc hết giờ đang lấn hơn là thắng.',
   controls: [{ keys: ['SPACE'], desc: 'Bấm liên tục để kéo dây về phía đội mình' }],
   duration: DURATION + 2500,
   minPlayers: 2,

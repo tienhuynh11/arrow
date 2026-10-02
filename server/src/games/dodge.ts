@@ -61,12 +61,9 @@ const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 
 export const dodgeGame: GameDefinition<Config, State> = {
   id: 'dodge',
-  name: 'NÉ VẬT THỂ LẠ',
+  name: 'NÉ VẬT THỂ LẠ - CHƯA CẬP NHẬT',
   instructions:
-    'Đủ thứ vật thể kỳ quái rơi từ trên xuống. GIỮ phím ← hoặc → để chạy tự do sang trái/phải ' +
-    'và luồn qua khe trống giữa chúng. Trúng một vật là mất 1 mạng (bạn có 3 mạng) và đứng hình gần nửa giây. ' +
-    'Càng về sau vật rơi càng nhanh, càng dày và khe trống càng hẹp, lại còn có vật bay chéo. ' +
-    'Né được càng nhiều đợt và giữ được càng nhiều mạng thì điểm càng cao.',
+    'Giữ ← → để chạy né các vật rơi từ trên xuống. Trúng một vật là mất 1 trong 3 mạng. Né được nhiều và giữ nhiều mạng thì điểm cao.',
   controls: [{ keys: ['←', '→'], desc: 'Giữ để chạy tự do sang hai bên' }],
   duration: 50_000,
   minPlayers: 1,

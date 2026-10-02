@@ -3,10 +3,10 @@
 Party game multiplayer realtime cho **2–16 người**, phong cách arcade/neon, lấy cảm hứng cơ chế
 rhythm + tranh đua kiểu Audition. Host **tự chọn sức chứa phòng (2–16) và những minigame muốn chơi**;
 mỗi trận chơi hết các game đã chọn theo thứ tự xáo trộn, cộng dồn điểm, cuối trận ra một nhà vô địch.
-Chơi đủ 9 game mất khoảng **8–9 phút**; chọn ít game thì trận ngắn lại tương ứng.
+Chơi đủ 10 game mất khoảng **10–11 phút** (mỗi game ~35–50 giây); chọn ít game thì trận ngắn lại tương ứng.
 
 **Nhẹ:** không game engine, không asset bitmap, không model tải về, không nhạc nền tải về.
-Cả 9 minigame là **đồ hoạ 3D (Three.js)** nằm trong **chunk riêng ~130 KB gzip chỉ tải khi vào trận**;
+Cả 10 minigame là **đồ hoạ 3D (Three.js)** nằm trong **chunk riêng ~130 KB gzip chỉ tải khi vào trận**;
 màn chính/sảnh chờ tải ban đầu ≈80 KB gzip, nhân vật ở menu vẽ bằng inline SVG, âm thanh tổng hợp bằng Web Audio API.
 Cần trình duyệt có **WebGL**.
 
@@ -32,7 +32,9 @@ Biến môi trường:
 | `PORT` | cổng WebSocket (mặc định `8787`) |
 | `SERVER_PORT` | đọc bởi `client/vite.config.ts` nếu bạn đổi cổng server |
 | `ALLOW_SOLO=1` | cho phép bắt đầu trận với 1 người (tiện test một mình) — hoặc chạy `npm run dev:solo` (dùng được cả trên PowerShell) |
-| `FORCE_GAMES=rhythm,race` | ghim danh sách minigame, bỏ qua lựa chọn của host (tiện dev) |
+| `FORCE_GAMES=rhythm,race` | ghim danh sách minigame, bỏ qua lựa chọn của host (tiện dev). Ở chế độ Hành Trình thì chỉ đổi minigame, vẫn giữ chủ đề tỉnh |
+| `HEX_DELAY=14000` | kéo dài thời gian ô SÀN TỔ ONG tồn tại sau khi bị bước lên (mặc định 820 ms), chỉ để chạy thử/chụp ảnh |
+| `JOURNEY_TURNS=3` | rút ngắn số chặng của chế độ Hành Trình Xuyên Việt (mặc định 10) để chạy thử nhanh |
 
 ## 2. Chạy frontend
 
@@ -233,19 +235,19 @@ trên màn hình countdown và leaderboard.
   bảng tổng điểm phía dưới - tự chuyển ván sau ~4s
 - ✅ Màn hình WINNER + bảng xếp hạng + confetti + PLAY AGAIN / BACK TO LOBBY
 
-**9 minigame** (toàn bộ chấm điểm ở server)
+**10 minigame** (toàn bộ chấm điểm ở server)
 - ✅ **BẮT NHỊP** - đường nhạc 3D, **HAI LÀN phím**: làn dưới SPACE, làn trên ↑ (bấm nhầm làn là trượt).
   **Nốt ĐỎ ☠ là BẪY** - phải để nó trôi qua, lỡ bấm mất 70 điểm và đứt combo.
-  Nốt ⭐ vàng gấp đôi điểm, combo ×2, nhạc tăng tốc 560ms → 310ms/nhịp, vùng chuẩn chỉ ±45ms
-- ✅ **PHẢN XẠ NHANH** - tín hiệu xanh ngẫu nhiên + **1–2 tín hiệu giả** để đánh lừa, xếp 🥇🥈🥉,
-  FALSE START bị phạt −30, cửa sổ phản xạ chỉ 2.2s
-- ✅ **GÕ ĐÚNG CHUỖI** - **5 chuỗi 5/6/7/8/9 mũi tên**, sai một phím là reset cả chuỗi + khoá 650ms,
+  Nốt ⭐ vàng gấp đôi điểm, combo ×2, **92 nốt** (~40 giây), nhạc tăng tốc 560ms → 290ms/nhịp có đoạn "thở" giữa bài, bẫy dày dần, vùng chuẩn chỉ ±45ms
+- ✅ **PHẢN XẠ NHANH** - **6 vòng liên tiếp** (~33 giây): mỗi vòng chờ tín hiệu xanh ngẫu nhiên, càng về sau càng nhiều **tín hiệu giả** để đánh lừa,
+  điểm mỗi vòng theo tốc độ (tối đa 1000) cộng dồn; nhấn sớm bị trừ 400, cửa sổ phản xạ chỉ 1.5s
+- ✅ **GÕ ĐÚNG CHUỖI** - **8 chuỗi dài dần từ 6 đến 13 mũi tên**, sai một phím là reset cả chuỗi + khoá 650ms,
   và **ngập ngừng quá 1.3 giây giữa hai phím cũng mất chuỗi** - buộc phải bấm liên tục
 - ✅ **VƯỢT RÀO** - cả phòng chạy **chung một đường đua ngang**, **GIỮ →** để chạy
-  (thả là dừng), **↑ / SPACE** để nhảy qua **6 rào**. Đâm rào là vấp: đứng hình 1 giây,
+  (thả là dừng), **↑ / SPACE** để nhảy qua **16 rào** trên đường đua dài, rào càng về cuối càng sít nhau. Đâm rào là vấp: đứng hình 1 giây,
   bị đẩy lùi **và vẫn phải nhảy qua đúng cái rào đó** - không đi vòng được.
   Đường chạy điền kinh 3D, camera bám theo mình; rào và người chơi dùng **chung toạ độ với server** nên hitbox khớp đúng với hình
-- ✅ **BẤM NHANH TAY** - spam SPACE 7 giây, nhưng có **3 lượt ĐÈN ĐỎ**: nhấn lúc đỏ bị trừ 3 điểm
+- ✅ **BẤM NHANH TAY** - spam SPACE **38 giây**, nhưng có **8 lượt ĐÈN ĐỎ** ngắn dần: nhấn lúc đỏ bị trừ 15 lượt và đơ tay 0.6 giây
 - ✅ **TÍNH NHANH** - tính nhẩm `+ −` (2–3 số hạng, khó dần) rồi dùng ← → **chạy sang ô đáp án
   đúng** và SPACE để chốt. Nhấn SPACE có **phản hồi rõ ràng**: ô sáng viền vàng, huy hiệu
   "🔒 ĐÃ CHỐT · CHỐT ĐÚNG THỨ N", nhân vật giơ tay, có âm thanh. **Ai chốt đúng sớm nhất ăn đậm nhất**
@@ -259,11 +261,43 @@ trên màn hình countdown và leaderboard.
 - ✅ **KÉO CO** *(đấu theo đội)* - cả phòng chia hai đội xanh/đỏ, spam SPACE kéo dây về phía mình.
   **Lực mỗi cú kéo chia theo sĩ số** nên đội ít người không thiệt. Kéo qua vạch đối phương là thắng ngay,
   hết giờ thì bên nào đang dẫn sẽ thắng. Cả đội thắng đều điểm cao, trong đội ai kéo nhiều hơn xếp trên
+- ✅ **HÁI DỪA XỨ DỪA** *(chủ đề Bến Tre)* - mỗi người một cây dừa, bấm **LUÂN PHIÊN ← →** (hoặc A D) thật nhanh để leo
+  (bấm lặp một phím không leo được), đủ 40 nấc là hái được 1 quả. **Gió lắc** theo lịch cố định (có cảnh báo trước 0,6 giây):
+  lỡ leo lúc gió là **trượt 10 nấc và choáng 0,9 giây**, nên biết buông tay đúng lúc mới thắng. ~38 giây, giới hạn ~14 lần bấm/giây
+- ✅ **SÀN TỔ ONG** *(kiểu Hex-A-Gone của Fall Guys)* - sàn lục giác **3 tầng**, chạy tự do bằng ← ↑ → ↓, **SPACE để nhảy** (đang bay thì không chạm ô, nhảy qua chỗ trống được, không có thời gian chờ giữa hai lần nhảy). Ô nào bạn bước lên sẽ **nháy đỏ rồi rơi sau chưa tới 1 giây**
+  (đứng yên là rơi), rơi xuống tầng dưới còn cơ hội, **rơi hết tầng thấp nhất hoặc ra ngoài mép là bị loại**. Càng về cuối ván, ô càng **tự rơi dồn dập** (một nửa số lần
+  nhằm đúng ô dưới chân ai đó). Người trụ lại cuối cùng thắng. Sàn to theo số người (5 → 8 vòng ô) nên ván dài ~25–40 giây.
+  **Góc nhìn thứ ba bám theo mình, chỉ thấy tầng đang đứng** (các tầng phía trên ẩn đi); bị loại thì quay về toàn cảnh để xem tiếp.
+  Server giữ toàn bộ trạng thái ô (`Uint8Array`), client chỉ vẽ; lưới lục giác dùng chung ở [shared/hex.ts](shared/hex.ts)
+- ✅ **CỬA BÍ MẬT** *(kiểu Door Dash của Fall Guys)* - chạy qua **8 hàng cửa**, mỗi hàng 6 cánh nhưng **chỉ 1 cánh là cửa thật**, nhìn y hệt nhau. Đâm vào cửa thật thì nó bật mở cho cả phòng,
+  đâm vào cửa giả thì **bị văng ngược + choáng nửa giây**. Cửa nào thật/giả **do server giữ bí mật** (không nằm trong config), client chỉ biết cửa nào đã mở. Về đích nhanh nhất thắng (~30–45 giây).
+- ✅ **LEO NÚI ĐỔ** *(kiểu Fall Mountain của Fall Guys)* - chạy lên **đỉnh núi dốc**, né **bóng khổng lồ, khúc gỗ lăn và 4 thanh búa quét**. Trúng thì văng tụt xuống dốc + choáng, rồi được bảo vệ vài giây.
+  Chướng ngại chạy **theo lịch** tạo một lần và gửi trong config: client tự tính vị trí theo đồng hồ server nên **không tốn băng thông và không giật khi mạng chậm**; server vẫn chốt ai bị trúng (có khoan dung ~14 % cho độ trễ).
+- ✅ **NHẢY XÀ** *(kiểu Jump Showdown của Fall Guys)* - sàn tròn quanh một cột giữa, **thanh xà quay ngày càng nhanh**. Góc xà là hàm của thời gian θ(τ) = w0·τ + ½·a·τ², nên client tự vẽ theo đồng hồ server, không cần gửi góc qua mạng.
+  **SPACE nhảy** qua xà (nhảy xong phải chờ ~0,3 giây mới nhảy tiếp được, nên không thể nhảy liên tục để bất tử). Trúng xà thì bị hất văng ra mép, rơi khỏi sàn là bị loại. Server kiểm tra cả cung xà quét trong mỗi tick để xà quay nhanh cũng không xuyên qua người.
+- ✅ **SÀN ĐỔI MÀU** *(kiểu Block Party của Fall Guys)* - sàn ghép nhiều ô màu (8×8 → 12×12 tuỳ số người, hợp 16 người). Mỗi vòng báo một **màu an toàn**, hết giờ mọi ô khác màu rơi mất. Vòng sau thời gian ngắn lại (4,8 s → 1,1 s) và nhiều màu hơn (4 → 7).
+- ✅ **LẬT MẢNH GHÉP** *(Memory Match)* - sàn ô vuông, mỗi ô một **hình** (sao, tim, thoi, tròn, tam giác, chữ thập, trăng, chữ nhật). Cả sàn hiện hình vài giây để ghi nhớ rồi **úp lại** và server mới báo **hình cần tìm** (bí mật tới giây úp ô nên không ai đứng sẵn được); hết giờ mọi ô khác hình rơi mất. Vòng sau ngắn dần và nhiều hình hơn (4 → 8). Hình vẽ bằng canvas, 0 byte ảnh.
+- ✅ **CON ĐƯỜNG ẨN** *(Tip Toe)* - sàn kính nhiều hàng ô trông y hệt nhau, chỉ có **một đường thật** liền mạch tới đích, còn lại là ô giả. Bước nhầm ô giả là ô **vỡ** (cả phòng đều thấy nên nhìn người khác thử sai để tìm đường) và bạn rơi, hồi sinh lại từ vạch xuất phát. Đường do server sinh ngẫu nhiên và **không bao giờ gửi cho client** — client chỉ nhận danh sách ô đã vỡ. Về đích đầu tiên thắng và mở đồng hồ đóng ván 12 giây. Góc nhìn thứ 3.
+  Mỗi vòng chỉ có **một gói** từ server (bảng màu + màu an toàn + giờ chốt), client tự đếm ngược theo đồng hồ server nên rất nhẹ mạng.
 - ✅ **NÉ VẬT THỂ LẠ** - **chạy tự do** (giữ ← → , không còn chia làn), sân trải rộng hết khung hình.
   **8 loại vật thể 3D** có hồn riêng: đĩa bay, lưỡi cưa xoay, slime, tinh thể, mắt biết liếc,
   bom cháy ngòi, sao xoay, sâu nhiều đốt - ~130 vật mỗi ván, kích thước khác nhau,
   có vật **bay chéo**. Rơi nhanh dần (1.7s → 0.95s) và khe trống hẹp dần (30 → 15 đơn vị).
   Trúng mất 1 mạng (có 3 mạng) và đứng hình 0.42s
+
+**Chế độ "Hành Trình Xuyên Việt"** *(board game kiểu Mario Party)*
+- ✅ Host chọn chế độ ở màn tạo phòng hoặc ở **Cài đặt phòng** trong sảnh chờ (chế độ Thường vẫn y như cũ)
+- ✅ Bản đồ là một vòng **10 tỉnh**, mỗi ô một nét văn hoá và một minigame dùng lại game có sẵn nhưng **đổi tên + lời dẫn theo tỉnh**:
+  Hà Nội 🍵 (GÕ ĐÚNG CHUỖI) · Quảng Ninh 🛶 (KÉO CO) · Huế 🍜 (TÍNH NHANH, lễ hội) · Đà Nẵng 🐉 (PHẢN XẠ) ·
+  Gia Lai 🥁 (BẮT NHỊP, lễ hội) · Đắk Lắk 🐘 (VƯỢT RÀO) · Bình Thuận 🏜️ (BẤM NHANH TAY) · TP.HCM ☕ (NÉ VẬT) ·
+  Bến Tre 🥥 (HÁI DỪA) · Cần Thơ 🍉 (ĐUỔI BẮT BOM). Dữ liệu ở [shared/board.ts](shared/board.ts) để thêm/đổi tỉnh rất dễ
+- ✅ **Luật mỗi chặng:** chủ xúc xắc xoay vòng theo ghế bấm tung (hoặc SPACE, 10 giây không tung thì **server tự tung**, chủ xúc xắc rớt mạng thì tự tung ngay).
+  Server tung 1–6 cho **mọi người**, quân cờ ai nấy đi theo xúc xắc của mình; ô nơi quân của chủ xúc xắc dừng lại quyết định tỉnh/minigame, **cả phòng cùng chơi**
+- ✅ **Điểm Văn Hoá:** hạng 1 nhận trọn điểm ô (20, ô lễ hội 30), hạng 2 một nửa, hạng 3 một phần tư; người đang **đứng đúng ô được chọn nhân ×1,5**;
+  hạng 1 nhận **huy hiệu đặc sản** của tỉnh (lần đầu +5). Hết 10 chặng, ai nhiều điểm nhất là **Nhà Văn Hoá Xuyên Việt**
+- ✅ Màn bàn cờ vẽ bằng SVG (không tốn thêm thư viện): quân cờ là nhân vật đã tuỳ chỉnh, nhảy từng ô, xúc xắc có hoạt hình, ô được chọn sáng lên **sau khi quân cờ tới nơi**
+- ✅ Server giữ toàn bộ trạng thái bàn cờ trong `room:state` nên **rớt mạng/vào lại giữa chừng vẫn khôi phục đúng**; game không đủ người (vd. KÉO CO cần ≥ 2) tự thay bằng BẤM NHANH TAY nhưng vẫn giữ chủ đề tỉnh
+- ✅ Logic bàn cờ tách riêng ở [server/src/rooms/journey.ts](server/src/rooms/journey.ts), `Room.ts` chỉ điều phối
 
 **Tranh giành**
 - ✅ Live leaderboard cập nhật realtime, luôn hiển thị trong suốt trận
@@ -317,7 +351,7 @@ trên màn hình countdown và leaderboard.
   - Nút 🎲 ngẫu nhiên và ↺ mặc định
 - ✅ Nhân vật được vẽ lại cho đẹp hơn: 2D có viền nét, đầu chibi, mắt long lanh, tay, giày; 3D bo tròn mịn, có mắt sáng, miệng, tay, giày, tóc và trang phục 3D tương ứng
 - ✅ Nhớ trong máy (localStorage), gửi lên khi vào phòng; đổi ở sảnh chờ thì cả phòng thấy ngay. Server kiểm tra và chuẩn hoá dữ liệu
-- ✅ Hiện ở mọi nơi: sảnh chờ, cả 9 minigame 3D, bục vinh danh, màn tổng kết. Màu áo vẫn là màu người chơi để dễ nhận ra nhau
+- ✅ Hiện ở mọi nơi: sảnh chờ, cả 10 minigame 3D, bục vinh danh, màn tổng kết. Màu áo vẫn là màu người chơi để dễ nhận ra nhau
 
 **Người xếp bét bị "băng bó"**
 - ✅ Ai đang có tổng điểm thấp nhất thì nhân vật **quấn băng trán, dán băng keo, băng tay chân, toát mồ hôi và run bần bật** (2D lẫn 3D),
@@ -333,10 +367,10 @@ trên màn hình countdown và leaderboard.
 
 **Tên game bằng tiếng Việt**
 - ✅ BẮT NHỊP · PHẢN XẠ NHANH · GÕ ĐÚNG CHUỖI · VƯỢT RÀO · BẤM NHANH TAY · TÍNH NHANH ·
-  NÉ VẬT THỂ LẠ · ĐUỔI BẮT BOM · KÉO CO
+  NÉ VẬT THỂ LẠ · ĐUỔI BẮT BOM · KÉO CO · HÁI DỪA XỨ DỪA · SÀN TỔ ONG · CỬA BÍ MẬT · LEO NÚI ĐỔ · NHẢY XÀ · SÀN ĐỔI MÀU · LẬT MẢNH GHÉP · CON ĐƯỜNG ẨN
 - ✅ Hướng dẫn viết lại bằng lời dễ hiểu, hiện đầy đủ trên màn hướng dẫn 10 giây
 
-**Đồ hoạ 3D (cả 9 minigame)**
+**Đồ hoạ 3D (cả 10 minigame)**
 - ✅ **Mọi minigame đều là 3D** (đã bỏ hẳn bản 2D):
   - BẮT NHỊP: đường nhạc 3D chạy về phía camera, nốt đĩa/nốt vàng/nốt gai bẫy, loa nhún theo nhịp, nhân vật nhảy múa hai bên
   - PHẢN XẠ NHANH: vạch xuất phát sân vận động + cột đèn tín hiệu khổng lồ (vàng chờ / đỏ giả / xanh CHẠY), bấm là lao đi, phạm luật thì ngã
@@ -416,27 +450,30 @@ trên màn hình countdown và leaderboard.
 ```
 shared/
   protocol.ts             # kiểu dữ liệu + hằng số dùng chung 2 phía
+  hex.ts                  # lưới lục giác của SÀN TỔ ONG
+  board.ts                # 10 tỉnh, luật điểm của chế độ Hành Trình Xuyên Việt
 
 server/src/
   index.ts
   network/  server.ts connection.ts      # WebSocket, routing message
   rooms/    Room.ts RoomManager.ts       # state machine + registry (điểm swap sang Redis)
+            journey.ts                   # logic thuần của chế độ bàn cờ (xúc xắc, di chuyển, điểm văn hoá)
   games/    types.ts index.ts            # GameDefinition + registry + random picker
             rhythm.ts reaction.ts sequence.ts race.ts buttonBattle.ts mathRush.ts
-            dodge.ts hotPotato.ts tugWar.ts
+            dodge.ts hotPotato.ts tugWar.ts coconut.ts hexAGone.ts doorDash.ts fallMountain.ts jumpShowdown.ts blockParty.ts memoryMatch.ts tipToe.ts
   validation/ input.ts                   # sanitize tên/code + rate limiter
 
 client/src/
   main.tsx App.tsx styles.css
   network/  net.ts                       # WebSocket + đồng bộ đồng hồ
   state/    store.ts                     # store nhẹ (useSyncExternalStore)
-  screens/  Home.tsx Lobby.tsx Match.tsx Final.tsx
-  components/ Character CharacterEditor FullscreenHint EmoteBar Leaderboard Countdown Scoreboard Toasts
+  screens/  Home.tsx Lobby.tsx Match.tsx Final.tsx Board.tsx
+  components/ Character CharacterEditor FullscreenHint EmoteBar Leaderboard Countdown Scoreboard Toasts Dice ModePicker
   three/    engine quality scene character effects       # lớp 3D dùng chung, tải lười
             rhythmScene reactionScene sequenceScene raceScene buttonScene
-            mathScene dodgeScene bombScene tugScene
+            mathScene dodgeScene bombScene tugScene coconutScene hexScene doorScene mountainScene showdownScene blockPartyScene memoryScene tipToeScene stage
   games/    view3d.tsx (Scene3D: tải lười cảnh 3D, báo lỗi khi máy không có WebGL)
-            rhythm/ reaction/ sequence/ race/ button/ math/ dodge/ tug/
+            rhythm/ reaction/ sequence/ race/ button/ math/ dodge/ tug/ coconut/ hex/
               (mỗi thư mục: useXGame · X3D · HUD · index)
             bomb/ (useBombGame · BombHud · Arena3D)
   utils/    hooks.ts sound.ts appearance.ts fullscreen.ts

@@ -5,8 +5,9 @@ import {
   InstancedMesh,
   Matrix4,
   Mesh,
-  MeshBasicMaterial,
-  PlaneGeometry,
+  RepeatWrapping,
+  CapsuleGeometry,
+  SphereGeometry,
   Vector3,
 } from 'three';
 import { runScene, type SceneHooks } from './scene';
@@ -31,14 +32,25 @@ export interface RaceSceneOptions {
   labels: Map<string, HTMLElement | null>;
 }
 
-/** 1 đơn vị quãng đường của server = S đơn vị 3D (đường 110 → 44) */
-const S = 0.4;
+/** 1 đơn vị quãng đường của server = S đơn vị 3D (đường 330 → ~115) */
+const S = 0.35;
 const LANE_W = 1.25;
 const PAD = 6;
 const TIP_MS = 1100;
 
 export function createRaceScene(o: RaceSceneOptions) {
-  return runScene(o.host, o.hooks, { background: '#0a1024', fog: [26, 80], sun: [-6, 20, 14], shadowBox: 28 }, (k) => {
+  const first0 = o.read();
+  const half = (first0.cfg.distance * S) / 2;
+  const w0 = Math.max(1, o.players.length) * LANE_W + 1.2;
+  return runScene(
+    o.host,
+    o.hooks,
+    {
+      stage: { name: 'day', area: [half + PAD + 6, w0 / 2 + 8], groundY: -0.21 },
+      sun: [-8, 22, 14],
+      shadowBox: 30,
+    },
+    (k) => {
     const { scene } = k.engine;
     const first = o.read();
     const cfg = first.cfg;
@@ -51,15 +63,15 @@ export function createRaceScene(o: RaceSceneOptions) {
     const wx = (pos: number) => x0 + Math.max(0, Math.min(cfg.distance, pos)) * S;
 
     /* ---------------- đường chạy điền kinh (texture vẽ bằng canvas) ---------------- */
-    const texH = Math.max(160, Math.round((2048 * trackW) / totalL));
-    const trackTex = k.texture(2048, texH, (g, w, h) => {
-      g.fillStyle = '#a8433a';
+    const texH = Math.max(160, Math.round((4096 * trackW) / totalL));
+    const trackTex = k.texture(4096, texH, (g, w, h) => {
+      g.fillStyle = '#ff7a4d';
       g.fillRect(0, 0, w, h);
-      g.fillStyle = 'rgba(0,0,0,0.07)';
-      for (let i = 0; i < 2500; i++) g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      g.fillStyle = 'rgba(255,255,255,0.06)';
+      for (let i = 0; i < 2500; i++) g.fillRect(Math.random() * w, Math.random() * h, 3, 3);
       const px = (x: number) => ((x + totalL / 2) / totalL) * w;
       const pz = (z: number) => ((z + trackW / 2) / trackW) * h;
-      g.strokeStyle = 'rgba(255,255,255,0.85)';
+      g.strokeStyle = 'rgba(255,255,255,0.95)';
       g.lineWidth = Math.max(2, h / 140);
       for (let i = 0; i <= n; i++) {
         const z = (i - n / 2) * LANE_W;
@@ -82,17 +94,29 @@ export function createRaceScene(o: RaceSceneOptions) {
       g.font = `bold ${Math.max(14, Math.round(h / (n * 2.4)))}px system-ui, sans-serif`;
       for (let d = 25; d < cfg.distance; d += 25) g.fillText(`${d}m`, px(x0 + d * S) + 6, pz(-(n * LANE_W) / 2) + 22);
     });
-    const side = k.lit({ color: '#2a1d24' });
+    const side = k.lit({ color: '#d8552f' });
     const track = new Mesh(new BoxGeometry(totalL, 0.2, trackW), [side, side, k.lit({ map: trackTex }), side, side, side]);
     track.position.y = -0.1;
     track.receiveShadow = true;
     scene.add(track);
 
-    const ground = new Mesh(new PlaneGeometry(260, 160), k.lit({ color: '#0f1a2e' }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.21;
-    ground.receiveShadow = true;
-    scene.add(ground);
+    // lề đường sọc đỏ trắng như đường đua đồ chơi
+    const curbTex = k.texture(128, 32, (g, w, h) => {
+      for (let i = 0; i < 4; i++) {
+        g.fillStyle = i % 2 ? '#ffffff' : '#ff3d6e';
+        g.fillRect((i * w) / 4, 0, w / 4, h);
+      }
+    });
+    curbTex.wrapS = RepeatWrapping;
+    curbTex.repeat.set(totalL / 1.6, 1);
+    const curbMat = k.lit({ map: curbTex });
+    for (const sgn of [-1, 1]) {
+      const curb = new Mesh(new BoxGeometry(totalL, 0.34, 0.5), curbMat);
+      curb.position.set(0, 0.07, sgn * (trackW / 2 + 0.25));
+      curb.castShadow = !k.low;
+      curb.receiveShadow = true;
+      scene.add(curb);
+    }
 
     /* ---------------- rào: InstancedMesh → cả trăm cái rào chỉ tốn 2 draw call ---------------- */
     const H = cfg.hurdles.length;
@@ -141,10 +165,10 @@ export function createRaceScene(o: RaceSceneOptions) {
     };
 
     /* ---------------- cổng đích + khán đài + đèn sân ---------------- */
-    const poleMat = k.lit({ color: '#c9cde6' });
+    const poleMat = k.lit({ color: '#ffd23f' });
     for (const s of [-1, 1]) {
-      const pole = new Mesh(new CylinderGeometry(0.09, 0.09, 3.2, 8), poleMat);
-      pole.position.set(-x0, 1.6, s * (trackW / 2 + 0.25));
+      const pole = new Mesh(new CylinderGeometry(0.28, 0.32, 3.4, 20), poleMat);
+      pole.position.set(-x0, 1.7, s * (trackW / 2 + 0.55));
       pole.castShadow = !k.low;
       scene.add(pole);
     }
@@ -157,12 +181,12 @@ export function createRaceScene(o: RaceSceneOptions) {
         }
       }
     });
-    const banner = new Mesh(new BoxGeometry(0.12, 0.6, trackW + 0.7), k.lit({ map: checker }));
-    banner.position.set(-x0, 3.05, 0);
+    const banner = new Mesh(new BoxGeometry(0.5, 0.8, trackW + 1.7), k.lit({ map: checker }));
+    banner.position.set(-x0, 3.5, 0);
     scene.add(banner);
 
     const standZ = -(trackW / 2 + 2.2);
-    const standMat = k.lit({ color: '#232a44' });
+    const standMat = k.lit({ color: '#ffffff' });
     for (let r = 0; r < 3; r++) {
       const step = new Mesh(new BoxGeometry(totalL + 8, 0.5 + r * 0.55, 1.1), standMat);
       step.position.set(0, (0.5 + r * 0.55) / 2 - 0.2, standZ - r * 1.1);
@@ -170,7 +194,8 @@ export function createRaceScene(o: RaceSceneOptions) {
       scene.add(step);
     }
     const perRow = Math.round((totalL + 6) / 0.65);
-    const crowd = new InstancedMesh(new BoxGeometry(0.34, 0.5, 0.3), k.lit({ flatShading: true }), perRow * 3);
+    const crowd = new InstancedMesh(new CapsuleGeometry(0.2, 0.22, 4, 12), k.lit({}), perRow * 3);
+    const crowdHeads = new InstancedMesh(new SphereGeometry(0.17, 12, 10), k.lit({ color: '#ffd9b8' }), perRow * 3);
     const crowdBase: { x: number; y: number; z: number; phase: number }[] = [];
     const tint = new Color();
     for (let r = 0; r < 3; r++) {
@@ -182,23 +207,12 @@ export function createRaceScene(o: RaceSceneOptions) {
           z: standZ - r * 1.1,
           phase: Math.random() * 6,
         });
-        tint.setHSL(Math.random(), 0.55, 0.55);
+        tint.setHSL(Math.random(), 0.85, 0.6);
         crowd.setColorAt(idx, tint);
       }
     }
     if (crowd.instanceColor) crowd.instanceColor.needsUpdate = true;
-    scene.add(crowd);
-
-    const lampMat = new MeshBasicMaterial({ color: '#fff6d8' });
-    for (const sx of [-1, 1]) {
-      for (const sz of [-1, 1]) {
-        const pole = new Mesh(new CylinderGeometry(0.12, 0.16, 9, 8), poleMat);
-        pole.position.set(sx * (L / 2 + 3), 4.5, sz * (trackW / 2 + 5));
-        const lamp = new Mesh(new BoxGeometry(1.4, 0.6, 0.4), lampMat);
-        lamp.position.set(sx * (L / 2 + 3), 9.2, sz * (trackW / 2 + 5));
-        scene.add(pole, lamp);
-      }
-    }
+    scene.add(crowd, crowdHeads);
 
     /* ---------------- nhân vật ---------------- */
     interface Entry {
@@ -318,16 +332,20 @@ export function createRaceScene(o: RaceSceneOptions) {
           const bob = Math.abs(Math.sin(time * (4 + excitement * 6) + b.phase)) * (0.05 + excitement * 0.25);
           m.makeTranslation(b.x, b.y + bob, b.z);
           crowd.setMatrixAt(i, m);
+          m.makeTranslation(b.x, b.y + bob + 0.42, b.z);
+          crowdHeads.setMatrixAt(i, m);
         }
         crowd.instanceMatrix.needsUpdate = true;
+        crowdHeads.instanceMatrix.needsUpdate = true;
 
         // camera bám theo mình từ phía khán đài đối diện
         const aim = Math.max(x0 + 3, Math.min(-x0 - 1, followX === -Infinity ? x0 : followX));
         camX += (aim - camX) * (1 - Math.exp(-dt * 3));
-        camPos.set(camX - 4.5, 4.2 + n * 0.3, trackW / 2 + 7.5 + n * 0.35);
-        camLook.set(camX + 3.5, 0.5, 0);
+        camPos.set(camX - 6, 2.7 + n * 0.2, trackW / 2 + 5.5 + n * 0.3);
+        camLook.set(camX + 3, 1.7, 0);
         k.look(camPos, camLook);
       },
     };
-  });
+  },
+  );
 }

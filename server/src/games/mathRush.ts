@@ -87,13 +87,9 @@ function makeQuestion(i: number, startOffset: number): Question {
 
 export const mathRushGame: GameDefinition<Config, State> = {
   id: 'math',
-  name: 'TÍNH NHANH',
+  name: 'TÍNH NHANH - CHƯA CẬP NHẬT',
   instructions:
-    'Màn hình hiện một phép cộng/trừ và 4 ô đáp án. Tính nhẩm ra kết quả, dùng ← → chạy nhân vật ' +
-    'sang ô có đáp án đúng, rồi nhấn SPACE để CHỐT. ' +
-    'Ai chốt đúng SỚM NHẤT được thưởng nhiều nhất: người đầu +60, nhì +35, ba +20, tư +10 điểm, ' +
-    'cộng thêm điểm theo thời gian còn lại. Chốt sai bị trừ 25 điểm và khoá 0.7 giây. ' +
-    'Có 8 câu, số càng về sau càng lớn.',
+    'Tính nhẩm phép tính, chạy ← → sang ô đáp án đúng rồi nhấn SPACE để chốt. Chốt đúng càng sớm càng nhiều điểm, sai bị trừ điểm.',
   controls: [
     { keys: ['←', '→'], desc: 'Chạy sang ô đáp án' },
     { keys: ['SPACE'], desc: 'Chốt đáp án' },

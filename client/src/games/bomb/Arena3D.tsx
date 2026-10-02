@@ -17,40 +17,34 @@ export default function Arena3D({ game, players, meId }: { game: BombGameState; 
 
   useScene(
     hostRef,
-    (host, callbacks) =>
+    (host, hooks) =>
       createBombScene({
         host,
-        cfg: gameRef.current.cfg,
+        hooks,
         players: players.map((p) => ({ id: p.id, color: p.color })),
         meId,
         read: () => gameRef.current,
         labels: labels.current,
-        onQuality: callbacks.onQuality,
-        onFail: callbacks.onFail,
       }),
     [rosterKey, meId],
   );
 
   return (
-    <div className={`bm-stage3d ${game.ratio < 0.25 && game.holder ? 'panic' : ''}`}>
-      <div ref={hostRef} className="bm-canvas-host" />
-      <div className="bm-labels">
-        {players.map((p) => {
-          const hp = game.lives[p.id] ?? game.cfg.lives;
-          return (
-            <div
-              key={p.id}
-              ref={(el) => {
-                labels.current.set(p.id, el);
-              }}
-              className={`bm-label3d ${p.id === meId ? 'me' : ''} ${hp <= 0 ? 'dead' : ''}`}
-              style={{ color: p.color }}
-            >
-              {p.name}
-              <b>{hp > 0 ? '❤'.repeat(hp) : '💀'}</b>
-            </div>
-          );
-        })}
+    <div className={`g3d-stage ${game.ratio < 0.25 && game.holders.length ? 'bm-panic' : ''}`}>
+      <div ref={hostRef} className="g3d-host" />
+      <div className="g3d-labels">
+        {players.map((p) => (
+          <div
+            key={p.id}
+            ref={(el) => {
+              labels.current.set(p.id, el);
+            }}
+            className={`g3d-label ${p.id === meId ? 'me' : ''} ${game.out[p.id] !== undefined ? 'dim' : ''}`}
+            style={{ color: p.color }}
+          >
+            {p.name}
+          </div>
+        ))}
       </div>
     </div>
   );

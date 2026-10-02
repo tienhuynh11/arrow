@@ -1,7 +1,9 @@
 import { useSyncExternalStore } from 'react';
 import type {
+  BoardAward,
   ControlHint,
   Emote,
+  GameMode,
   GameSummary,
   PlayerLook,
   PlayerState,
@@ -9,6 +11,7 @@ import type {
   ScoreRow,
   ServerMessage,
   StandingRow,
+  TileInfo,
 } from '@shared/protocol';
 import { DEFAULT_LOOK, normalizeLook } from '@shared/protocol';
 import { net } from '../network/net';
@@ -25,6 +28,8 @@ export interface GameInfo {
   round: number;
   totalRounds: number;
   comebackPlayerId: string | null;
+  /** chỉ có ở chế độ Hành Trình Xuyên Việt: ô tỉnh đang chơi */
+  tile?: TileInfo;
 }
 
 export interface Toast {
@@ -41,7 +46,13 @@ export interface AppState {
   error: string | null;
   joining: boolean;
   game: GameInfo | null;
-  score: { gameId: string; rows: ScoreRow[]; standings: StandingRow[]; nextAt: number } | null;
+  score: {
+    gameId: string;
+    rows: ScoreRow[];
+    standings: StandingRow[];
+    nextAt: number;
+    board?: { tileIndex: number; awards: Record<string, BoardAward> };
+  } | null;
   final: { standings: StandingRow[]; winnerId: string } | null;
   /** danh mục minigame server gửi khi vừa kết nối */
   catalog: GameSummary[];
@@ -183,6 +194,12 @@ net.on((msg: ServerMessage) => {
         patch.final = null;
         lastOrder = [];
       }
+      // bàn cờ: lượt mới bắt đầu nên bỏ minigame + bảng điểm của lượt trước
+      if (msg.room.phase === 'board') {
+        patch.game = null;
+        patch.score = null;
+        patch.final = null;
+      }
       // cập nhật trạng thái TRƯỚC rồi mới phát âm thanh: lỗi âm thanh không được làm kẹt ván
       set(patch);
       if (msg.room.phase === 'playing' && prevPhase === 'countdown') sfx.start();
@@ -202,6 +219,7 @@ net.on((msg: ServerMessage) => {
           round: msg.round,
           totalRounds: msg.totalRounds,
           comebackPlayerId: msg.comebackPlayerId,
+          ...(msg.tile ? { tile: msg.tile } : {}),
         },
         score: null,
         final: null,
@@ -209,7 +227,15 @@ net.on((msg: ServerMessage) => {
       break;
 
     case 'game:score':
-      set({ score: { gameId: msg.gameId, rows: msg.rows, standings: msg.standings, nextAt: msg.nextAt } });
+      set({
+        score: {
+          gameId: msg.gameId,
+          rows: msg.rows,
+          standings: msg.standings,
+          nextAt: msg.nextAt,
+          ...(msg.board ? { board: msg.board } : {}),
+        },
+      });
       detectOvertake(msg.standings, state.room?.players ?? []);
       break;
 
@@ -257,17 +283,18 @@ export const actions = {
     set({ name });
     localStorage.setItem('arrow-party-name', name);
   },
-  createRoom(opts?: { maxPlayers?: number; gameIds?: string[] }) {
+  createRoom(opts?: { maxPlayers?: number; gameIds?: string[]; mode?: GameMode }) {
     set({ joining: true });
     net.send({
       t: 'room:create',
       name: state.name,
       maxPlayers: opts?.maxPlayers,
       gameIds: opts?.gameIds,
+      mode: opts?.mode,
       look: state.look,
     });
   },
-  setSettings(opts: { maxPlayers?: number; gameIds?: string[] }) {
+  setSettings(opts: { maxPlayers?: number; gameIds?: string[]; mode?: GameMode }) {
     net.send({ t: 'room:settings', ...opts });
   },
   joinRoom(code: string) {
@@ -285,6 +312,10 @@ export const actions = {
   },
   start() {
     net.send({ t: 'game:start' });
+  },
+  /** chế độ bàn cờ: chủ xúc xắc bấm tung */
+  rollDice() {
+    net.send({ t: 'board:roll' });
   },
   backToLobby() {
     net.send({ t: 'match:again' });

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { PLAYER_COLORS, ROOM_SIZE_OPTIONS, type RoomState } from '@shared/protocol';
+import { TILES } from '@shared/board';
 import { actions, useStore } from '../state/store';
 import Character from '../components/Character';
 import CharacterEditor from '../components/CharacterEditor';
 import FullscreenHint from '../components/FullscreenHint';
 import { webglSupported } from '../three/quality';
 import EmoteBar, { EMOTE_LIST, emoteInfo } from '../components/EmoteBar';
+import ModePicker from '../components/ModePicker';
 
 export default function Lobby({ room }: { room: RoomState }) {
   const meId = useStore((s) => s.meId);
@@ -76,7 +78,11 @@ export default function Lobby({ room }: { room: RoomState }) {
         <span>
           👥 {connectedCount}/{room.maxPlayers}
         </span>
-        <span>🎮 {room.selectedGameIds.length} minigame</span>
+        {room.mode === 'journey' ? (
+          <span>🗺️ Hành Trình Xuyên Việt · {TILES.length} tỉnh</span>
+        ) : (
+          <span>🎮 {room.selectedGameIds.length} minigame</span>
+        )}
         <button className="linkish" onClick={() => setEditing(true)}>
           ✏️ Nhân vật của bạn
         </button>
@@ -114,6 +120,11 @@ export default function Lobby({ room }: { room: RoomState }) {
             </div>
           </div>
           <div className="setup-block">
+            <div className="setup-label">CHẾ ĐỘ CHƠI</div>
+            <ModePicker value={room.mode} onChange={(mode) => actions.setSettings({ mode })} />
+          </div>
+          {room.mode === 'classic' && (
+          <div className="setup-block">
             <div className="setup-label">MINIGAME</div>
             <div className="game-picker">
               {catalog.map((g) => {
@@ -133,6 +144,7 @@ export default function Lobby({ room }: { room: RoomState }) {
               })}
             </div>
           </div>
+          )}
         </div>
       )}
 

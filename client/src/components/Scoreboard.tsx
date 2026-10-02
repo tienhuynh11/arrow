@@ -1,4 +1,5 @@
-import type { PlayerState, ScoreRow, StandingRow } from '@shared/protocol';
+import type { BoardAward, PlayerState, ScoreRow, StandingRow } from '@shared/protocol';
+import { TILES } from '@shared/board';
 import { useServerClock } from '../utils/hooks';
 import Character from './Character';
 
@@ -16,12 +17,15 @@ export default function Scoreboard({
   players,
   nextAt,
   meId,
+  board,
 }: {
   rows: ScoreRow[];
   standings: StandingRow[];
   players: PlayerState[];
   nextAt: number;
   meId: string;
+  /** chế độ Hành Trình Xuyên Việt: điểm là Điểm Văn Hoá của ô tỉnh vừa chơi */
+  board?: { tileIndex: number; awards: Record<string, BoardAward> };
 }) {
   const now = useServerClock(100);
   const remain = Math.max(0, Math.ceil((nextAt - now) / 1000));
@@ -73,12 +77,22 @@ export default function Scoreboard({
               <div className="pd-name">{p.name}</div>
 
               <div className="pd-sep" />
-              <div className="pd-reward-label">Reward</div>
+              <div className="pd-reward-label">{board ? 'Điểm Văn Hoá' : 'Reward'}</div>
               <div className={`pd-points ${r.points < 0 ? 'neg' : ''}`}>
                 {r.points >= 0 ? '+' : ''}
                 {r.points}
               </div>
               <div className="pd-detail">{r.detail}</div>
+              {board && board.awards[r.playerId] && (
+                <div className="pd-award">
+                  {board.awards[r.playerId].badge && (
+                    <span className="badge">
+                      {TILES[board.tileIndex].emoji} Đặc sản {TILES[board.tileIndex].specialty}!
+                    </span>
+                  )}
+                  {board.awards[r.playerId].home && <span className="home">🏠 Chủ nhà ×1,5</span>}
+                </div>
+              )}
             </div>
           );
         })}
@@ -118,7 +132,7 @@ export default function Scoreboard({
         })}
       </div>
 
-      <div className="pd-next">Minigame tiếp theo sau {remain}s…</div>
+      <div className="pd-next">{board ? 'Chặng tiếp theo' : 'Minigame tiếp theo'} sau {remain}s…</div>
     </div>
   );
 }

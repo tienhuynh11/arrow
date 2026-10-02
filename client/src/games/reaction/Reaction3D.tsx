@@ -43,12 +43,20 @@ export default function Reaction3D({ game, players, meId }: { game: ReactionGame
                 style={{ color: p.color }}
               >
                 {p.name}
-                {r && <b>{resultText(r)}</b>}
+                <b>
+                  {r ? resultText(r) : ' '}
+                  {game.round >= 0 ? ` · ${game.totals[p.id] ?? 0} đ` : ''}
+                </b>
               </div>
             );
           })}
         </div>
         <div className="g3d-hud top">
+          {game.round >= 0 && (
+            <span className="g3d-chip">
+              VÒNG {game.round + 1}/{game.totalRounds}
+            </span>
+          )}
           <div className={`g3d-big ${state}`}>{game.go ? 'GO!' : game.fake ? 'WAIT!' : 'READY...'}</div>
         </div>
       </div>
@@ -58,5 +66,5 @@ export default function Reaction3D({ game, players, meId }: { game: ReactionGame
 }
 
 function ReactionHint({ go }: { go: boolean }) {
-  return <p className="hint">{go ? 'NHẤN SPACE!' : 'Chỉ nhấn khi thấy GO! xanh - tín hiệu đỏ là giả'}</p>;
+  return <p className="hint">{go ? 'NHẤN SPACE!' : 'Chỉ nhấn khi thấy GO! xanh - tín hiệu đỏ là giả · nhấn sớm bị trừ 400 điểm'}</p>;
 }

@@ -8,6 +8,14 @@ import { mathRushGame } from './mathRush.js';
 import { dodgeGame } from './dodge.js';
 import { hotPotatoGame } from './hotPotato.js';
 import { tugWarGame } from './tugWar.js';
+import { coconutGame } from './coconut.js';
+import { hexAGoneGame } from './hexAGone.js';
+import { doorDashGame } from './doorDash.js';
+import { fallMountainGame } from './fallMountain.js';
+import { jumpShowdownGame } from './jumpShowdown.js';
+import { blockPartyGame } from './blockParty.js';
+import { memoryMatchGame } from './memoryMatch.js';
+import { tipToeGame } from './tipToe.js';
 
 /** Add a new minigame here and the match loop picks it up automatically. */
 export const GAMES: GameDefinition[] = [
@@ -20,6 +28,14 @@ export const GAMES: GameDefinition[] = [
   dodgeGame,
   hotPotatoGame,
   tugWarGame,
+  coconutGame,
+  hexAGoneGame,
+  doorDashGame,
+  fallMountainGame,
+  jumpShowdownGame,
+  blockPartyGame,
+  memoryMatchGame,
+  tipToeGame,
 ];
 
 export const gameById = (id: string) => GAMES.find((g) => g.id === id);

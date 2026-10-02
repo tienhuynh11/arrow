@@ -9,6 +9,14 @@ import MathRush from './math';
 import DodgeGame from './dodge';
 import BombGame from './bomb';
 import TugWar from './tug';
+import CoconutGame from './coconut';
+import HexGame from './hex';
+import DoorGame from './door';
+import MountainGame from './mountain';
+import ShowdownGame from './showdown';
+import BlockPartyGame from './blockparty';
+import MemoryGame from './memory';
+import TipToeGame from './tiptoe';
 
 /** Renderer registry - keys must match the server-side game ids. */
 export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
@@ -21,4 +29,12 @@ export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
   dodge: DodgeGame,
   bomb: BombGame,
   tug: TugWar,
+  coconut: CoconutGame,
+  hex: HexGame,
+  door: DoorGame,
+  mountain: MountainGame,
+  showdown: ShowdownGame,
+  blockparty: BlockPartyGame,
+  memory: MemoryGame,
+  tiptoe: TipToeGame,
 };

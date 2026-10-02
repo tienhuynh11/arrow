@@ -2,8 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
+const BASE = '/arrow/';
+
 export default defineConfig({
-  base: '/arrow/',
+  base: BASE,
   plugins: [react()],
   resolve: {
     alias: {
@@ -22,11 +24,17 @@ export default defineConfig({
     fs: { allow: ['..'] },
     // Đẩy WebSocket qua cùng origin với trang web, nhờ vậy chỉ cần mở MỘT port
     // (5173) là chơi được qua ngrok/LAN - không phải tunnel riêng cho 8787.
+    // Client nối vào `${base}ws` (xem net.ts), nên khoá proxy phải kèm base, không thì dev bị 404.
     proxy: {
-      '/ws': {
+      [`${BASE}ws`]: {
         target: `http://localhost:${process.env.SERVER_PORT ?? 8787}`,
         ws: true,
         changeOrigin: true,
+        configure: (proxy) => {
+          // người chơi đóng tab giữa chừng làm socket ECONNRESET; không bắt thì cả dev server sập
+          proxy.on('error', () => {});
+          proxy.on('proxyReqWs', (_req, _socket, clientSocket) => clientSocket.on('error', () => {}));
+        },
       },
     },
   },

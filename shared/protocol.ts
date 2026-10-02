@@ -8,7 +8,7 @@ export const DEFAULT_MAX_PLAYERS = 4;
 export const NAME_MAX = 12;
 export const RECONNECT_GRACE_MS = 30_000;
 /** đủ dài để đọc hết luật chơi trước mỗi minigame */
-export const COUNTDOWN_MS = 10_000;
+export const COUNTDOWN_MS = 15_000;
 export const SCOREBOARD_MS = 4200;
 
 /** 16 màu phân biệt được trên nền tối; 4 màu đầu giữ nguyên như trước */
@@ -40,7 +40,51 @@ export interface GameSummary {
 /** giới hạn số người mà một phòng có thể chọn */
 export const ROOM_SIZE_OPTIONS = [2, 4, 6, 8, 10, 12, 16] as const;
 
-export type Phase = 'lobby' | 'countdown' | 'playing' | 'scoreboard' | 'final';
+export type Phase = 'lobby' | 'countdown' | 'playing' | 'scoreboard' | 'board' | 'final';
+
+/** classic: chơi lần lượt các minigame đã chọn · journey: board game "Hành Trình Xuyên Việt" */
+export type GameMode = 'classic' | 'journey';
+
+/** Trạng thái bàn cờ của chế độ journey; nằm trong room:state nên người vào lại phòng tự khôi phục được. */
+export interface BoardState {
+  /** lượt hiện tại, bắt đầu từ 1 */
+  turn: number;
+  totalTurns: number;
+  /** roll: chờ chủ xúc xắc tung · moving: quân cờ đang di chuyển, sắp vào minigame */
+  stage: 'roll' | 'moving';
+  rollerId: string;
+  /** hết giờ tung (stage roll) hoặc hết hoạt hình (stage moving) — giờ server */
+  deadline: number;
+  /** ô quyết định minigame của lượt này, -1 khi chưa tung */
+  tileIndex: number;
+  /** vị trí hiện tại / trước khi đi / xúc xắc lượt này của từng người (id → chỉ số ô) */
+  pos: Record<string, number>;
+  from: Record<string, number>;
+  dice: Record<string, number>;
+  /** các đặc sản (chỉ số ô) mỗi người đã thu thập */
+  badges: Record<string, number[]>;
+}
+
+/** Thông tin ô tỉnh gắn vào game:start ở chế độ journey. */
+export interface TileInfo {
+  index: number;
+  id: string;
+  name: string;
+  emoji: string;
+  specialty: string;
+  title: string;
+  value: number;
+  festival: boolean;
+}
+
+/** Điểm Văn Hoá của từng người ở một ô (kèm trong game:score). */
+export interface BoardAward {
+  points: number;
+  /** đang đứng đúng ô được chọn (nhân 1,5) */
+  home: boolean;
+  /** vừa lấy được đặc sản mới của tỉnh này */
+  badge: boolean;
+}
 
 /** Emote bấm được ở sảnh chờ - server chỉ chấp nhận đúng các giá trị này. */
 export const EMOTES = ['wave', 'dance', 'laugh', 'angry', 'sad', 'jump'] as const;
@@ -150,6 +194,9 @@ export interface RoomState {
   selectedGameIds: string[];
   /** số người tối thiểu để bắt đầu (1 khi server chạy chế độ test một mình) */
   minPlayers: number;
+  mode: GameMode;
+  /** chỉ có ở chế độ journey (kể cả sau khi trận kết thúc, để màn tổng kết hiện huy hiệu) */
+  board: BoardState | null;
 }
 
 export interface ControlHint {
@@ -175,13 +222,14 @@ export interface StandingRow {
 /* ---------------- client -> server ---------------- */
 export type ClientMessage =
   | { t: 'time:ping'; clientSent: number; rtt?: number }
-  | { t: 'room:create'; name: string; maxPlayers?: number; gameIds?: string[]; look?: PlayerLook }
+  | { t: 'room:create'; name: string; maxPlayers?: number; gameIds?: string[]; mode?: GameMode; look?: PlayerLook }
   | { t: 'room:join'; code: string; name: string; look?: PlayerLook }
   | { t: 'player:look'; look: PlayerLook }
   | { t: 'room:rejoin'; code: string; playerId: string; token: string }
   | { t: 'room:leave' }
   | { t: 'room:ready'; ready: boolean }
-  | { t: 'room:settings'; maxPlayers?: number; gameIds?: string[] }
+  | { t: 'room:settings'; maxPlayers?: number; gameIds?: string[]; mode?: GameMode }
+  | { t: 'board:roll' }
   | { t: 'game:start' }
   | { t: 'game:input'; gameId: string; input: GameInput }
   | { t: 'match:again' }
@@ -206,9 +254,19 @@ export type ServerMessage =
       round: number;
       totalRounds: number;
       comebackPlayerId: string | null;
+      /** chỉ có ở chế độ journey: ô tỉnh đang chơi (name/instructions ở trên đã được đổi theo chủ đề tỉnh) */
+      tile?: TileInfo;
     }
   | { t: 'game:event'; gameId: string; payload: any }
-  | { t: 'game:score'; gameId: string; rows: ScoreRow[]; standings: StandingRow[]; nextAt: number }
+  | {
+      t: 'game:score';
+      gameId: string;
+      rows: ScoreRow[];
+      standings: StandingRow[];
+      nextAt: number;
+      /** chỉ có ở chế độ journey */
+      board?: { tileIndex: number; awards: Record<string, BoardAward> };
+    }
   | { t: 'game:end'; standings: StandingRow[]; winnerId: string }
   | { t: 'lobby:emote'; playerId: string; emote: Emote };
 
@@ -224,6 +282,7 @@ export type GameInput =
   | { type: 'move'; dir: 'L' | 'R' }                    // math rush: đi sang ô bên cạnh
   | { type: 'lock' }                                    // math rush: chốt đáp án
   | { type: 'moveXY'; dx: number; dy: number }          // di chuyển tự do 2D trong đấu trường
-  | { type: 'pull' };                                   // kéo co
+  | { type: 'pull' }                                    // kéo co
+  | { type: 'climb'; side: 'L' | 'R' };                 // hái dừa: bấm luân phiên trái/phải để leo
 
 export type Judgement = 'PERFECT' | 'GREAT' | 'GOOD' | 'MISS' | 'TRAP';

@@ -25,27 +25,26 @@ interface State {
 
 const KEYS: Key[] = ['L', 'U', 'R', 'D'];
 const PENALTY = 650;
-const ROUNDS = 5;
+const ROUNDS = 8;
+/** độ dài dãy đầu tiên; mỗi dãy sau dài thêm 1 phím */
+const FIRST_LEN = 6;
 /** chần chừ quá lâu giữa hai phím là mất chuỗi - ép phải bấm liên tục */
 const IDLE_RESET = 1300;
 
 export const sequenceGame: GameDefinition<Config, State> = {
   id: 'sequence',
-  name: 'GÕ ĐÚNG CHUỖI',
+  name: 'GÕ ĐÚNG CHUỖI - CHƯA CẬP NHẬT',
   instructions:
-    'Màn hình hiện một dãy mũi tên. Bấm phím mũi tên theo đúng thứ tự từ trái sang phải. ' +
-    'Bấm sai một phím là phải gõ lại CẢ DÃY từ đầu, đồng thời bị khoá phím 0.65 giây. ' +
-    'Dừng quá 1.3 giây giữa hai phím cũng bị tính là làm lại từ đầu, nên phải gõ liên tục. ' +
-    'Có 5 dãy, dài dần từ 5 đến 9 phím. Ai gõ xong cả 5 dãy sớm nhất thì thắng.',
+    'Bấm các phím mũi tên đúng thứ tự dãy trên màn hình. Bấm sai là phải gõ lại cả dãy. Xong tất cả các dãy sớm nhất thắng.',
   controls: [{ keys: ['←', '↑', '→', '↓'], desc: 'Gõ theo đúng thứ tự trên màn hình' }],
-  duration: 34_000,
+  duration: 60_000,
   minPlayers: 1,
   maxPlayers: 16,
 
   createConfig() {
     const rounds: Key[][] = [];
     for (let r = 0; r < ROUNDS; r++) {
-      const len = 5 + r; // 5, 6, 7, 8, 9 - chuỗi sau dài hơn hẳn
+      const len = FIRST_LEN + r; // 6 … 13 - chuỗi sau dài hơn hẳn
       const seq: Key[] = [];
       for (let i = 0; i < len; i++) {
         let k = KEYS[Math.floor(Math.random() * KEYS.length)];

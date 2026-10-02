@@ -37,24 +37,22 @@ const WINDOWS = { perfect: 45, great: 90, good: 145 };
 const POINTS: Record<Judgement, number> = { PERFECT: 100, GREAT: 70, GOOD: 40, MISS: 0, TRAP: 0 };
 const TRAP_PENALTY = 70;
 
-const NOTE_COUNT = 38;
+const NOTE_COUNT = 92;
 const INTERVAL_START = 560;
-const INTERVAL_END = 310;
+const INTERVAL_END = 290;
+/** đoạn "thở" giữa bài (nhịp chậm lại một chút) rồi lại dồn dập, để bài dài không bị đều đều */
+const BREATHER = { from: 0.42, to: 0.5, slow: 1.35 };
 
 export const rhythmGame: GameDefinition<Config, State> = {
   id: 'rhythm',
-  name: 'BẮT NHỊP',
+  name: 'BẮT NHỊP - CHƯA CẬP NHẬT',
   instructions:
-    'Có HAI làn nốt chạy từ phải sang: làn DƯỚI bấm SPACE, làn TRÊN bấm ↑. ' +
-    'Khi nốt đi vào vùng vàng ở giữa thì bấm đúng phím của làn đó. ' +
-    'Trúng sát tâm được nhiều điểm hơn, trúng liên tiếp lên COMBO nhân điểm tới 2 lần. ' +
-    'Nốt VÀNG ⭐ gấp đôi điểm. Nốt ĐỎ ☠ là BẪY - phải để nó trôi qua, ' +
-    'lỡ bấm là mất 70 điểm và đứt combo! Nhạc nhanh dần về cuối bài.',
+    'Nốt chạy tới vùng vàng thì bấm: làn DƯỚI là SPACE, làn TRÊN là ↑. Nốt ⭐ gấp đôi điểm, nốt ☠ là BẪY, đừng bấm. Bấm trúng liên tiếp để lên COMBO.',
   controls: [
     { keys: ['SPACE'], desc: 'Bắt nốt làn dưới' },
     { keys: ['↑'], desc: 'Bắt nốt làn trên' },
   ],
-  duration: 30_000,
+  duration: 50_000,
   minPlayers: 1,
   maxPlayers: 16,
 
@@ -63,14 +61,16 @@ export const rhythmGame: GameDefinition<Config, State> = {
     let t = 1600;
     for (let i = 0; i < NOTE_COUNT; i++) {
       const p = i / (NOTE_COUNT - 1);
-      const interval = INTERVAL_START + (INTERVAL_END - INTERVAL_START) * p;
+      const breather = p >= BREATHER.from && p <= BREATHER.to ? BREATHER.slow : 1;
+      const interval = (INTERVAL_START + (INTERVAL_END - INTERVAL_START) * p) * breather;
       const swing = i % 8 === 3 ? -60 : i % 8 === 6 ? 55 : 0;
 
-      // làn trên xuất hiện dần từ khoảng 1/5 bài
-      const lane: 0 | 1 = p > 0.22 && Math.random() < 0.42 ? 1 : 0;
+      // làn trên xuất hiện dần từ khoảng 1/5 bài, về cuối chia đều hai làn
+      const laneChance = p > 0.6 ? 0.5 : 0.42;
+      const lane: 0 | 1 = p > 0.22 && Math.random() < laneChance ? 1 : 0;
       let type: NoteType = 'normal';
       if (i > 3 && i % 7 === 0) type = 'gold';
-      else if (p > 0.18 && Math.random() < 0.16) type = 'trap';
+      else if (p > 0.18 && Math.random() < (p > 0.55 ? 0.2 : 0.16)) type = 'trap'; // bẫy dày dần
 
       notes.push({ t: Math.round(t + swing), lane, type });
       t += interval;

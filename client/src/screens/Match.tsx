@@ -4,6 +4,7 @@ import { GAME_COMPONENTS } from '../games';
 import Countdown from '../components/Countdown';
 import Scoreboard from '../components/Scoreboard';
 import Leaderboard from '../components/Leaderboard';
+import Board from './Board';
 import FullscreenHint from '../components/FullscreenHint';
 
 export default function Match({ room }: { room: RoomState }) {
@@ -26,6 +27,11 @@ export default function Match({ room }: { room: RoomState }) {
               {game.name} · {game.round}/{game.totalRounds}
             </span>
           )}
+          {!game && room.mode === 'journey' && room.board && (
+            <span className="mh-game">
+              HÀNH TRÌNH XUYÊN VIỆT · {room.board.turn}/{room.board.totalTurns}
+            </span>
+          )}
         </div>
         <Leaderboard players={players} meId={meId} comebackPlayerId={game?.comebackPlayerId} />
         {quality && (
@@ -38,13 +44,16 @@ export default function Match({ room }: { room: RoomState }) {
       </header>
 
       <main className="match-stage">
-        {score ? (
+        {room.phase === 'board' && room.board ? (
+          <Board room={room} meId={meId} />
+        ) : score ? (
           <Scoreboard
             rows={score.rows}
             standings={score.standings}
             players={players}
             nextAt={score.nextAt}
             meId={meId}
+            board={score.board}
           />
         ) : game && Game ? (
           <>

@@ -26,8 +26,21 @@ interface State {
   lastBroadcast: number;
 }
 
-const DISTANCE = 110;
-const HURDLES = [18, 34, 50, 64, 79, 93];
+const DISTANCE = 330;
+const HURDLE_COUNT = 16;
+/** rào đầu tiên, khoảng cách giữa hai rào thu hẹp dần từ GAP_START xuống GAP_END (đơn vị quãng đường) */
+const HURDLE_FIRST = 26;
+const GAP_START = 24;
+const GAP_END = 15;
+const HURDLES: number[] = (() => {
+  const out: number[] = [];
+  let x = HURDLE_FIRST;
+  for (let i = 0; i < HURDLE_COUNT; i++) {
+    out.push(Math.round(x));
+    x += GAP_START + ((GAP_END - GAP_START) * i) / (HURDLE_COUNT - 1);
+  }
+  return out;
+})();
 const JUMP_MS = 520;
 const SPEED = 12;
 /** nếu quá lâu không nhận tín hiệu giữ phím thì coi như đã nhả (chống kẹt phím khi mất gói) */
@@ -35,17 +48,14 @@ const HOLD_TIMEOUT = 900;
 
 export const raceGame: GameDefinition<Config, State> = {
   id: 'race',
-  name: 'VƯỢT RÀO',
+  name: 'VƯỢT RÀO - CHƯA CẬP NHẬT',
   instructions:
-    'Cả phòng chạy chung một đường đua. GIỮ phím → để chạy tới, thả ra là đứng lại. ' +
-    'Trên đường có 6 cái rào: khi sắp tới rào phải nhấn ↑ (hoặc SPACE) để nhảy qua. ' +
-    'Đâm vào rào là vấp: đứng hình 1 giây, bị đẩy lùi lại VÀ VẪN PHẢI NHẢY QUA CÁI RÀO ĐÓ ' +
-    '- không đi vòng được. Ai về đích trước thì thắng.',
+    'Giữ → để chạy, nhấn ↑ hoặc SPACE để nhảy qua rào. Vấp rào là đứng hình và bị đẩy lùi, vẫn phải nhảy qua rào đó. Về đích trước thắng.',
   controls: [
     { keys: ['→'], desc: 'Giữ để chạy tới' },
     { keys: ['↑', 'SPACE'], desc: 'Nhảy qua rào' },
   ],
-  duration: 45_000,
+  duration: 55_000,
   minPlayers: 1,
   maxPlayers: 16,
 

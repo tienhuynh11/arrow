@@ -14,6 +14,8 @@ import type { Character3D } from './character';
 import type { ReactionResult } from '../games/reaction/useReactionGame';
 
 export interface ReactionFrame {
+  /** vòng đang chơi (0, 1, …); đổi vòng thì đưa mọi người về vạch xuất phát */
+  round: number;
   go: boolean;
   fake: number;
   results: Record<string, ReactionResult>;
@@ -156,6 +158,7 @@ export function createReactionScene(o: ReactionSceneOptions) {
     });
 
     let lastGo = false;
+    let lastRound = -1;
     let lastFake = 0;
     const target = new Vector3(0, 1.4, -5.5);
     const camPos = new Vector3();
@@ -163,6 +166,18 @@ export function createReactionScene(o: ReactionSceneOptions) {
     return {
       frame(dt, time) {
         const f = o.read();
+
+        if (f.round !== lastRound) {
+          // vòng mới: về lại vạch xuất phát, quay mặt về cột đèn
+          lastRound = f.round;
+          for (const e of chars.values()) {
+            e.at = 0;
+            e.z = START_Z;
+            e.turned = false;
+            e.c.setYaw(Math.PI);
+          }
+          lastGo = false;
+        }
         const now = Date.now();
         const fakeOn = !!f.fake && !f.go;
 
