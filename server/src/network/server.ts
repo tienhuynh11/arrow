@@ -6,6 +6,7 @@ import { gameCatalog } from '../games/index.js';
 import { RoomManager } from '../rooms/RoomManager.js';
 import type { Room } from '../rooms/Room.js';
 import type { Connection } from './connection.js';
+import { serveStatic } from './static.js';
 import { RateLimiter, sanitizeCode, sanitizeName } from '../validation/input.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -30,6 +31,7 @@ export function startServer() {
       res.end(JSON.stringify({ ok: true, rooms: rooms.size, serverTime: Date.now() }));
       return;
     }
+    if (serveStatic(req, res)) return;
     res.writeHead(404);
     res.end();
   });
