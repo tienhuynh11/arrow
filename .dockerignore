@@ -1,0 +1,14 @@
+# flyctl launch added from .gitignore
+**/node_modules
+**/dist
+**/.env
+**/.env.local
+**/*.log
+**/.DS_Store
+
+# GitNexus: index cuc bo + cau hinh/skills cua Claude Code
+.claude
+
+# flyctl launch added from .gitnexus/.gitignore
+.gitnexus/**/*
+fly.toml

@@ -6,6 +6,7 @@ import Scoreboard from '../components/Scoreboard';
 import Leaderboard from '../components/Leaderboard';
 import Board from './Board';
 import FullscreenHint from '../components/FullscreenHint';
+import TouchControls, { isTouchDevice } from '../components/TouchControls';
 
 export default function Match({ room }: { room: RoomState }) {
   const meId = useStore((s) => s.meId) ?? '';
@@ -66,6 +67,7 @@ export default function Match({ room }: { room: RoomState }) {
               meId={meId}
               live={live}
             />
+            {live && !score && isTouchDevice() && <TouchControls gameId={game.gameId} controls={game.controls} />}
             {room.phase === 'countdown' && (
               <div className="overlay">
                 <FullscreenHint compact />
