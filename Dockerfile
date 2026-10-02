@@ -13,6 +13,8 @@ FROM node:22-slim AS server
 WORKDIR /app
 COPY server/package*.json server/
 RUN cd server && npm ci
+# package.json gốc (type: module) để tsc biên dịch cả shared/ thành ES module giống server
+COPY package.json ./
 COPY server server
 COPY shared shared
 RUN cd server && npm run build
