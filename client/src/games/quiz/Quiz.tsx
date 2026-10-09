@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PlayerState } from '@shared/protocol';
+import Character from '../../components/Character';
 import { net } from '../../network/net';
 import { sfx } from '../../utils/sound';
 import type { QuizGameState } from './useQuizGame';
@@ -11,7 +12,7 @@ interface Props {
   live: boolean;
 }
 
-const fmtMs = (ms: number) => (ms >= 0 ? `${(ms / 1000).toFixed(1)}s` : '—');
+const MEDALS = ['🥇', '🥈', '🥉'];
 
 /** Làm rõ dần theo tiến độ k (0..1): mờ giảm chậm lúc đầu, nhanh dần về cuối */
 function fade(p: number) {
@@ -24,6 +25,37 @@ function fade(p: number) {
   };
 }
 
+/** Chân dung tròn của người chơi (đầu nhân vật) */
+function Portrait({ p, size }: { p: PlayerState; size: number }) {
+  return (
+    <span className="qz-face" style={{ width: size, height: size, ['--c' as string]: p.color }}>
+      <Character color={p.color} look={p.look} view="head" size={size} />
+    </span>
+  );
+}
+
+/** Số đếm tăng dần from → to (chỉ đổi textContent, không re-render) */
+function Count({ from, to, delay }: { from: number; to: number; delay: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.textContent = String(from);
+    if (from === to) return;
+    let id = 0;
+    const t0 = performance.now() + delay;
+    const step = (now: number) => {
+      const k = Math.max(0, Math.min(1, (now - t0) / 900));
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = String(Math.round(from + (to - from) * e));
+      if (k < 1) id = requestAnimationFrame(step);
+    };
+    id = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(id);
+  }, [from, to, delay]);
+  return <span ref={ref}>{from}</span>;
+}
+
 export default function Quiz({ game, players, meId, live }: Props) {
   const { q, prog, ack, sent, result, scores, submit } = game;
   const [text, setText] = useState('');
@@ -31,17 +63,20 @@ export default function Quiz({ game, players, meId, live }: Props) {
   const [needPlay, setNeedPlay] = useState(false);
 
   const barRef = useRef<HTMLDivElement>(null);
+  const ptsRef = useRef<HTMLElement>(null);
   const clockRef = useRef<HTMLSpanElement>(null);
+  const nextRef = useRef<HTMLSpanElement>(null);
   const mediaRef = useRef<HTMLElement | null>(null);
   const fogRef = useRef<HTMLDivElement>(null);
   const avRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const rowRefs = useRef<Map<string, HTMLLIElement>>(new Map());
   const qRef = useRef(q);
   const resRef = useRef(result);
   qRef.current = q;
   resRef.current = result;
-
-  const nameOf = (id: string) => players.find((p) => p.id === id)?.name ?? '???';
+  const playersRef = useRef(players);
+  playersRef.current = players;
 
   // câu mới: xoá ô nhập + lỗi media
   useEffect(() => {
@@ -54,26 +89,31 @@ export default function Quiz({ game, players, meId, live }: Props) {
     }
   }, [q?.i]);
 
-  // một vòng rAF: thanh đếm ngược, độ rõ của media, tắt tiếng; không re-render React mỗi khung hình
+  // một vòng rAF: thanh điểm, đồng hồ, độ rõ của media, tắt tiếng; không re-render React mỗi khung hình
   useEffect(() => {
     let id = 0;
     const loop = () => {
       const qq = qRef.current;
       const res = resRef.current;
       const now = net.now();
+      if (res) {
+        if (nextRef.current) {
+          const s = Math.max(0, Math.ceil((res.nextAt - now) / 1000));
+          nextRef.current.textContent = `Câu kế sau ${s}s`;
+        }
+      }
       if (qq) {
         const total = Math.max(1, qq.endAt - qq.startAt);
         const p = res ? 1 : (now - qq.startAt) / total;
+        const remain = res ? 0 : Math.max(0, Math.min(1, 1 - p));
+        const ended = !!res || now >= qq.endAt;
         if (barRef.current) {
-          barRef.current.style.transform = `scaleX(${res ? 0 : Math.max(0, Math.min(1, 1 - p))})`;
-          barRef.current.classList.toggle('low', !res && p > 0.8);
+          barRef.current.style.clipPath = `inset(0 ${((1 - (ended ? 0 : remain)) * 100).toFixed(2)}% 0 0)`;
         }
+        if (ptsRef.current) ptsRef.current.textContent = String(ended ? 0 : Math.round(300 + 700 * remain));
         if (clockRef.current) {
-          clockRef.current.textContent = res
-            ? `Câu kế sau ${Math.max(0, Math.ceil((res.nextAt - now) / 1000))}s`
-            : now >= qq.endAt
-              ? 'Hết giờ…'
-              : `${Math.max(0, Math.ceil((qq.endAt - now) / 1000))}s`;
+          clockRef.current.textContent = res ? '' : ended ? 'Hết giờ…' : `${Math.max(0, Math.ceil((qq.endAt - now) / 1000))}s`;
+          clockRef.current.classList.toggle('low', !ended && p > 0.8);
         }
         const f = fade(p);
         const el = mediaRef.current;
@@ -87,8 +127,6 @@ export default function Quiz({ game, players, meId, live }: Props) {
           av.muted = sfx.isMuted();
           if (res && qq.audio && !qq.video && !av.paused) av.pause();
         }
-      } else if (clockRef.current && res) {
-        clockRef.current.textContent = `Câu kế sau ${Math.max(0, Math.ceil((res.nextAt - now) / 1000))}s`;
       }
       id = requestAnimationFrame(loop);
     };
@@ -130,132 +168,133 @@ export default function Quiz({ game, players, meId, live }: Props) {
     if (submit(text)) inputRef.current?.blur();
   };
 
+  /* ---------- bảng xếp hạng sau câu: thứ tự mới / cũ ---------- */
+  const board = useMemo(() => {
+    if (!result) return null;
+    const ptsOf = new Map(result.rows.map((r) => [r.id, r]));
+    const list = playersRef.current.filter((p) => !p.spectator || result.scores[p.id] !== undefined);
+    const entries = list.map((p, idx) => {
+      const total = result.scores[p.id] ?? 0;
+      const row = ptsOf.get(p.id);
+      const gain = row?.pts ?? 0;
+      return { p, idx, total, prev: Math.max(0, total - gain), row };
+    });
+    const byNew = [...entries].sort((a, b) => b.total - a.total || a.idx - b.idx);
+    const byOld = [...entries].sort((a, b) => b.prev - a.prev || a.idx - b.idx);
+    const oldIndex = new Map(byOld.map((e, k) => [e.p.id, k]));
+    return { byNew, oldIndex };
+  }, [result?.i]);
+
+  // FLIP: các hàng bắt đầu ở vị trí xếp hạng cũ rồi trượt về vị trí mới
+  useLayoutEffect(() => {
+    if (!result || !board) return;
+    const els = board.byNew.map((e) => rowRefs.current.get(e.p.id));
+    if (els.some((e) => !e)) return;
+    const slots = els.map((e) => e!.getBoundingClientRect());
+    els.forEach((el, n) => {
+      const o = board.oldIndex.get(board.byNew[n].p.id) ?? n;
+      if (!el || o === n || !slots[o]) return;
+      el.style.transition = 'none';
+      el.style.transform = `translate(${slots[o].left - slots[n].left}px, ${slots[o].top - slots[n].top}px)`;
+    });
+    const t = window.setTimeout(() => {
+      els.forEach((el) => {
+        if (!el) return;
+        el.style.transition = 'transform 0.95s cubic-bezier(0.22, 0.9, 0.25, 1)';
+        el.style.transform = '';
+      });
+    }, 700);
+    return () => window.clearTimeout(t);
+  }, [result?.i, board]);
+
   if (!q && !result) {
     return (
-      <div className="qz">
+      <div className="qz qz-q">
         <div className="qz-wait">Đang chờ câu hỏi…</div>
       </div>
     );
   }
 
-  const over = !!result || (q ? net.now() >= q.endAt : false);
+  /* ======================= PHA XẾP HẠNG ======================= */
+  if (result && board) {
+    const total = q?.total ?? 0;
+    const isLast = total > 0 && result.i + 1 >= total;
+    const mine = result.rows.find((r) => r.id === meId);
+    const accSet = result.accepted?.slice(1) ?? [];
+    const dense = board.byNew.length > 8;
+    return (
+      <div className="qz qz-r">
+        <div className="qz-topbar">
+          <span className="qz-game">QUIZ ĐOÁN NHANH</span>
+          <span className="qz-no">{total > 0 ? `Câu ${result.i + 1}/${total}` : `Câu ${result.i + 1}`}</span>
+        </div>
+        <div className="qz-ans">
+          <small>Đáp án</small>
+          <b>{result.answer}</b>
+          {accSet.length > 0 && <em>cũng nhận: {accSet.join(' · ')}</em>}
+          {mine ? (
+            <span className={`qz-verdict ${mine.ok ? 'ok' : 'bad'}`}>{mine.ok ? `Đúng rồi! +${mine.pts}` : 'Sai rồi'}</span>
+          ) : (
+            <span className="qz-verdict none">Bạn chưa trả lời</span>
+          )}
+        </div>
+        <ol
+          className={`qz-rank ${dense ? 'dense' : ''} ${board.byNew.length > 12 ? 'cols2' : ''}`}
+          style={{ ['--rows' as string]: Math.ceil(board.byNew.length / 2) }}
+        >
+          {board.byNew.map((e, n) => {
+            const r = e.row;
+            const label = r ? (r.ok ? `+${r.pts}` : 'Sai') : 'Không trả lời';
+            const cls = r ? (r.ok ? 'ok' : 'bad') : 'none';
+            return (
+              <li
+                key={e.p.id}
+                ref={(el) => {
+                  if (el) rowRefs.current.set(e.p.id, el);
+                  else rowRefs.current.delete(e.p.id);
+                }}
+                className={e.p.id === meId ? 'me' : ''}
+              >
+                <span className="rk">{n < 3 ? MEDALS[n] : n + 1}</span>
+                <Portrait p={e.p} size={44} />
+                <span className="nm">{e.p.name}</span>
+                <span className={`gain ${cls}`}>{label}</span>
+                <b className="tt">
+                  <Count from={e.prev} to={e.total} delay={700} />
+                </b>
+              </li>
+            );
+          })}
+        </ol>
+        <div className="qz-next">
+          <span ref={nextRef} />
+          {isLast && <em> · ván kết thúc, chuẩn bị tổng kết</em>}
+        </div>
+      </div>
+    );
+  }
+
+  /* ======================= PHA CÂU HỎI ======================= */
+  const over = q ? net.now() >= q.endAt : false;
   const locked = sent || over || !live;
-  const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  const accSet = result?.accepted?.slice(1) ?? [];
   const audioOnly = !!q?.audio && !q.image && !q.video;
+  const hasMedia = !!q && !!(q.image || q.video || q.audio);
+  const crew = players.filter((p) => !p.spectator);
+  const status = ack !== null || sent ? 'Đã chốt!' : over ? 'Hết giờ' : 'Gõ đáp án rồi nhấn Enter';
 
   return (
-    <div className="qz">
-      <div className="qz-head">
-        <span className="qz-no">{q ? `CÂU ${q.i + 1}/${q.total}` : 'KẾT QUẢ'}</span>
+    <div className="qz qz-q">
+      <div className="qz-topbar">
+        <span className="qz-game">QUIZ ĐOÁN NHANH</span>
         <span className="qz-clock" ref={clockRef} />
-      </div>
-      <div className="qz-bar">
-        <div className="qz-bar-fill" ref={barRef} />
+        <span className="qz-no">{q ? `Câu ${q.i + 1}/${q.total}` : ''}</span>
       </div>
 
-      {q && <h2 className="qz-text">{q.text}</h2>}
-
-      {q && (q.image || q.video || q.audio) && (
-        <div className={`qz-media ${audioOnly ? 'audio' : ''}`}>
-          {q.image && !mediaErr && (
-            <img
-              key={`i${q.i}`}
-              ref={(el) => {
-                if (el) mediaRef.current = el;
-              }}
-              src={q.image}
-              alt=""
-              draggable={false}
-              onError={() => setMediaErr('Không tải được ảnh')}
-            />
-          )}
-          {q.video && !mediaErr && (
-            <video
-              key={`v${q.i}`}
-              ref={(el) => {
-                if (el && avRef.current !== el) {
-                  mediaRef.current = el;
-                  startAv(el);
-                }
-              }}
-              src={q.video}
-              playsInline
-              autoPlay
-              loop
-              preload="auto"
-              onError={() => setMediaErr('Không tải được video')}
-            />
-          )}
-          {(q.image || q.video) && !mediaErr && <div className="qz-fog" ref={fogRef} />}
-          {q.audio && !q.video && (
-            <>
-              <audio
-                key={`a${q.i}`}
-                ref={(el) => {
-                  if (el && avRef.current !== el) startAv(el);
-                }}
-                src={q.audio}
-                autoPlay
-                preload="auto"
-                onError={() => setMediaErr((m) => m ?? 'Không tải được âm thanh')}
-              />
-              {audioOnly && !mediaErr && (
-                <div className={`qz-eq ${result ? 'off' : ''}`} aria-hidden="true">
-                  {Array.from({ length: 16 }, (_, k) => (
-                    <i
-                      key={k}
-                      style={{ animationDelay: `${(k * 0.13) % 0.9}s`, animationDuration: `${0.6 + ((k * 7) % 5) * 0.12}s` }}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {mediaErr && <div className="qz-err">⚠️ {mediaErr}</div>}
-          {needPlay && !result && !mediaErr && (
-            <button type="button" className="qz-play" onClick={manualPlay}>
-              ▶ Bấm để phát
-            </button>
-          )}
-        </div>
-      )}
-
-      {result ? (
-        <div className="qz-res">
-          <div className="qz-answer">
-            <small>ĐÁP ÁN</small>
-            <b>{result.answer}</b>
-            {accSet.length > 0 && <em>cũng nhận: {accSet.join(' · ')}</em>}
-          </div>
-          <ul className="qz-rows">
-            {result.rows.length === 0 && <li className="qz-none">Không ai chốt kịp</li>}
-            {[...result.rows]
-              .sort((a, b) => b.pts - a.pts || a.ms - b.ms)
-              .map((r) => (
-                <li key={r.id} className={`${r.ok ? 'ok' : 'bad'} ${r.id === meId ? 'me' : ''}`}>
-                  <span className="mk">{r.ok ? '✓' : '✗'}</span>
-                  <span className="nm">{nameOf(r.id)}</span>
-                  <span className="tx">{r.text}</span>
-                  <span className="ms">{fmtMs(r.ms)}</span>
-                  <span className="pt">{r.pts > 0 ? `+${r.pts}` : '0'}</span>
-                </li>
-              ))}
-          </ul>
-          {ranked.length > 0 && (
-            <div className="qz-score">
-              {ranked.map(([id, s], k) => (
-                <span key={id} className={id === meId ? 'me' : ''}>
-                  {k + 1}. {nameOf(id)} <b>{s}</b>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <>
+      <div className={`qz-main ${hasMedia ? 'has-media' : ''}`}>
+        <div className="qz-left">
+          {q && <h2 className="qz-text">{q.text}</h2>}
           <form
-            className="qz-form"
+            className={`qz-pill ${sent ? 'sent' : ''}`}
             onSubmit={(e) => {
               e.preventDefault();
               doSubmit();
@@ -270,40 +309,103 @@ export default function Quiz({ game, players, meId, live }: Props) {
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
-              placeholder={sent ? 'Đã chốt' : 'Nhập đáp án…'}
+              placeholder={sent ? (ack ?? 'Đã chốt') : 'Nhập đáp án…'}
               onChange={(e) => setText(e.target.value)}
             />
-            <button className="btn primary" type="submit" disabled={locked || !text.trim()}>
-              CHỐT
+            <button type="submit" className="qz-ok" disabled={locked || !text.trim()} aria-label="Chốt đáp án">
+              ✓
             </button>
           </form>
-          <div className="qz-sub">
-            {ack !== null ? (
-              <span className="qz-acked">
-                ✔ Đã chốt: <b>{ack}</b>
-              </span>
-            ) : sent ? (
-              <span className="qz-acked">Đang gửi…</span>
-            ) : q && q.len > 0 ? (
-              <span>Đáp án có {q.len} ký tự</span>
-            ) : null}
+          <div className={`qz-status ${sent ? 'done' : ''}`}>{status}</div>
+          <div className="qz-pts" aria-label="Điểm có thể nhận ngay lúc này">
+            <div className="qz-ptrack">
+              <div className="qz-pfill" ref={barRef} />
+            </div>
+            <b ref={ptsRef}>1000</b>
           </div>
-          <div className="qz-players">
-            {players
-              .filter((p) => !p.spectator)
-              .map((p) => (
-                <span key={p.id} className={`${prog.ids.includes(p.id) ? 'done' : ''} ${p.id === meId ? 'me' : ''}`}>
-                  {prog.ids.includes(p.id) ? '✓ ' : ''}
-                  {p.name}
-                </span>
-              ))}
-          </div>
-        </>
-      )}
+        </div>
 
-      <p className="hint">
-        Nhập đáp án rồi bấm CHỐT — đúng và nhanh thì nhiều điểm; phải gõ đúng hoàn toàn (không phân biệt hoa/thường)
-      </p>
+        {hasMedia && q && (
+          <div className={`qz-frame ${audioOnly ? 'audio' : ''}`}>
+            {q.image && !mediaErr && (
+              <img
+                key={`i${q.i}`}
+                ref={(el) => {
+                  if (el) mediaRef.current = el;
+                }}
+                src={q.image}
+                alt=""
+                draggable={false}
+                onError={() => setMediaErr('Không tải được ảnh')}
+              />
+            )}
+            {q.video && !mediaErr && (
+              <video
+                key={`v${q.i}`}
+                ref={(el) => {
+                  if (el && avRef.current !== el) {
+                    mediaRef.current = el;
+                    startAv(el);
+                  }
+                }}
+                src={q.video}
+                playsInline
+                autoPlay
+                loop
+                preload="auto"
+                onError={() => setMediaErr('Không tải được video')}
+              />
+            )}
+            {(q.image || q.video) && !mediaErr && <div className="qz-fog" ref={fogRef} />}
+            {q.audio && !q.video && (
+              <>
+                <audio
+                  key={`a${q.i}`}
+                  ref={(el) => {
+                    if (el && avRef.current !== el) startAv(el);
+                  }}
+                  src={q.audio}
+                  autoPlay
+                  preload="auto"
+                  onError={() => setMediaErr((m) => m ?? 'Không tải được âm thanh')}
+                />
+                {audioOnly && !mediaErr && (
+                  <div className="qz-eq" aria-hidden="true">
+                    {Array.from({ length: 16 }, (_, k) => (
+                      <i
+                        key={k}
+                        style={{ animationDelay: `${(k * 0.13) % 0.9}s`, animationDuration: `${0.6 + ((k * 7) % 5) * 0.12}s` }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            {mediaErr && <div className="qz-err">⚠️ {mediaErr}</div>}
+            {needPlay && !mediaErr && (
+              <button type="button" className="qz-play" onClick={manualPlay}>
+                ▶ Bấm để phát
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="qz-crew">
+        {crew.map((p) => {
+          const done = prog.ids.includes(p.id) || (p.id === meId && sent);
+          return (
+            <div key={p.id} className={`qz-pl ${p.id === meId ? 'me' : ''} ${done ? 'done' : ''}`}>
+              <span className="n">{p.name}</span>
+              <span className="av">
+                <Portrait p={p} size={46} />
+                {done && <i className="tick">✓</i>}
+              </span>
+              <b>{scores[p.id] ?? 0}</b>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
