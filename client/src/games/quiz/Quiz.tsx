@@ -161,7 +161,8 @@ export default function Quiz({ game, players, meId, live }: Props) {
           const d = res ? (performance.now() - resAt.current) / 520 - T.thr[i] * 0.35 : (p - T.thr[i]) / 0.075;
           if (d <= 0) continue;
           if (d >= 1) {
-            tile.style.display = 'none';
+            // ẩn nhưng GIỮ chỗ trong lưới, nếu không các mảnh còn lại sẽ bị dồn lên lấp ô trống
+            tile.style.visibility = 'hidden';
             st[i] = 2;
           } else {
             st[i] = 1;
@@ -413,7 +414,7 @@ export default function Quiz({ game, players, meId, live }: Props) {
                     ref={(el) => {
                       tileRefs.current[i] = el;
                     }}
-                    style={{ ['--c' as string]: tiles.color[i] }}
+                    style={{ ['--c' as string]: tiles.color[i], gridColumn: (i % TCOLS) + 1, gridRow: Math.floor(i / TCOLS) + 1 }}
                   />
                 ))}
               </div>
