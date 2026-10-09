@@ -13,6 +13,31 @@ export interface MtPos {
   g: boolean;
   /** giờ lên đỉnh (ms từ lúc bắt đầu), 0 = chưa */
   f: number;
+  /** đang tăng tốc */
+  b?: boolean;
+  /** đang có khiên */
+  h?: boolean;
+}
+
+export interface MtRock {
+  id: number;
+  x: number;
+  y: number;
+  /** giờ server (ms) rơi chạm đất */
+  land: number;
+}
+
+export interface MtGust {
+  dir: number;
+  from: number;
+  to: number;
+}
+
+export interface MtPickup {
+  id: number;
+  k: 0 | 1;
+  x: number;
+  y: number;
 }
 
 export interface MtObstacle {
@@ -42,13 +67,15 @@ export interface MtConfig {
   logDepth: number;
   obstacles: MtObstacle[];
   spinners: MtSpinner[];
+  pickups: MtPickup[];
+  checkpoints: number[];
   endsAt: number;
   spawns: Record<string, [number, number]>;
 }
 
 export interface MtFx {
   playerId: string;
-  kind: 'ball' | 'log' | 'spin';
+  kind: 'ball' | 'log' | 'spin' | 'rock';
   ox: number;
   oy: number;
 }
@@ -69,16 +96,36 @@ export function useMountainGame({ gameId, config, startAt, players, meId, live }
   const sent = useRef({ dx: 0, dy: 0 });
   const lastPredict = useRef(0);
   const pct = useRef(0);
+  const rocks = useRef<MtRock[]>([]);
+  const impacts = useRef<number[]>([]);
+  const gusts = useRef<MtGust[]>([]);
+  const taken = useRef(new Set<number>());
+  const boostUntil = useRef(0);
+  const [banner, setBanner] = useState<{ text: string; tone: string; until: number } | null>(null);
+  const [lastCall, setLastCall] = useState(0);
+  const [shield, setShield] = useState(false);
+  const bannerTimer = useRef(0);
+  const say = (text: string, tone: string, ms = 2200) => {
+    setBanner({ text, tone, until: Date.now() + ms });
+    window.clearTimeout(bannerTimer.current);
+    bannerTimer.current = window.setTimeout(() => setBanner(null), ms);
+  };
+  useEffect(() => () => window.clearTimeout(bannerTimer.current), []);
 
   const [fin, setFin] = useState<Record<string, number>>({});
   const [height, setHeight] = useState(0);
   const finRef = useRef(fin);
+  const shieldRef = useRef(false);
 
   useGameEvents(gameId, (p) => {
     if (p.type === 'pos') {
       positions.current = p.positions;
       const mine: MtPos | undefined = p.positions[meId];
       if (mine) {
+        if (!!mine.h !== shieldRef.current) {
+          shieldRef.current = !!mine.h;
+          setShield(!!mine.h);
+        }
         // bị văng/choáng hoặc đã về đích: lấy vị trí server; còn lại chỉ chỉnh khi lệch nhiều
         if (!synced.current || mine.s || mine.f || Math.hypot(mine.x - me.current.x, mine.y - me.current.y) > 8) {
           me.current = { x: mine.x, y: mine.y };
@@ -92,7 +139,36 @@ export function useMountainGame({ gameId, config, startAt, players, meId, live }
       }
     } else if (p.type === 'hit') {
       fx.current.push({ playerId: p.playerId, kind: p.kind, ox: p.ox, oy: p.oy });
-      if (p.playerId === meId) sfx.miss();
+      if (p.playerId === meId) {
+        if (p.blocked) {
+          sfx.tick();
+          say('KHIÊN ĐÃ CHẶN!', 'good', 1200);
+        } else sfx.miss();
+      }
+    } else if (p.type === 'warn') {
+      if (p.kind === 'rock') {
+        rocks.current.push(...(p.rocks as MtRock[]));
+        say('ĐÁ RƠI! Tránh vòng đỏ', 'bad');
+      } else {
+        gusts.current.push({ dir: p.dir, from: p.from, to: p.to });
+        say(p.dir > 0 ? 'GIÓ SẮP THỔI SANG PHẢI ➜' : '⬅ GIÓ SẮP THỔI SANG TRÁI', 'warn');
+      }
+      sfx.tick();
+    } else if (p.type === 'impact') {
+      impacts.current.push(p.id);
+    } else if (p.type === 'pick') {
+      if (p.playerId === meId) {
+        taken.current.add(p.item);
+        if (p.k === 0) {
+          boostUntil.current = net.now() + 2500;
+          say('TĂNG TỐC!', 'good', 1100);
+        } else say('CÓ KHIÊN!', 'good', 1100);
+        sfx.tick();
+      }
+    } else if (p.type === 'cp') {
+      if (p.playerId === meId) say('CHECKPOINT ' + p.i, 'good', 1200);
+    } else if (p.type === 'lastcall') {
+      setLastCall(p.until);
     } else if (p.type === 'finish') {
       if (finRef.current[p.playerId] !== undefined) return;
       finRef.current = { ...finRef.current, [p.playerId]: p.at };
@@ -156,19 +232,25 @@ export function useMountainGame({ gameId, config, startAt, players, meId, live }
     lastPredict.current = serverNow;
     const { dx, dy } = sent.current;
     const mine = positions.current[meId];
-    if (!live || !synced.current || (!dx && !dy) || !mine || mine.s || mine.f) return;
+    if (!live || !synced.current || !mine || mine.s || mine.f) return;
+    const maxW = cfg.w / 2 - cfg.radius;
+    for (const g of gusts.current) {
+      if (serverNow >= g.from && serverNow < g.to) me.current.x = Math.max(-maxW, Math.min(maxW, me.current.x + g.dir * 9 * dt));
+    }
+    if (!dx && !dy) return;
     const len = Math.hypot(dx, dy) || 1;
     const maxX = cfg.w / 2 - cfg.radius;
+    const sp = cfg.speed * (serverNow < boostUntil.current ? 1.55 : 1);
     me.current = {
-      x: Math.max(-maxX, Math.min(maxX, me.current.x + (dx / len) * cfg.speed * dt)),
-      y: Math.max(0, Math.min(cfg.len, me.current.y + (dy / len) * cfg.speed * dt)),
+      x: Math.max(-maxX, Math.min(maxX, me.current.x + (dx / len) * sp * dt)),
+      y: Math.max(0, Math.min(cfg.len, me.current.y + (dy / len) * sp * dt)),
     };
   };
 
   const posOf = (id: string): { x: number; y: number } | undefined =>
     id === meId && synced.current ? me.current : positions.current[id];
 
-  return { cfg, positions, fx, fin, height, total: players.length, startAt, predict, posOf, serverNow: () => net.now() };
+  return { cfg, positions, fx, rocks, impacts, gusts, taken, banner, lastCall, shield, fin, height, total: players.length, startAt, predict, posOf, serverNow: () => net.now() };
 }
 
 export type MountainGameState = ReturnType<typeof useMountainGame>;

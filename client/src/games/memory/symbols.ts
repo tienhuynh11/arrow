@@ -1,4 +1,4 @@
-/** Bộ hình của LẬT MẢNH GHÉP: vẽ bằng canvas 2D (0 byte ảnh), dùng chung cho sàn 3D và ô "hình cần tìm" ở HUD. */
+/** Bộ hình của HÃY CHỌN GIÁ ĐÚNG: vẽ bằng canvas 2D (0 byte ảnh), dùng chung cho sàn 3D và ô "hình cần tìm" ở HUD. */
 export interface MmSymbol {
   /** màu chủ đạo của hình */
   hex: string;

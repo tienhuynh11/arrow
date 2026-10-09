@@ -12,7 +12,7 @@ import { coconutGame } from './coconut.js';
 import { hexAGoneGame } from './hexAGone.js';
 import { doorDashGame } from './doorDash.js';
 import { fallMountainGame } from './fallMountain.js';
-import { jumpShowdownGame } from './jumpShowdown.js';
+import { lavaRunGame } from './lavaRun.js';
 import { blockPartyGame } from './blockParty.js';
 import { memoryMatchGame } from './memoryMatch.js';
 import { tipToeGame } from './tipToe.js';
@@ -21,6 +21,8 @@ import { blindShotGame } from './blindShot.js';
 import { bombMazeGame } from './bombMaze.js';
 import { musicalChairsGame } from './musicalChairs.js';
 import { actNaturalGame } from './actNatural.js';
+import { rooftopBrawlGame } from './rooftopBrawl.js';
+import { quizGame } from './quizGame.js';
 
 /** Add a new minigame here and the match loop picks it up automatically. */
 export const GAMES: GameDefinition[] = [
@@ -37,7 +39,7 @@ export const GAMES: GameDefinition[] = [
   hexAGoneGame,
   doorDashGame,
   fallMountainGame,
-  jumpShowdownGame,
+  lavaRunGame,
   blockPartyGame,
   memoryMatchGame,
   tipToeGame,
@@ -46,6 +48,8 @@ export const GAMES: GameDefinition[] = [
   bombMazeGame,
   musicalChairsGame,
   actNaturalGame,
+  rooftopBrawlGame,
+  quizGame,
 ];
 
 export const gameById = (id: string) => GAMES.find((g) => g.id === id);

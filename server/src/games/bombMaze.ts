@@ -48,6 +48,9 @@ interface PState {
   maxBombs: number;
   range: number;
   lvl: number;
+  shield: boolean;
+  /** miễn nhiễm lửa ngắn sau khi khiên vỡ */
+  immuneUntil: number;
 }
 
 interface Bomb {
@@ -83,10 +86,13 @@ const CLOSE_WARN = 900;
 const DURATION = 165_000;
 const HOLD_TIMEOUT = 900;
 const PLANT_COOLDOWN = 140;
-const DROP_CHANCE = 0.34;
-const KINDS = ['b', 'f', 's'] as const;
+const DROP_CHANCE = 0.42;
+/** b: thêm bom · f: tầm nổ +1 · h: khiên · s: tốc độ (tỉ lệ rơi theo số lần xuất hiện) */
+const KINDS = ['f', 'f', 'f', 'b', 'b', 'b', 'h', 'h', 's', 's'] as const;
+const START_RANGE = 1;
+const SHIELD_IMMUNE_MS = 700;
 const MAX_BOMBS = 6;
-const MAX_RANGE = 8;
+const MAX_RANGE = 6;
 const MAX_LVL = 5;
 const BROADCAST_MS = 66;
 const FULL_MS = 1500;
@@ -101,9 +107,9 @@ export const bombMazeGame: GameDefinition<Config, State> = {
   id: 'bombmaze',
   name: 'MÊ CUNG ĐẶT BOM',
   instructions:
-    'Đặt bom (SPACE) để phá thùng gỗ và nổ trúng đối thủ — lửa nổ lan thành hình chữ thập và làm nổ dây chuyền cả bom khác. ' +
-    'Nhặt vật phẩm trong thùng để thêm bom, tăng tầm nổ, chạy nhanh hơn. Đừng đứng trong lửa, kể cả bom của chính mình! ' +
-    'Sau một lúc sàn sập dần từ ngoài vào. Người sống sót cuối cùng thắng.',
+    'Đặt bom (SPACE): ban đầu bom chỉ nổ chữ thập 1 ô mỗi hướng, nổ dây chuyền được cả bom khác. ' +
+    'Phá thùng nhặt vật phẩm: thêm bom, tầm nổ xa hơn, chạy nhanh hơn và 🛡 khiên đỡ đúng một lần trúng lửa (không đỡ được sập sàn). ' +
+    'Đừng đứng trong lửa, kể cả bom của mình — sàn sập dần từ ngoài vào, người sống sót cuối cùng thắng.',
   controls: [
     { keys: ['←', '↑', '→', '↓'], desc: 'Chạy 4 hướng · W A S D cũng được' },
     { keys: ['SPACE'], desc: 'Đặt bom ở ô đang đứng' },
@@ -194,8 +200,10 @@ export const bombMazeGame: GameDefinition<Config, State> = {
         outAt: null,
         kills: 0,
         maxBombs: 1,
-        range: 2,
+        range: START_RANGE,
         lvl: 0,
+        shield: false,
+        immuneUntil: 0,
       };
     }
     return {
@@ -340,7 +348,15 @@ export const bombMazeGame: GameDefinition<Config, State> = {
       if (!p.alive) continue;
       const idx = Math.floor(p.y) * g.cols + Math.floor(p.x);
       const f = state.flames.get(idx);
-      if (f) die(id, f.owner);
+      if (!f) continue;
+      if (now < p.immuneUntil) continue;
+      if (p.shield) {
+        p.shield = false;
+        p.immuneUntil = now + SHIELD_IMMUNE_MS;
+        ctx.broadcast({ type: 'shield', p: id });
+        continue;
+      }
+      die(id, f.owner);
     }
 
     // nhặt vật phẩm
@@ -352,6 +368,7 @@ export const bombMazeGame: GameDefinition<Config, State> = {
       if (!kind) continue;
       state.items.delete(idx);
       if (kind === 'b') p.maxBombs = Math.min(MAX_BOMBS, p.maxBombs + 1);
+      else if (kind === 'h') p.shield = true;
       else if (kind === 'f') p.range = Math.min(MAX_RANGE, p.range + 1);
       else p.lvl = Math.min(MAX_LVL, p.lvl + 1);
       ctx.broadcast({ type: 'pick', c: idx, k: kind, p: id });
@@ -362,7 +379,7 @@ export const bombMazeGame: GameDefinition<Config, State> = {
     const pp: Record<string, number[]> = {};
     for (const id of ctx.playerIds) {
       const p = state.players[id];
-      pp[id] = [r2(p.x), r2(p.y), p.alive ? 1 : 0, p.maxBombs, p.range, p.lvl];
+      pp[id] = [r2(p.x), r2(p.y), p.alive ? 1 : 0, p.maxBombs, p.range, p.lvl, p.shield ? 1 : 0];
     }
     const payload: Record<string, unknown> = { type: 's', p: pp };
     // nhắc lại toàn cảnh mỗi 1,5 giây cho ai vào lại giữa ván

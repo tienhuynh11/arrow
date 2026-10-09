@@ -9,7 +9,7 @@ export interface BlindBody {
 }
 
 export interface BlindCfg {
-  /** bán kính sân */
+  /** bán kính sân HIỆN TẠI (callers truyền bản đã thu theo vòng, xem blindRadius) */
   r: number;
   /** bán kính thân người */
   body: number;
@@ -64,4 +64,25 @@ export function shoot(
   const c = from.x * from.x + from.y * from.y - cfg.r * cfg.r;
   const k = -b + Math.sqrt(Math.max(0, b * b - c));
   return { hit: null, len: k };
+}
+
+/** thời gian sân co lại từ bán kính vòng trước sang vòng này, tính từ đầu vòng */
+export const BLIND_SHRINK_MS = 2200;
+
+/** bảng bán kính theo vòng: giảm đều từ r0 xuống rMin ở vòng cuối */
+export function blindRadii(rounds: number, r0 = 105, rMin = 42): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < rounds; i++) {
+    const t = rounds > 1 ? i / (rounds - 1) : 0;
+    out.push(Math.round((r0 - (r0 - rMin) * t) * 10) / 10);
+  }
+  return out;
+}
+
+/** bán kính sân tại `offMs` ms kể từ đầu vòng `round`: co mượt (smoothstep) từ vòng trước sang vòng này */
+export function blindRadius(radii: number[], round: number, offMs: number): number {
+  const cur = radii[Math.max(0, Math.min(radii.length - 1, round))];
+  const prev = round > 0 ? radii[Math.min(radii.length - 1, round - 1)] : cur;
+  const t = Math.max(0, Math.min(1, offMs / BLIND_SHRINK_MS));
+  return prev + (cur - prev) * (t * t * (3 - 2 * t));
 }

@@ -54,6 +54,9 @@ export default function BombMaze3D({ game, players, meId }: { game: BombMazeGame
         <span className="hx-floor">
           ⚡ <b>{game.stats[2] + 1}</b>
         </span>
+        <span className="hx-floor">
+          🛡 <b>{game.stats[3] ? 'CÓ' : '—'}</b>
+        </span>
         <span className={`hx-floor ${closing || toClose < 10000 ? 'out' : ''}`}>
           {closing ? 'SÀN ĐANG SẬP!' : toClose < 15000 && toClose > 0 ? `SÀN SẬP SAU ${Math.ceil(toClose / 1000)}s` : ''}
         </span>
@@ -91,7 +94,7 @@ export default function BombMaze3D({ game, players, meId }: { game: BombMazeGame
           ))}
         </div>
       </div>
-      <p className="hint">← ↑ → ↓ (hoặc W A S D) chạy · SPACE đặt bom · phá thùng nhặt 💣 🔥 ⚡ · đừng đứng trong lửa</p>
+      <p className="hint">← ↑ → ↓ (hoặc W A S D) chạy · SPACE đặt bom · phá thùng nhặt 💣 🔥 ⚡ 🛡 · bom ban đầu nổ 1 ô · đừng đứng trong lửa</p>
     </div>
   );
 }

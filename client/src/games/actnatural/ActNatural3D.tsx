@@ -50,12 +50,12 @@ export default function ActNatural3D({ game, players, meId }: { game: ActNatural
       : 'BẠN ĐÃ BỊ TÌM RA';
   const sub = iSeeker
     ? game.phase === 'u'
-      ? '← → bay quanh bản đồ · di chuột để rọi laze · bấm để bắn · bắn nhầm NPC là mất đạn, bị choáng'
+      ? 'Rọi laze vào người thật rồi bấm để bắn · đạn bay ~1 giây nên nhắm đón đầu · bắn nhầm NPC thì choáng'
       : 'Người trốn đang tản ra…'
     : game.role.alive
       ? game.phase === 'r'
         ? 'Danh tính lộ ra'
-        : `Thợ săn: ${seekerName} (thấy tia laze của họ) · đi chậm và dừng nghỉ như NPC, đừng chạy thẳng tắp!`
+        : `Thợ săn: ${seekerName} (thấy tia laze đỏ) · đi và dừng nghỉ như NPC, đừng chạy thẳng tắp!`
       : 'Xem nốt vòng nhé';
 
   const revealed = Object.entries(game.reveal);
@@ -70,8 +70,13 @@ export default function ActNatural3D({ game, players, meId }: { game: ActNatural
           {iSeeker ? '🎯 THỢ SĂN' : '🕵️ NGƯỜI TRỐN'}
         </span>
         {iSeeker && (
-          <span className={`hx-floor ${game.ammo <= 1 ? 'out' : ''}`}>
-            ĐẠN <b>{game.ammo}</b>
+          <span className={`hx-floor an-ammo ${game.ammo <= 1 ? 'out' : ''}`}>
+            ĐẠN
+            <span className="an-pips">
+              {Array.from({ length: Math.max(game.maxAmmo, game.ammo) }, (_, i) => (
+                <i key={i} className={i < game.ammo ? 'on' : ''} />
+              ))}
+            </span>
           </span>
         )}
         <span className={`hx-floor ${left <= 8 && game.phase === 'u' ? 'out' : ''}`}>
@@ -89,6 +94,21 @@ export default function ActNatural3D({ game, players, meId }: { game: ActNatural
             <b>Nhắm mắt…</b>
             <span>{left}</span>
             <small>người trốn đang tản ra khắp quảng trường</small>
+          </div>
+        )}
+        {iSeeker && game.phase === 'u' && (
+          <div className="an-cd">
+            <i key={game.shotNo} style={{ animationDuration: `${game.cfg.shotCdMs}ms` }} className={game.shotNo ? 'run' : ''} />
+          </div>
+        )}
+        {game.msg && (
+          <div key={game.msg.id} className={`an-msg ${game.msg.kind}`}>
+            {game.msg.text}
+          </div>
+        )}
+        {game.kcOn && (
+          <div className="an-kc">
+            <b>QUAY CHẬM</b>
           </div>
         )}
         {game.stunned && iSeeker && <div className="ch-dead">💫 Choáng vì bắn nhầm NPC!</div>}
@@ -125,7 +145,7 @@ export default function ActNatural3D({ game, players, meId }: { game: ActNatural
         </div>
       </div>
       <p className="hint">
-        {iSeeker ? '← → bay quanh bản đồ · di chuột để rọi laze · bấm chuột (hoặc chạm) để bắn' : '← ↑ → ↓ (hoặc W A S D) đi như NPC · thợ săn đoán người thật qua cách di chuyển'}
+        {iSeeker ? '← → bay quanh đảo · di chuột để rọi laze · bấm chuột (hoặc chạm) để bắn · hồi 1 viên mỗi 8 giây' : '← ↑ → ↓ (hoặc W A S D) đi như NPC · thợ săn đoán người thật qua cách di chuyển'}
       </p>
     </div>
   );

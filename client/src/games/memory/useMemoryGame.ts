@@ -32,7 +32,7 @@ export interface MmConfig {
   round0: MmRound;
 }
 
-/** Trạng thái + điều khiển của LẬT MẢNH GHÉP. Mỗi vòng chỉ có một gói `round` và một gói `ask` (hình cần tìm); còn lại client tự đếm theo đồng hồ server. */
+/** Trạng thái + điều khiển của HÃY CHỌN GIÁ ĐÚNG. Mỗi vòng chỉ có một gói `round` và một gói `ask` (hình cần tìm); còn lại client tự đếm theo đồng hồ server. */
 export function useMemoryGame({ gameId, config, players, meId, live }: GameProps) {
   const cfg = config as MmConfig;
 

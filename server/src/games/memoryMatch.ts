@@ -2,7 +2,7 @@ import type { GameDefinition, PlayerResult } from './types.js';
 import type { GameInput } from '../../../shared/protocol.js';
 
 /**
- * Lật mảnh ghép: mỗi ô của sàn mang một HÌNH. Cả sàn hiện hình vài giây để ghi nhớ rồi úp lại;
+ * Hãy chọn giá đúng (id memory): mỗi ô của sàn mang một HÌNH. Cả sàn hiện hình vài giây để ghi nhớ rồi úp lại;
  * lúc đó server mới báo HÌNH CẦN TÌM. Hết giờ, mọi ô khác hình rơi mất — ai đứng trên đó rơi theo.
  * Hình cần tìm là bí mật của server cho tới giây úp ô (`hideAt`), nên không ai đứng sẵn được.
  * Mỗi vòng client chỉ nhận một gói `round` + một gói `ask`; còn lại tự đếm theo đồng hồ server.
@@ -57,23 +57,23 @@ interface State {
 }
 
 const SYMBOLS = 8;
-const SIZE = 10;
-const SPEED = 34;
+const SIZE = 12;
+const SPEED = 32;
 const PLAYER_R = 2.6;
 const FALL_GRACE_MS = 1600;
 const HOLD_TIMEOUT = 900;
-const DURATION = 70_000;
-const GONE_MS = 1900;
-const MAX_ROUNDS = 14;
+const DURATION = 150_000;
+const GONE_MS = 2200;
+const MAX_ROUNDS = 11;
 const BROADCAST_MS = 70;
 
 /** thời gian ghi nhớ: ngắn dần theo vòng */
-const showMs = (r: number) => Math.max(1800, 4800 - r * 300);
+const showMs = (r: number) => Math.max(2600, 6500 - r * 300);
 /** thời gian chạy tới hình đúng sau khi úp ô */
-const findMs = (r: number) => Math.max(2800, 5200 - r * 250);
-const gridFor = (players: number) => (players <= 4 ? 8 : players <= 8 ? 10 : 12);
+const findMs = (r: number) => Math.max(4200, 6200 - r * 200);
+const gridFor = (players: number) => (players <= 4 ? 10 : players <= 8 ? 12 : 14);
 /** vòng càng cao càng nhiều hình → khó nhớ hơn */
-const symbolsFor = (r: number) => Math.min(SYMBOLS, 4 + Math.floor(r / 2));
+const symbolsFor = (r: number) => Math.min(SYMBOLS, 3 + Math.floor(r / 2));
 
 function makeRound(r: number, n: number, startAt: number): Round {
   const k = symbolsFor(r);
@@ -101,9 +101,9 @@ const pub = (rd: Round, now: number): Pub => ({ ...rd, target: now >= rd.hideAt 
 
 export const memoryMatchGame: GameDefinition<Config, State> = {
   id: 'memory',
-  name: 'LẬT MẢNH GHÉP',
+  name: 'HÃY CHỌN GIÁ ĐÚNG',
   instructions:
-    'Cả sàn hiện hình vài giây, hãy nhớ vị trí! Rồi các ô úp lại và báo HÌNH CẦN TÌM: chạy tới đứng trên đó. Ô khác hình rơi mất. Trụ lại cuối cùng thắng.',
+    'Cả sàn hiện hình vài giây, hãy nhớ vị trí! Rồi các ô úp lại và báo HÌNH CẦN TÌM: chạy tới đứng đúng ô đó. Ô khác hình rơi mất, trụ lại cuối cùng thắng.',
   controls: [{ keys: ['←', '↑', '→', '↓'], desc: 'Giữ để chạy mọi hướng tới ô có hình cần tìm' }],
   duration: DURATION + 1500,
   minPlayers: 1,

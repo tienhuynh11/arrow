@@ -36,7 +36,7 @@ export default function Home() {
         <h1 className="logo">
           ARROW<span>PARTY</span>
         </h1>
-        <p className="tagline">Tối đa 16 người · 13 minigame · 1 nhà vô địch</p>
+        <p className="tagline">Tối đa 16 người · 15 minigame · 1 nhà vô địch</p>
 
         <label className="field">
           <span>ENTER YOUR NAME</span>
@@ -179,6 +179,9 @@ export default function Home() {
       )}
 
       {!connected && <p className="status warn">Đang kết nối tới server…</p>}
+      <a className="home-admin" href="#admin">
+        Quản lý quiz
+      </a>
       {editing && <CharacterEditor color={PLAYER_COLORS[0]} onClose={() => setEditing(false)} />}
     </div>
   );

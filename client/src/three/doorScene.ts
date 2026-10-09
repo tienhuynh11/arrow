@@ -8,6 +8,9 @@ export interface DoorFrame {
   positions: { current: Record<string, DoorPos> };
   open: { current: boolean[] };
   fx: { current: DoorFx[] };
+  closeAt: { current: number[] };
+  tried: { current: boolean[] };
+  behind: boolean;
   predict(serverNow: number): void;
   posOf(id: string): { x: number; y: number } | undefined;
   serverNow(): number;
@@ -129,9 +132,14 @@ export function createDoorScene(o: DoorSceneOptions) {
       let timeNow = 0;
 
       const flash = new Color('#ffffff');
+      const dark = new Color('#3a3a48');
       const tmp = new Color();
       const placeDoors = (dt: number) => {
         const open = o.read().open.current;
+        const closeAt = o.read().closeAt.current;
+        const nowMs = o.read().serverNow();
+        const tried = o.read().tried.current;
+        const hint = o.read().behind;
         let colorDirty = false;
         for (let d = 0; d < doors; d++) {
           const target = open[d] ? 1 : 0;
@@ -140,6 +148,9 @@ export function createDoorScene(o: DoorSceneOptions) {
           const bt = timeNow - bumpAt[d];
           let wob = 0;
           if (bt < 0.6) wob = Math.sin(bt * 55) * 0.07 * (1 - bt / 0.6);
+          // sắp đóng sầm: cửa rung báo hiệu
+          const left = closeAt[d] - nowMs;
+          if (open[d] && closeAt[d] && left < 900) wob += Math.sin(timeNow * 40) * 0.08;
           const th = swing[d] * SWING + wob;
           const cs = Math.cos(th);
           const sn = Math.sin(th);
@@ -154,10 +165,13 @@ export function createDoorScene(o: DoorSceneOptions) {
 
           // đâm trúng cửa giả: nháy trắng-đỏ một nhịp
           const flashing = bt < 0.3;
-          if (flashing || openState[d] === 2) {
-            tmp.copy(base[d]).lerp(flashing ? flash : base[d], flashing ? 0.7 * (1 - bt / 0.3) : 0);
+          const dim = hint && !!tried[d] && !open[d];
+          if (flashing || dim || openState[d] === 2) {
+            tmp.copy(base[d]);
+            if (dim) tmp.lerp(dark, 0.55);
+            if (flashing) tmp.lerp(flash, 0.7 * (1 - bt / 0.3));
             panels.setColorAt(d, tmp);
-            openState[d] = flashing ? 2 : 0;
+            openState[d] = flashing || dim ? 2 : 0;
             colorDirty = true;
           }
         }
@@ -227,7 +241,10 @@ export function createDoorScene(o: DoorSceneOptions) {
           const d = f.row * cols + f.col;
           const cx = hingeX(d) + panelW / 2;
           const z = doorZ(d);
-          if (f.kind === 'bump') {
+          if (f.kind === 'shut') {
+            bumpAt[d] = timeNow;
+            k.effects.burst(cx, 0.4, z, { count: k.count(10), palette: ['#ffffff', '#c9a56a'], speed: 2.4, life: 0.5, size: 0.14, gravity: -3 });
+          } else if (f.kind === 'bump') {
             bumpAt[d] = timeNow;
             k.effects.burst(cx, 1.4, z + 0.6, {
               count: k.count(14),

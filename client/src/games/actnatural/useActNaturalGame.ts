@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { stepCode, type CodeBox, type CodeMap } from '@shared/codeArena';
+import type { CodeBox, CodeMap } from '@shared/codeArena';
+import { plazaStep, type Plaza, type PlazaProp } from '@shared/plaza';
 import { net } from '../../network/net';
 import { sfx } from '../../utils/sound';
 import { useGameEvents } from '../../utils/hooks';
@@ -10,6 +11,10 @@ export interface AnConfig {
   h: number;
   radius: number;
   boxes: CodeBox[];
+  props: PlazaProp[];
+  cx: number;
+  cy: number;
+  R: number;
   ents: number;
   colors: string[];
   speed: number;
@@ -22,12 +27,35 @@ export interface AnConfig {
   shotCdMs: number;
   stunMs: number;
   hitR: number;
+  regenMs: number;
+  killCamMs: number;
   endsAt: number;
 }
 
 export type AnPhase = 'h' | 'u' | 'r';
 /** [x, y, hướng mặt] — thực thể ẩn danh: không có gì cho biết đâu là người thật */
 export type AnEnt = [number, number, number] | null;
+
+/** viên đạn đang bay: từ nòng súng (góc phi quanh đảo lúc bắn) tới (x, y) */
+export interface AnBullet {
+  id: number;
+  x: number;
+  y: number;
+  phi: number;
+  at: number;
+  fl: number;
+}
+
+/** kill cam quay chậm: bắt đầu lúc 'start' (giờ server), kéo dài 'ms' */
+export interface AnKillCam {
+  ent: number;
+  x: number;
+  y: number;
+  phi: number;
+  start: number;
+  ms: number;
+  who: string;
+}
 
 export interface AnFx {
   kind: 'kill' | 'miss' | 'shot';
@@ -43,6 +71,7 @@ export interface AnFx {
 export function useActNaturalGame({ gameId, config, players, meId, live }: GameProps) {
   const cfg = config as AnConfig;
   const map: CodeMap = { w: cfg.w, h: cfg.h, radius: cfg.radius, boxes: cfg.boxes };
+  const plaza: Plaza = { map, props: cfg.props, cx: cfg.cx, cy: cfg.cy, R: cfg.R };
 
   const ents = useRef<AnEnt[] | null>(null);
   /** [góc quanh bản đồ, điểm laze x, y (null = chưa rọi), đạn, choáng] — ai cũng nhận để vẽ tia laze */
@@ -59,6 +88,8 @@ export function useActNaturalGame({ gameId, config, players, meId, live }: GameP
   const fx = useRef<AnFx[]>([]);
   const phaseAt = useRef(0);
   const shotLocal = useRef(0);
+  const bullets = useRef<AnBullet[]>([]);
+  const killCam = useRef<AnKillCam | null>(null);
 
   const [role, setRole] = useState<{ r: number; seeker: string; ent: number; alive: boolean }>({ r: 0, seeker: cfg.order[0], ent: -1, alive: true });
   const roleRef = useRef(role);
@@ -66,6 +97,12 @@ export function useActNaturalGame({ gameId, config, players, meId, live }: GameP
   const phaseRef = useRef<AnPhase>('h');
   const [round, setRound] = useState(0);
   const [ammo, setAmmo] = useState(0);
+  const [maxAmmo, setMaxAmmo] = useState(0);
+  /** tăng mỗi lần có đạn bắn ra (để HUD chạy lại thanh hồi chiêu) */
+  const [shotNo, setShotNo] = useState(0);
+  const [msg, setMsg] = useState<{ id: number; text: string; kind: 'hit' | 'npc' | 'miss' } | null>(null);
+  const [kcOn, setKcOn] = useState(false);
+  const msgId = useRef(0);
   const [stunned, setStunned] = useState(false);
   const [reveal, setReveal] = useState<Record<number, string>>({});
   const [feed, setFeed] = useState<{ id: number; text: string; bad: boolean }[]>([]);
@@ -75,6 +112,14 @@ export function useActNaturalGame({ gameId, config, players, meId, live }: GameP
     const id = ++feedId.current;
     setFeed((f) => [...f.slice(-3), { id, text, bad }]);
     window.setTimeout(() => setFeed((f) => f.filter((x) => x.id !== id)), 4200);
+  };
+  const flash = (text: string, kind: 'hit' | 'npc' | 'miss') => {
+    const id = ++msgId.current;
+    setMsg({ id, text, kind });
+    window.setTimeout(() => setMsg((m) => (m && m.id === id ? null : m)), 1800);
+  };
+  const dropBullet = (id: number) => {
+    bullets.current = bullets.current.filter((b) => b.id !== id);
   };
   const nameOf = (id: string) => players.find((p) => p.id === id)?.name ?? '???';
   const isSeeker = () => roleRef.current.seeker === meId;
@@ -117,6 +162,10 @@ export function useActNaturalGame({ gameId, config, players, meId, live }: GameP
     } else if (p.type === 'round') {
       setRound(p.r);
       setAmmo(p.ammo);
+      setMaxAmmo(p.max);
+      bullets.current = [];
+      killCam.current = null;
+      setKcOn(false);
       setReveal({});
       phaseAt.current = p.at;
       ents.current = null;
@@ -130,20 +179,44 @@ export function useActNaturalGame({ gameId, config, players, meId, live }: GameP
       sfx.tick();
     } else if (p.type === 'kill') {
       fx.current.push({ kind: 'kill', at: Date.now(), x: p.x, y: p.y });
+      const b = bullets.current.find((q) => q.id === p.id);
+      killCam.current = { ent: p.ent, x: p.x, y: p.y, phi: b ? b.phi : orbit.current, start: p.at, ms: p.ms, who: p.who };
+      dropBullet(p.id);
+      setKcOn(true);
+      window.setTimeout(() => sfx.miss(), p.ms * 0.72);
+      window.setTimeout(() => {
+        if (killCam.current && killCam.current.start === p.at) {
+          killCam.current = null;
+          setKcOn(false);
+        }
+      }, p.ms + 200);
       setAmmo(p.ammo);
+      flash(roleRef.current.seeker === meId ? 'TRÚNG NGƯỜI THẬT!' : p.who === meId ? 'BẠN BỊ BẮN TRÚNG!' : `${nameOf(p.who)} BỊ HẠ!`, 'hit');
       addFeed(`${nameOf(p.who)} bị thợ săn tìm ra!`, true);
       if (p.who === meId) sfx.miss();
       else sfx.tick();
     } else if (p.type === 'miss') {
       fx.current.push({ kind: 'miss', at: Date.now(), x: p.x, y: p.y });
+      dropBullet(p.id);
+      flash(roleRef.current.seeker === meId ? 'NPC! mất đạn' : 'Bắn nhầm NPC!', 'npc');
       setAmmo(p.ammo);
       addFeed('Thợ săn bắn nhầm một NPC!');
       sfx.tap();
     } else if (p.type === 'shot') {
       fx.current.push({ kind: 'shot', at: Date.now(), x: p.x, y: p.y });
+      dropBullet(p.id);
+      if (roleRef.current.seeker === meId) flash('Trượt!', 'miss');
       setAmmo(p.ammo);
+    } else if (p.type === 'bullet') {
+      bullets.current.push({ id: p.id, x: p.x, y: p.y, phi: p.phi, at: p.at, fl: p.fl });
+      setAmmo(p.ammo);
+      setShotNo((n) => n + 1);
+      sfx.tap();
     } else if (p.type === 'reveal') {
       phaseAt.current = p.at;
+      bullets.current = [];
+      killCam.current = null;
+      setKcOn(false);
       setReveal(p.map);
     }
   });
@@ -220,14 +293,14 @@ export function useActNaturalGame({ gameId, config, players, meId, live }: GameP
     const dt = lastPredict.current ? Math.min(serverNow - lastPredict.current, 120) / 1000 : 0;
     lastPredict.current = serverNow;
     const r = roleRef.current;
-    if (!live) return;
+    if (!live || killCam.current) return;
     const { dx, dy } = sent.current;
     if (r.seeker === meId) {
       // thợ săn không đứng trong sân: chỉ bay vòng quanh bản đồ
       if (phaseRef.current !== 'u' || seekerPos.current?.[4]) return;
       orbit.current += dx * cfg.orbitSpeed * dt;
     } else if (r.alive && r.ent >= 0 && phaseRef.current !== 'r') {
-      stepCode(map, me.current, dx, dy, cfg.speed, dt);
+      plazaStep(plaza, me.current, dx, dy, cfg.speed, dt);
     }
   };
 
@@ -247,6 +320,12 @@ export function useActNaturalGame({ gameId, config, players, meId, live }: GameP
     phase,
     round,
     ammo,
+    maxAmmo,
+    shotNo,
+    msg,
+    kcOn,
+    bullets,
+    killCam,
     stunned,
     reveal,
     feed,

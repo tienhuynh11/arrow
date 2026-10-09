@@ -46,6 +46,9 @@ export default function TipToe3D({ game, players, meId }: { game: TipToeGameStat
         <span className="hx-floor">
           NGÃ <b>{game.falls}</b>
         </span>
+        <span className="hx-floor">
+          HẤT RƠI <b>{game.ko[meId] ?? 0}</b>
+        </span>
         {left !== null && (
           <span className="hx-floor out">
             ĐÓNG VÁN SAU <b>{left}</b>s
@@ -70,7 +73,7 @@ export default function TipToe3D({ game, players, meId }: { game: TipToeGameStat
           ))}
         </div>
       </div>
-      <p className="hint">← ↑ → ↓ chạy về đích · ô giả sẽ vỡ khi bước lên — nhìn người khác thử sai để tìm đường</p>
+      <p className="hint">← ↑ → ↓ chạy · SPACE đá hất người phía trước (hồi 1s) · ô giả sẽ vỡ khi bước lên — nhìn người khác thử sai để tìm đường</p>
     </div>
   );
 }

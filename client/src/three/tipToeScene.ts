@@ -7,6 +7,7 @@ export interface TipToeFrame {
   cfg: TtConfig;
   positions: { current: Record<string, TtPos> };
   broken: { current: string };
+  kickFx: { current: { by: string; hits: string[]; x: number; y: number }[] };
   predict(serverNow: number): void;
   posOf(id: string): { x: number; y: number } | undefined;
   serverNow(): number;
@@ -180,6 +181,10 @@ export function createTipToeScene(o: TipToeSceneOptions) {
         px: number;
         pz: number;
         placed: boolean;
+        kickT: number;
+        hitT: number;
+        hx: number;
+        hz: number;
       }
       const chars = new Map<string, Entry>();
       for (const p of o.players) {
@@ -188,7 +193,7 @@ export function createTipToeScene(o: TipToeSceneOptions) {
         c.root.scale.setScalar(CHAR_SCALE);
         c.root.visible = false;
         scene.add(c.root);
-        chars.set(p.id, { c, x: 0, z: 0, y: 0, vy: 0, px: 0, pz: 0, placed: false });
+        chars.set(p.id, { c, x: 0, z: 0, y: 0, vy: 0, px: 0, pz: 0, placed: false, kickT: -9, hitT: -9, hx: 0, hz: 0 });
       }
       k.onTier((tier) => {
         for (const e of chars.values()) e.c.setShadows(tier !== 'low');
@@ -210,6 +215,28 @@ export function createTipToeScene(o: TipToeSceneOptions) {
           f.predict(now);
           syncTiles(time, f.broken.current);
 
+          // đá / bị hất: nhún, văng, bụi tung lên
+          const fxq = f.kickFx.current;
+          while (fxq.length) {
+            const ev = fxq.shift()!;
+            const kc = chars.get(ev.by);
+            if (kc) kc.kickT = time;
+            const kx = ev.x * S;
+            const kz = ev.y * S;
+            k.effects.burst(kx, 0.5, kz, { count: k.count(10), palette: ['#ffffff', '#ffd23f'], speed: 3, life: 0.35, size: 0.16 });
+            for (const hid of ev.hits) {
+              const v = chars.get(hid);
+              if (!v) continue;
+              v.hitT = time;
+              const dx = v.x - kx;
+              const dz = v.z - kz;
+              const l = Math.hypot(dx, dz) || 1;
+              v.hx = dx / l;
+              v.hz = dz / l;
+              k.effects.burst(v.x, 1.1, v.z, { count: k.count(26), palette: ['#ff5e8a', '#ffd23f', '#ffffff'], speed: 5, life: 0.6, size: 0.22 });
+            }
+          }
+
           for (const p of o.players) {
             const e = chars.get(p.id)!;
             const sp = cfg.spawns[p.id];
@@ -225,7 +252,7 @@ export function createTipToeScene(o: TipToeSceneOptions) {
               e.x = tx;
               e.z = tz;
               e.placed = true;
-            } else if (p.id === o.meId && !out) {
+            } else if (p.id === o.meId && !out && !f.positions.current[o.meId]?.st) {
               e.x = tx;
               e.z = tz;
             } else if (out) {
@@ -250,12 +277,21 @@ export function createTipToeScene(o: TipToeSceneOptions) {
 
             e.c.root.visible = e.y > -24;
             e.c.root.position.set(e.x, e.y, e.z);
-            if (!out) e.c.face(vx, vz, dt);
+            const hitAge = time - e.hitT;
+            const kickAge = time - e.kickT;
+            const stunned = !out && hitAge < 0.7;
+            if (!out && !stunned) e.c.face(vx, vz, dt);
+            // nhân vật nghiêng ngửa khi bị hất, nhún tới trước khi đá
+            const tilt = stunned ? Math.sin(Math.min(1, hitAge / 0.25) * Math.PI) * 0.9 * (1 - hitAge / 0.7) : 0;
+            e.c.root.rotation.x = tilt * e.hz;
+            e.c.root.rotation.z = -tilt * e.hx;
+            const lunge = kickAge < 0.25 ? Math.sin((kickAge / 0.25) * Math.PI) : 0;
+            e.c.root.scale.set(CHAR_SCALE * (1 + lunge * 0.12), CHAR_SCALE * (1 - lunge * 0.1 - (stunned ? 0.08 : 0)), CHAR_SCALE * (1 + lunge * 0.12));
             e.c.update(dt, {
               speed: out ? 0 : Math.min(1, Math.hypot(vx, vz) / (cfg.speed * S)),
               dead: false,
               time,
-              pose: out ? 'jump' : 'run',
+              pose: out ? 'jump' : stunned ? 'hit' : kickAge < 0.3 ? 'jump' : 'run',
             });
             k.label(o.labels.get(p.id), e.x, e.y + 2.2, e.z);
             const el = o.labels.get(p.id);

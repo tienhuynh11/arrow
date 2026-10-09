@@ -287,7 +287,11 @@ export type GameInput =
   | { type: 'code'; code: string }                       // mã sát thủ: gõ mã 3 số của người muốn hạ
   | { type: 'aim'; x: number; y: number }                 // giả dạng NPC: thợ săn rọi laze tới điểm (x, y)
   | { type: 'shoot'; x: number; y: number }               // giả dạng NPC: thợ săn bắn vào điểm (x, y) trên sàn
+  | { type: 'kick' }                                     // con đường ẩn: đá/hất người phía trước
+  | { type: 'answer'; text: string }                      // quiz: chốt câu trả lời
   | { type: 'plant' }                                    // mê cung đặt bom: đặt bom ở ô đang đứng
-  | { type: 'steer'; dx: number; dy: number; a: number };  // đấu trường mù: chạy theo màn hình + góc ngắm của chuột
+  | { type: 'steer'; dx: number; dy: number; a: number }       // đấu trường mù: chạy theo màn hình + góc ngắm của chuột
+  // đấu vật trên nóc nhà: dx,dy = hướng đi (hệ toạ độ xe, đã tính theo camera), yaw = hướng camera/ngắm; jump/punch là xung 1 lần, grab/lift là trạng thái giữ
+  | { type: 'brawl'; dx: number; dy: number; yaw: number; jump?: boolean; punch?: boolean; grab?: boolean; lift?: boolean };
 
 export type Judgement = 'PERFECT' | 'GREAT' | 'GOOD' | 'MISS' | 'TRAP';

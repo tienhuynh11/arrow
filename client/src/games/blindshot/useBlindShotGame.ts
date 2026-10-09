@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { stepBlind, type BlindBody, type BlindCfg } from '@shared/blindArena';
+import { blindRadius, stepBlind, type BlindBody, type BlindCfg } from '@shared/blindArena';
 import { net } from '../../network/net';
 import { sfx } from '../../utils/sound';
 import { useGameEvents } from '../../utils/hooks';
@@ -10,6 +10,7 @@ export interface BsConfig extends BlindCfg {
   hideMs: number;
   revealMs: number;
   rounds: number;
+  radii: number[];
   endsAt: number;
   spawns: Record<string, [number, number, number]>;
 }
@@ -21,6 +22,8 @@ export interface BsFire {
   r: number;
   pos: Record<string, [number, number, number]>;
   shots: { id: string; hit: string | null; len: number }[];
+  /** những người bị loại ở lượt bắn này */
+  dead: string[];
   /** giờ máy lúc nhận, để cảnh dựng tia đạn đúng một lần */
   at: number;
 }
@@ -49,13 +52,18 @@ export function useBlindShotGame({ gameId, config, startAt, players, meId, live 
   const lastPredict = useRef(0);
   const fire = useRef<BsFire | null>(null);
 
-  const [hits, setHits] = useState<Record<string, number>>({});
-  const [hurt, setHurt] = useState<Record<string, number>>({});
-  const [lastResult, setLastResult] = useState<{ r: number; hit: boolean; hurt: number } | null>(null);
+  /** những người đã bị loại (cộng dồn) */
+  const out = useRef(new Set<string>());
+  const [alive, setAlive] = useState(players.length);
+  const [kills, setKills] = useState<Record<string, number>>({});
+  const [lastResult, setLastResult] = useState<{ r: number; hit: boolean; died: boolean } | null>(null);
 
   useGameEvents(gameId, (p) => {
     if (p.type === 'pos') {
-      if (p.ph === 'hide') {
+      if (p.ph === 'hide' && p.all) {
+        // khán giả (đã bị loại) xem được toàn bộ
+        others.current = p.all as Record<string, [number, number, number]>;
+      } else if (p.ph === 'hide') {
         const m = p.me as [number, number, number];
         others.current = {};
         if (!synced.current || Math.hypot(m[0] - body.current.x, m[1] - body.current.y) > 6) {
@@ -72,18 +80,22 @@ export function useBlindShotGame({ gameId, config, startAt, players, meId, live 
         }
       }
     } else if (p.type === 'fire') {
-      fire.current = { r: p.r, pos: p.pos, shots: p.shots, at: Date.now() };
+      fire.current = { r: p.r, pos: p.pos, shots: p.shots, dead: p.dead ?? [], at: Date.now() };
+      out.current = new Set<string>(p.out ?? []);
       others.current = Object.fromEntries(Object.entries(p.pos as Record<string, [number, number, number]>).filter(([id]) => id !== meId));
       const mine = p.pos[meId];
       if (mine) body.current = { x: mine[0], y: mine[1], a: mine[2] };
-      setHits(p.hits);
-      setHurt(p.hurt);
+      setAlive(p.alive);
+      setKills(p.kills);
       const myShot = p.shots.find((s: { id: string }) => s.id === meId);
-      const gotHurt = p.shots.filter((s: { hit: string | null }) => s.hit === meId).length;
-      setLastResult({ r: p.r, hit: !!myShot?.hit, hurt: gotHurt });
-      if (myShot?.hit) sfx.perfect();
-      else if (gotHurt) sfx.miss();
-      else sfx.tap();
+      const died = (p.dead ?? []).includes(meId);
+      setLastResult({ r: p.r, hit: !!myShot?.hit, died });
+      // âm thanh đợi đúng lúc cảnh trúng đạn (sau khi tia laze hiện)
+      window.setTimeout(() => {
+        if (myShot?.hit) sfx.perfect();
+        else if (died) sfx.miss();
+        else sfx.tap();
+      }, 4500);
     }
   });
 
@@ -139,22 +151,29 @@ export function useBlindShotGame({ gameId, config, startAt, players, meId, live 
   }, [gameId, live]);
 
   /** phase theo giờ server */
-  const phaseAt = (serverNow: number): { phase: BsPhase; round: number; left: number } => {
+  const phaseAt = (serverNow: number): { phase: BsPhase; round: number; left: number; off: number } => {
     const rel = Math.max(0, serverNow - startAt);
     const round = Math.min(cfg.rounds - 1, Math.floor(rel / roundMs));
     const off = rel - round * roundMs;
-    if (off < cfg.prepMs) return { phase: 'prep', round, left: cfg.prepMs - off };
-    if (off < cfg.prepMs + cfg.hideMs) return { phase: 'hide', round, left: cfg.prepMs + cfg.hideMs - off };
-    return { phase: 'reveal', round, left: roundMs - off };
+    if (off < cfg.prepMs) return { phase: 'prep', round, off, left: cfg.prepMs - off };
+    if (off < cfg.prepMs + cfg.hideMs) return { phase: 'hide', round, off, left: cfg.prepMs + cfg.hideMs - off };
+    return { phase: 'reveal', round, off, left: roundMs - off };
+  };
+
+  /** bán kính sân theo giờ server (co mượt đầu mỗi vòng) */
+  const radiusAt = (serverNow: number) => {
+    const { round, off } = phaseAt(serverNow);
+    return blindRadius(cfg.radii, round, off);
   };
 
   /** dự đoán thân của mình bằng đúng hàm di chuyển của server (đứng yên ở pha kết quả) */
   const predict = (serverNow: number) => {
     const dt = lastPredict.current ? Math.min(serverNow - lastPredict.current, 120) / 1000 : 0;
     lastPredict.current = serverNow;
-    if (!live || !synced.current || phaseAt(serverNow).phase === 'reveal') return;
+    const ph = phaseAt(serverNow);
+    if (!live || !synced.current || ph.phase === 'reveal' || out.current.has(meId)) return;
     const s = sent.current;
-    stepBlind(cfg, body.current, s.dx, s.dy, dt);
+    stepBlind({ ...cfg, r: radiusAt(serverNow) }, body.current, s.dx, s.dy, dt);
   };
 
   return {
@@ -165,12 +184,14 @@ export function useBlindShotGame({ gameId, config, startAt, players, meId, live 
     aim,
     others,
     fire,
-    hits,
-    hurt,
+    out,
+    alive,
+    kills,
     lastResult,
     players,
     meId,
     phaseAt,
+    radiusAt,
     predict,
     serverNow: () => net.now(),
   };

@@ -26,6 +26,9 @@ export default defineConfig({
     // (5173) là chơi được qua ngrok/LAN - không phải tunnel riêng cho 8787.
     // Client nối vào `${base}ws` (xem net.ts), nên khoá proxy phải kèm base, không thì dev bị 404.
     proxy: {
+      // trang nhập liệu quiz (API + file media) do server phục vụ
+      [`${BASE}admin`]: { target: `http://localhost:${process.env.SERVER_PORT ?? 8787}`, changeOrigin: true },
+      [`${BASE}media`]: { target: `http://localhost:${process.env.SERVER_PORT ?? 8787}`, changeOrigin: true },
       [`${BASE}ws`]: {
         target: `http://localhost:${process.env.SERVER_PORT ?? 8787}`,
         ws: true,

@@ -130,7 +130,7 @@ export default function CodeHunt3D({ game, players, meId }: { game: CodeHuntGame
           ))}
         </div>
       </div>
-      <p className="hint">← ↑ → ↓ chạy · hai người phải nhìn thẳng vào mặt nhau mới đọc được mã 3 số trên bảng 3D trên đầu · gõ số để hạ · tường che mất tầm nhìn</p>
+      <p className="hint">← ↑ → ↓ chạy · thấy ai (không bị tường che) thì gõ đúng 3 số trên bảng đầu họ để hạ · số chỉ rõ từ mặt trước bảng · bị hạ sẽ hồi sinh với mã mới · tường che mất tầm nhìn</p>
     </div>
   );
 }

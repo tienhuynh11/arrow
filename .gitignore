@@ -7,3 +7,6 @@ dist/
 
 # GitNexus: index cuc bo + cau hinh/skills cua Claude Code
 /.claude/
+
+# Quiz: media upload (du lieu chay, khong commit)
+/server/data/quiz/media/

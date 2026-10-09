@@ -34,6 +34,10 @@ export default function Door3D({ game, players, meId }: { game: DoorGameState; p
         <span className="hx-alive">
           VỀ ĐÍCH <b>{done}</b>/{game.total}
         </span>
+        <span className="hx-alive">
+          ĐIỂM <b>{game.pts}</b>
+          {game.toast ? <i key={game.toast.n} className="door-pop"> +{game.toast.pts}</i> : null}
+        </span>
         {myFin ? (
           <span className="hx-floor">
             BẠN VỀ HẠNG <b>{myRank}</b> 🎉
@@ -44,6 +48,14 @@ export default function Door3D({ game, players, meId }: { game: DoorGameState; p
           </span>
         )}
       </div>
+      {game.banner ? (
+        <div key={game.banner.n} className="door-banner">
+          {game.banner.text}
+        </div>
+      ) : null}
+      {game.boost > 1.2 || game.behind ? (
+        <div className="door-buff">{game.boost > 1.2 ? 'TĂNG TỐC' : 'ĐUỔI KỊP: chạy nhanh hơn, ít choáng, cửa giả đã thử bị tối đi'}</div>
+      ) : null}
       <div className="g3d-stage">
         <div ref={hostRef} className="g3d-host" />
         <div className="g3d-labels">
@@ -61,7 +73,7 @@ export default function Door3D({ game, players, meId }: { game: DoorGameState; p
           ))}
         </div>
       </div>
-      <p className="hint">← ↑ → ↓ chạy · đâm vào cửa để thử: cửa thật mở ra, cửa giả văng bạn lại · nhìn người khác thử cửa!</p>
+      <p className="hint">← ↑ → ↓ chạy · cửa thật mở vài giây rồi đóng sầm, đổi chỗ · người tìm ra cửa +1 điểm và tăng tốc · tụt lùi 2 hàng được chạy nhanh hơn · qua hàng đầu 3/2/1 điểm</p>
     </div>
   );
 }

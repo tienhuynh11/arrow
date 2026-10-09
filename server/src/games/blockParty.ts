@@ -54,23 +54,23 @@ interface State {
 }
 
 const COLORS = 7;
-const SIZE = 10;
-const SPEED = 34;
+const SIZE = 12;
+const SPEED = 32;
 const PLAYER_R = 2.6;
 /** sau lần rơi cuối, chờ nhân vật rơi hẳn khỏi sàn rồi mới kết thúc ván */
 const FALL_GRACE_MS = 1600;
 const HOLD_TIMEOUT = 900;
-const DURATION = 90_000;
-const GONE_MS = 1900;
-const MAX_ROUNDS = 16;
+const DURATION = 130_000;
+const GONE_MS = 2200;
+const MAX_ROUNDS = 18;
 const BROADCAST_MS = 70;
-const FIRST_SHOW = 4800;
+const FIRST_SHOW = 7000;
 
 /** thời gian nhìn màu an toàn rồi mới rơi: ngắn dần theo vòng */
-const showMs = (r: number) => Math.max(1100, FIRST_SHOW - r * 500);
-const gridFor = (players: number) => (players <= 4 ? 8 : players <= 8 ? 10 : 12);
+const showMs = (r: number) => Math.max(2400, FIRST_SHOW - r * 400);
+const gridFor = (players: number) => (players <= 4 ? 10 : players <= 8 ? 12 : 14);
 /** vòng càng cao càng nhiều màu → ít ô an toàn hơn */
-const colorsFor = (r: number) => Math.min(COLORS, 4 + Math.floor(r / 2));
+const colorsFor = (r: number) => Math.min(COLORS, 2 + Math.floor(r / 2));
 
 function makeRound(r: number, n: number, startAt: number): Round {
   const k = colorsFor(r);

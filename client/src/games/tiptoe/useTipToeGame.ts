@@ -9,6 +9,15 @@ export interface TtPos {
   y: number;
   /** đang rơi (sắp quay về xuất phát) */
   out: boolean;
+  /** đang choáng / đang bị hất */
+  st?: 1;
+}
+
+export interface TtKickFx {
+  by: string;
+  hits: string[];
+  x: number;
+  y: number;
 }
 
 export interface TtConfig {
@@ -36,9 +45,13 @@ export function useTipToeGame({ gameId, config, startAt, players, meId, live }: 
   const keys = useRef({ l: false, r: false, u: false, d: false });
   const sent = useRef({ dx: 0, dy: 0 });
   const lastPredict = useRef(0);
+  /** hiệu ứng đá chờ scene tiêu thụ */
+  const kickFx = useRef<TtKickFx[]>([]);
+  const lastKick = useRef(0);
 
   const [fin, setFin] = useState<Record<string, number>>({});
   const [falls, setFalls] = useState(0);
+  const [ko, setKo] = useState<Record<string, number>>({});
   const finRef = useRef(fin);
 
   const markFin = (id: string, place: number) => {
@@ -54,10 +67,11 @@ export function useTipToeGame({ gameId, config, startAt, players, meId, live }: 
       positions.current = p.positions;
       if (typeof p.broken === 'string') broken.current = p.broken;
       if (typeof p.closeAt === 'number') closeAt.current = p.closeAt;
+      if (p.ko) setKo((old) => (JSON.stringify(old) === JSON.stringify(p.ko) ? old : p.ko));
       if (p.fin) for (const id of Object.keys(p.fin)) markFin(id, p.fin[id]);
       const mine: TtPos | undefined = p.positions[meId];
       // lần đầu, hoặc vừa bị rơi/quay về xuất phát (lệch xa) → bám lại vị trí server
-      if (mine && (!synced.current || mine.out || Math.hypot(mine.x - me.current.x, mine.y - me.current.y) > 8)) {
+      if (mine && (!synced.current || mine.out || mine.st || Math.hypot(mine.x - me.current.x, mine.y - me.current.y) > 8)) {
         me.current = { x: mine.x, y: mine.y };
         synced.current = true;
       }
@@ -70,6 +84,12 @@ export function useTipToeGame({ gameId, config, startAt, players, meId, live }: 
         setFalls((n) => n + 1);
         sfx.miss();
       } else sfx.tick();
+    } else if (p.type === 'kick') {
+      kickFx.current.push({ by: p.by, hits: p.hits ?? [], x: p.x, y: p.y });
+      if (kickFx.current.length > 12) kickFx.current.shift();
+      if ((p.hits ?? []).includes(meId)) sfx.miss();
+      else if (p.by === meId && (p.hits ?? []).length) sfx.perfect();
+      else sfx.tap();
     } else if (p.type === 'finish') {
       if (typeof p.closeAt === 'number') closeAt.current = p.closeAt;
       markFin(p.playerId, p.place);
@@ -94,6 +114,15 @@ export function useTipToeGame({ gameId, config, startAt, players, meId, live }: 
       return true;
     };
     const onDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        const t = performance.now();
+        if (!e.repeat && t - lastKick.current > 250) {
+          lastKick.current = t;
+          net.input(gameId, { type: 'kick' });
+        }
+        return;
+      }
       if (set(e.code, true)) {
         e.preventDefault();
         push();
@@ -127,7 +156,7 @@ export function useTipToeGame({ gameId, config, startAt, players, meId, live }: 
     const dt = lastPredict.current ? Math.min(serverNow - lastPredict.current, 120) / 1000 : 0;
     lastPredict.current = serverNow;
     const { dx, dy } = sent.current;
-    if (!live || !synced.current || (!dx && !dy) || positions.current[meId]?.out) return;
+    if (!live || !synced.current || (!dx && !dy) || positions.current[meId]?.out || positions.current[meId]?.st) return;
     const len = Math.hypot(dx, dy) || 1;
     const limX = (cfg.cols * cfg.size) / 2 - 1;
     const maxY = cfg.startDepth - 1;
@@ -139,9 +168,9 @@ export function useTipToeGame({ gameId, config, startAt, players, meId, live }: 
   };
 
   const posOf = (id: string): { x: number; y: number } | undefined =>
-    id === meId && synced.current && !positions.current[meId]?.out ? me.current : positions.current[id];
+    id === meId && synced.current && !positions.current[meId]?.out && !positions.current[meId]?.st ? me.current : positions.current[id];
 
-  return { cfg, startAt, live, positions, broken, closeAt, fin, falls, predict, posOf, serverNow: () => net.now() };
+  return { cfg, startAt, live, positions, broken, closeAt, fin, falls, ko, kickFx, predict, posOf, serverNow: () => net.now() };
 }
 
 export type TipToeGameState = ReturnType<typeof useTipToeGame>;

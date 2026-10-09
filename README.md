@@ -273,16 +273,18 @@ trên màn hình countdown và leaderboard.
   đâm vào cửa giả thì **bị văng ngược + choáng nửa giây**. Cửa nào thật/giả **do server giữ bí mật** (không nằm trong config), client chỉ biết cửa nào đã mở. Về đích nhanh nhất thắng (~30–45 giây).
 - ✅ **LEO NÚI ĐỔ** *(kiểu Fall Mountain của Fall Guys)* - chạy lên **đỉnh núi dốc**, né **bóng khổng lồ, khúc gỗ lăn và 4 thanh búa quét**. Trúng thì văng tụt xuống dốc + choáng, rồi được bảo vệ vài giây.
   Chướng ngại chạy **theo lịch** tạo một lần và gửi trong config: client tự tính vị trí theo đồng hồ server nên **không tốn băng thông và không giật khi mạng chậm**; server vẫn chốt ai bị trúng (có khoan dung ~14 % cho độ trễ).
-- ✅ **NHẢY XÀ** *(kiểu Jump Showdown của Fall Guys)* - sàn tròn quanh một cột giữa, **thanh xà quay ngày càng nhanh**. Góc xà là hàm của thời gian θ(τ) = w0·τ + ½·a·τ², nên client tự vẽ theo đồng hồ server, không cần gửi góc qua mạng.
+- ✅ **SÀN LÀ DUNG NHAM** *(The Floor Is Lava)* - parkour leo cao bằng các bục, **dung nham dâng dần** từ dưới lên (chậm lúc đầu rồi nhanh dần). Bục thường, **sụp**, **trơn**, **biến mất** theo chu kỳ, **di chuyển**; chạm dung nham thì hồi sinh ở điểm kiểm tra gần nhất (dung nham ngập điểm đó là bị loại). Ai chạm bục đích trước thắng. Camera thứ 3 bám sau lưng kiểu Fall Guys; bục và dung nham không gửi qua mạng, client tự tính theo giờ server.
   **SPACE nhảy** qua xà (nhảy xong phải chờ ~0,3 giây mới nhảy tiếp được, nên không thể nhảy liên tục để bất tử). Trúng xà thì bị hất văng ra mép, rơi khỏi sàn là bị loại. Server kiểm tra cả cung xà quét trong mỗi tick để xà quay nhanh cũng không xuyên qua người.
 - ✅ **SÀN ĐỔI MÀU** *(kiểu Block Party của Fall Guys)* - sàn ghép nhiều ô màu (8×8 → 12×12 tuỳ số người, hợp 16 người). Mỗi vòng báo một **màu an toàn**, hết giờ mọi ô khác màu rơi mất. Vòng sau thời gian ngắn lại (4,8 s → 1,1 s) và nhiều màu hơn (4 → 7).
-- ✅ **LẬT MẢNH GHÉP** *(Memory Match)* - sàn ô vuông, mỗi ô một **hình** (sao, tim, thoi, tròn, tam giác, chữ thập, trăng, chữ nhật). Cả sàn hiện hình vài giây để ghi nhớ rồi **úp lại** và server mới báo **hình cần tìm** (bí mật tới giây úp ô nên không ai đứng sẵn được); hết giờ mọi ô khác hình rơi mất. Vòng sau ngắn dần và nhiều hình hơn (4 → 8). Hình vẽ bằng canvas, 0 byte ảnh.
+- ✅ **HÃY CHỌN GIÁ ĐÚNG** *(trước là Lật Mảnh Ghép)* - sàn ô vuông, mỗi ô một **hình** (sao, tim, thoi, tròn, tam giác, chữ thập, trăng, chữ nhật). Cả sàn hiện hình vài giây để ghi nhớ rồi **úp lại** và server mới báo **hình cần tìm** (bí mật tới giây úp ô nên không ai đứng sẵn được); hết giờ mọi ô khác hình rơi mất. Ô to hơn, nhịp chậm và dài hơn (khoảng 2 phút); vòng sau ngắn dần và nhiều hình hơn (3 → 8). Hình vẽ bằng canvas, 0 byte ảnh.
 - ✅ **CON ĐƯỜNG ẨN** *(Tip Toe)* - sàn kính nhiều hàng ô trông y hệt nhau, chỉ có **một đường thật** liền mạch tới đích, còn lại là ô giả. Bước nhầm ô giả là ô **vỡ** (cả phòng đều thấy nên nhìn người khác thử sai để tìm đường) và bạn rơi, hồi sinh lại từ vạch xuất phát. Đường do server sinh ngẫu nhiên và **không bao giờ gửi cho client** — client chỉ nhận danh sách ô đã vỡ. Về đích đầu tiên thắng và mở đồng hồ đóng ván 12 giây. Góc nhìn thứ 3.
 - ✅ **MÃ SÁT THỦ** *(Code Hunt)* - mỗi người có một **mã 3 số cố định** trên đầu; chỉ đọc được khi **hai người nhìn thẳng vào mặt nhau** và không bị tường che. Gõ đúng mã để hạ, bị hạ thì hồi sinh ngẫu nhiên. 2 phút 30, ai hạ nhiều nhất thắng. Server chỉ gửi mã/vị trí cho người đang nhìn thấy nhau nên không thể soi qua tường; gõ sai bị khoá tay ngắn.
 - ✅ **ĐẤU TRƯỜNG MÙ** *(Blind Duel)* - đấu trường tròn, mỗi vòng cả phòng thấy nhau rồi **biến mất khỏi mắt nhau**; đoán chỗ đối thủ, ngắm bằng chuột, hết pha ẩn **cả phòng nổ súng cùng lúc**. Server không gửi vị trí người khác trong pha ẩn.
 - ✅ **MÊ CUNG ĐẶT BOM** *(kiểu Bomberman)* - mê cung lưới ô vuông nhìn từ trên xuống: đặt bom (SPACE), phá thùng, nhặt 💣🔥⚡, nổ dây chuyền; sau 70 giây sàn sập dần từ ngoài vào. Người sống sót cuối cùng thắng.
 - ✅ **GHẾ ÂM NHẠC** *(Musical Chairs)* - chạy quanh vòng ghế khi nhạc phát; nhạc dừng bất ngờ (giờ dừng là bí mật của server) thì chạm ghế trống để ngồi, ghế luôn ít hơn người.
 - ✅ **GIẢ DẠNG NPC** *(Just Act Natural)* - mỗi vòng một thợ săn, còn lại hoà vào đám NPC do server điều khiển; thợ săn đoán người thật và bắn (đạn có hạn). Server không gửi cho ai biết thực thể nào là người thật.
+- ✅ **ĐẤU VẬT TRÊN NÓC NHÀ** *(kiểu Gang Beasts)* - đánh nhau trên nóc xe tải đang chạy: **đấm** (chuột trái), **túm** (chuột phải/E), **nhấc** (Shift/Space) rồi **quăng** đối thủ xuống. Camera thứ 3 xoay bằng chuột (Pointer Lock). Xe có phanh gấp, xóc, cầu thấp, biển báo quét ngang (có cảnh báo trước); rơi khỏi xe là bị loại, kể cả tự rơi hay kéo nhầm nhau.
+- ✅ **QUIZ ĐOÁN NHANH** - câu hỏi có **ảnh / âm thanh / video** hiện dần từ mờ đến rõ; mọi người nhập đáp án rồi CHỐT, đúng và sớm thì nhiều điểm (300–1000). So khớp chính xác sau khi đổi chữ thường, gộp khoảng trắng, chuẩn hoá Unicode (tuỳ chọn bỏ qua dấu). Đáp án nằm ở server, chỉ lộ khi hết câu.
   Mỗi vòng chỉ có **một gói** từ server (bảng màu + màu an toàn + giờ chốt), client tự đếm ngược theo đồng hồ server nên rất nhẹ mạng.
 - ✅ **NÉ VẬT THỂ LẠ** - **chạy tự do** (giữ ← → , không còn chia làn), sân trải rộng hết khung hình.
   **8 loại vật thể 3D** có hồn riêng: đĩa bay, lưỡi cưa xoay, slime, tinh thể, mắt biết liếc,
@@ -372,7 +374,7 @@ trên màn hình countdown và leaderboard.
 
 **Tên game bằng tiếng Việt**
 - ✅ BẮT NHỊP · PHẢN XẠ NHANH · GÕ ĐÚNG CHUỖI · VƯỢT RÀO · BẤM NHANH TAY · TÍNH NHANH ·
-  NÉ VẬT THỂ LẠ · ĐUỔI BẮT BOM · KÉO CO · HÁI DỪA XỨ DỪA · SÀN TỔ ONG · CỬA BÍ MẬT · LEO NÚI ĐỔ · NHẢY XÀ · SÀN ĐỔI MÀU · LẬT MẢNH GHÉP · CON ĐƯỜNG ẨN
+  NÉ VẬT THỂ LẠ · ĐUỔI BẮT BOM · KÉO CO · HÁI DỪA XỨ DỪA · SÀN TỔ ONG · CỬA BÍ MẬT · LEO NÚI ĐỔ · SÀN LÀ DUNG NHAM · SÀN ĐỔI MÀU · HÃY CHỌN GIÁ ĐÚNG · CON ĐƯỜNG ẨN
 - ✅ Hướng dẫn viết lại bằng lời dễ hiểu, hiện đầy đủ trên màn hướng dẫn 10 giây
 
 **Đồ hoạ 3D (cả 10 minigame)**
@@ -465,7 +467,7 @@ server/src/
             journey.ts                   # logic thuần của chế độ bàn cờ (xúc xắc, di chuyển, điểm văn hoá)
   games/    types.ts index.ts            # GameDefinition + registry + random picker
             rhythm.ts reaction.ts sequence.ts race.ts buttonBattle.ts mathRush.ts
-            dodge.ts hotPotato.ts tugWar.ts coconut.ts hexAGone.ts doorDash.ts fallMountain.ts jumpShowdown.ts blockParty.ts memoryMatch.ts tipToe.ts
+            dodge.ts hotPotato.ts tugWar.ts coconut.ts hexAGone.ts doorDash.ts fallMountain.ts lavaRun.ts blockParty.ts memoryMatch.ts tipToe.ts
   validation/ input.ts                   # sanitize tên/code + rate limiter
 
 client/src/
@@ -476,7 +478,7 @@ client/src/
   components/ Character CharacterEditor FullscreenHint EmoteBar Leaderboard Countdown Scoreboard Toasts Dice ModePicker
   three/    engine quality scene character effects       # lớp 3D dùng chung, tải lười
             rhythmScene reactionScene sequenceScene raceScene buttonScene
-            mathScene dodgeScene bombScene tugScene coconutScene hexScene doorScene mountainScene showdownScene blockPartyScene memoryScene tipToeScene stage
+            mathScene dodgeScene bombScene tugScene coconutScene hexScene doorScene mountainScene lavaScene blockPartyScene memoryScene tipToeScene stage
   games/    view3d.tsx (Scene3D: tải lười cảnh 3D, báo lỗi khi máy không có WebGL)
             rhythm/ reaction/ sequence/ race/ button/ math/ dodge/ tug/ coconut/ hex/
               (mỗi thư mục: useXGame · X3D · HUD · index)
@@ -497,3 +499,12 @@ client/src/
 | NÉ VẬT THỂ LẠ | GIỮ `←` `→` để chạy tự do |
 | ĐUỔI BẮT BOM | `←` `↑` `→` `↓` chạy tự do, chạm vào người khác để chuyền bom |
 | KÉO CO | `SPACE` bấm liên tục để kéo |
+
+
+## Quiz: nhập câu hỏi (không cần database)
+
+Mở `/arrow/#admin`, nhập mật khẩu quản trị rồi thêm câu hỏi (ảnh/âm thanh/video tải lên hoặc dán link, danh sách đáp án chấp nhận, số giây).
+
+- **Mật khẩu:** đặt biến môi trường `QUIZ_ADMIN_KEY` trên server. Ở chế độ production mà thiếu biến này thì trang quản lý bị tắt.
+- **Dữ liệu lưu ở file:** `questions.json` + thư mục `media/` trong `QUIZ_DIR` (mặc định `server/data/quiz`). Trên VM riêng dữ liệu giữ lâu dài; trên hosting có ổ đĩa tạm (Render gói miễn phí) sẽ mất khi khởi động lại, nên bấm **Xuất sao lưu** (một file JSON kèm media) và **Nhập sao lưu** để nạp lại. Muốn bền hơn có thể gắn ổ đĩa bền cho thư mục đó.
+- Không có câu hỏi nào thì game dùng vài câu mẫu bằng chữ.

@@ -28,7 +28,27 @@ export interface Spinner {
   ph: number;
 }
 
+export interface Pickup {
+  id: number;
+  /** 0 = tăng tốc ngắn, 1 = khiên chặn 1 cú */
+  k: 0 | 1;
+  x: number;
+  y: number;
+}
+
+interface Rock {
+  id: number;
+  x: number;
+  y: number;
+  /** giờ server (ms) lúc đá rơi trúng đất */
+  land: number;
+  done: boolean;
+}
+
 interface Config {
+  pickups: Pickup[];
+  /** các mốc checkpoint: bị văng sẽ không tụt dưới mốc đã qua */
+  checkpoints: number[];
   w: number;
   len: number;
   speed: number;
@@ -54,6 +74,10 @@ interface PState {
   safeUntil: number;
   finishedAt: number;
   hits: number;
+  boostUntil: number;
+  shield: boolean;
+  cp: number;
+  taken: Set<number>;
 }
 
 interface State {
@@ -61,6 +85,11 @@ interface State {
   firstFinish: number;
   lastTick: number;
   lastBroadcast: number;
+  nextEvent: number;
+  eventId: number;
+  rocks: Rock[];
+  gusts: { dir: number; from: number; to: number }[];
+  lastCall: boolean;
 }
 
 const W = 60;
@@ -79,6 +108,15 @@ const TOP_Y = LEN + 25;
 const LOG_DEPTH = 2.5;
 /** 20 tick/giây ≈ gói vị trí mỗi 80ms: đủ mượt nhờ nội suy ở client, nhẹ cho đường truyền */
 const BROADCAST_MS = 80;
+const BOOST_MS = 2500;
+const BOOST_MUL = 1.55;
+const PICK_R = 4;
+const ROCK_R = 5.2;
+const ROCK_WARN_MS = 2200;
+const GUST_WARN_MS = 2000;
+const GUST_MS = 2800;
+const GUST_FORCE = 9;
+const CHECKPOINTS = [200, 400];
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -117,12 +155,21 @@ function makeSchedule() {
   return { obstacles, spinners };
 }
 
+function makePickups(): Pickup[] {
+  const out: Pickup[] = [];
+  let id = 0;
+  for (let y = 45; y < LEN - 30; y += rnd(26, 40)) {
+    out.push({ id: id++, k: Math.random() < 0.6 ? 0 : 1, x: Math.round(rnd(-W / 2 + 7, W / 2 - 7)), y: Math.round(y) });
+  }
+  return out;
+}
+
 export const fallMountainGame: GameDefinition<Config, State> = {
   id: 'mountain',
   name: 'LEO NÚI',
   instructions:
-    'Leo lên ĐỈNH NÚI, né bóng và gỗ lăn xuống, né búa quét. Trúng là bị văng xuống dốc. Lên đỉnh nhanh nhất thắng.',
-  controls: [{ keys: ['←', '↑', '→', '↓'], desc: 'Giữ để chạy lên đỉnh · lách sang hai bên để né bóng, gỗ và búa' }],
+    'Leo lên ĐỈNH NÚI, né bóng, gỗ lăn, búa quét và ĐÁ RƠI (có vòng đỏ báo trước). Nhặt tăng tốc, khiên chặn 1 cú; coi chừng gió thổi ngang. Lên đỉnh nhanh nhất thắng.',
+  controls: [{ keys: ['←', '↑', '→', '↓'], desc: 'Giữ để chạy lên đỉnh · né bóng, gỗ, búa, tránh vòng đỏ đá rơi · nhặt tia chớp và khiên' }],
   duration: DURATION + 1500,
   minPlayers: 1,
   maxPlayers: 16,
@@ -153,6 +200,8 @@ export const fallMountainGame: GameDefinition<Config, State> = {
       logDepth: LOG_DEPTH,
       obstacles,
       spinners,
+      pickups: makePickups(),
+      checkpoints: CHECKPOINTS,
       endsAt: DURATION,
       spawns,
     };
@@ -162,9 +211,19 @@ export const fallMountainGame: GameDefinition<Config, State> = {
     const players: Record<string, PState> = {};
     for (const id of ctx.playerIds) {
       const [x, y] = config.spawns[id];
-      players[id] = { x, y, dx: 0, dy: 0, moveAt: 0, stunUntil: 0, safeUntil: 0, finishedAt: 0, hits: 0 };
+      players[id] = { x, y, dx: 0, dy: 0, moveAt: 0, stunUntil: 0, safeUntil: 0, finishedAt: 0, hits: 0, boostUntil: 0, shield: false, cp: 0, taken: new Set() };
     }
-    return { players, firstFinish: 0, lastTick: ctx.startAt, lastBroadcast: 0 };
+    return {
+      players,
+      firstFinish: 0,
+      lastTick: ctx.startAt,
+      lastBroadcast: 0,
+      nextEvent: ctx.startAt + 6000,
+      eventId: 0,
+      rocks: [],
+      gusts: [],
+      lastCall: false,
+    };
   },
 
   handleInput(ctx, state, _config, playerId, input: GameInput) {
@@ -215,6 +274,67 @@ export const fallMountainGame: GameDefinition<Config, State> = {
       return null;
     };
 
+    const applyHit = (id: string, p: PState, kind: 'ball' | 'log' | 'spin' | 'rock', ox: number, oy: number) => {
+      p.safeUntil = now + (p.shield ? 1000 : SAFE_MS);
+      if (p.shield) {
+        p.shield = false;
+        ctx.broadcast({ type: 'hit', playerId: id, kind, ox, oy, blocked: true });
+        return;
+      }
+      p.hits++;
+      const floorY = p.cp > 0 ? config.checkpoints[p.cp - 1] : 0;
+      p.y = Math.max(floorY, p.y - config.knock);
+      p.stunUntil = now + config.stun;
+      p.dx = p.dy = 0;
+      ctx.broadcast({ type: 'hit', playerId: id, kind, ox, oy });
+    };
+
+    // sự kiện bất ngờ: server chọn ngẫu nhiên, báo trước cho mọi người
+    if (now >= state.nextEvent && now > ctx.startAt && rel < config.endsAt - 4000) {
+      const racing = ctx.playerIds.filter((id) => !state.players[id].finishedAt);
+      if (racing.length) {
+        const late = rel > config.endsAt * 0.5;
+        state.nextEvent = now + rnd(late ? 4500 : 6500, late ? 7000 : 9500);
+        if (Math.random() < 0.68) {
+          const leader = racing.reduce((a, b) => (state.players[b].y > state.players[a].y ? b : a));
+          const lp = state.players[leader];
+          const n = 4 + Math.min(4, Math.floor(ctx.playerIds.length / 4));
+          const rocks: Rock[] = [];
+          for (let i = 0; i < n; i++) {
+            // người dẫn đầu bị nhắm nhiều hơn; vài viên rơi quanh người khác
+            const tp = i < n - 2 ? lp : state.players[racing[Math.floor(Math.random() * racing.length)]];
+            rocks.push({
+              id: ++state.eventId,
+              x: Math.round(Math.max(-W / 2 + 5, Math.min(W / 2 - 5, tp.x + rnd(-13, 13)))),
+              y: Math.round(Math.min(LEN - 8, tp.y + rnd(8, 24))),
+              land: now + ROCK_WARN_MS + i * 230,
+              done: false,
+            });
+          }
+          state.rocks.push(...rocks);
+          ctx.broadcast({ type: 'warn', kind: 'rock', rocks: rocks.map((r) => ({ id: r.id, x: r.x, y: r.y, land: r.land })) });
+        } else {
+          const g = { dir: Math.random() < 0.5 ? -1 : 1, from: now + GUST_WARN_MS, to: now + GUST_WARN_MS + GUST_MS };
+          state.gusts.push(g);
+          ctx.broadcast({ type: 'warn', kind: 'gust', dir: g.dir, from: g.from, to: g.to });
+        }
+      }
+    }
+    state.gusts = state.gusts.filter((g) => g.to > now - 500);
+
+    // đá chạm đất
+    for (const r of state.rocks) {
+      if (r.done || now < r.land) continue;
+      r.done = true;
+      ctx.broadcast({ type: 'impact', id: r.id });
+      for (const id of ctx.playerIds) {
+        const p = state.players[id];
+        if (p.finishedAt || now < p.safeUntil) continue;
+        if ((p.x - r.x) ** 2 + (p.y - r.y) ** 2 < ROCK_R * ROCK_R) applyHit(id, p, 'rock', r.x, r.y);
+      }
+    }
+    state.rocks = state.rocks.filter((r) => !r.done);
+
     for (const id of ctx.playerIds) {
       const p = state.players[id];
       if (p.finishedAt || now < ctx.startAt) continue;
@@ -226,21 +346,33 @@ export const fallMountainGame: GameDefinition<Config, State> = {
         }
         if (dt > 0 && (p.dx !== 0 || p.dy !== 0)) {
           const len = Math.hypot(p.dx, p.dy) || 1;
-          p.x = Math.max(-maxX, Math.min(maxX, p.x + (p.dx / len) * config.speed * dt));
-          p.y = Math.max(0, p.y + (p.dy / len) * config.speed * dt);
+          const sp = config.speed * (now < p.boostUntil ? BOOST_MUL : 1);
+          p.x = Math.max(-maxX, Math.min(maxX, p.x + (p.dx / len) * sp * dt));
+          p.y = Math.max(0, p.y + (p.dy / len) * sp * dt);
+        }
+        for (const g of state.gusts) {
+          if (now >= g.from && now < g.to) p.x = Math.max(-maxX, Math.min(maxX, p.x + g.dir * GUST_FORCE * dt));
         }
       }
 
       if (now >= p.safeUntil) {
         const h = hitBy(p.x, p.y);
-        if (h) {
-          p.hits++;
-          p.y = Math.max(0, p.y - config.knock);
-          p.stunUntil = now + config.stun;
-          p.safeUntil = now + SAFE_MS;
-          p.dx = p.dy = 0;
-          ctx.broadcast({ type: 'hit', playerId: id, kind: h.kind, ox: h.x, oy: h.y });
-        }
+        if (h) applyHit(id, p, h.kind, h.x, h.y);
+      }
+
+      // nhặt vật phẩm (mỗi người nhặt riêng, không tranh nhau)
+      for (const it of config.pickups) {
+        if (p.taken.has(it.id) || Math.abs(it.y - p.y) > PICK_R) continue;
+        if ((it.x - p.x) ** 2 + (it.y - p.y) ** 2 > PICK_R * PICK_R) continue;
+        p.taken.add(it.id);
+        if (it.k === 0) p.boostUntil = now + BOOST_MS;
+        else p.shield = true;
+        ctx.broadcast({ type: 'pick', playerId: id, item: it.id, k: it.k });
+      }
+
+      while (p.cp < config.checkpoints.length && p.y >= config.checkpoints[p.cp]) {
+        p.cp++;
+        ctx.broadcast({ type: 'cp', playerId: id, i: p.cp });
       }
 
       if (p.y >= config.len) {
@@ -248,13 +380,17 @@ export const fallMountainGame: GameDefinition<Config, State> = {
         p.finishedAt = Math.max(1, rel);
         p.dx = p.dy = 0;
         if (!state.firstFinish) state.firstFinish = now;
+        if (!state.lastCall) {
+          state.lastCall = true;
+          ctx.broadcast({ type: 'lastcall', until: now + LAST_CALL_MS });
+        }
         ctx.broadcast({ type: 'finish', playerId: id, at: p.finishedAt });
       }
     }
 
     if (now - state.lastBroadcast < BROADCAST_MS) return;
     state.lastBroadcast = now;
-    const positions: Record<string, { x: number; y: number; s: boolean; g: boolean; f: number }> = {};
+    const positions: Record<string, { x: number; y: number; s: boolean; g: boolean; f: number; b: boolean; h: boolean }> = {};
     for (const id of ctx.playerIds) {
       const p = state.players[id];
       positions[id] = {
@@ -263,6 +399,8 @@ export const fallMountainGame: GameDefinition<Config, State> = {
         s: now < p.stunUntil,
         g: now < p.safeUntil,
         f: p.finishedAt,
+        b: now < p.boostUntil,
+        h: p.shield,
       };
     }
     ctx.broadcast({ type: 'pos', positions });

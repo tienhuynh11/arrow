@@ -29,11 +29,11 @@ export interface BmBomb {
   range: number;
 }
 
-/** [x, y, còn sống, số bom, tầm nổ, cấp tốc độ] */
-export type BmPlayer = [number, number, number, number, number, number];
+/** [x, y, còn sống, số bom, tầm nổ, cấp tốc độ, có khiên] */
+export type BmPlayer = [number, number, number, number, number, number, number];
 
 export interface BmFx {
-  kind: 'boom' | 'pick' | 'die';
+  kind: 'boom' | 'pick' | 'die' | 'shield';
   /** giờ máy lúc nhận */
   at: number;
   cells?: number[];
@@ -66,7 +66,7 @@ export function useBombMazeGame({ gameId, config, startAt, players, meId, live }
   const idleSince = useRef(0);
 
   const [alive, setAlive] = useState<Record<string, boolean>>({});
-  const [stats, setStats] = useState<[number, number, number]>([1, 2, 0]);
+  const [stats, setStats] = useState<[number, number, number, number]>([1, 1, 0, 0]);
   const [feed, setFeed] = useState<{ id: number; text: string; by: string; who: string }[]>([]);
   const feedId = useRef(0);
   const aliveRef = useRef<Record<string, boolean>>({});
@@ -87,7 +87,7 @@ export function useBombMazeGame({ gameId, config, startAt, players, meId, live }
         }
       }
       if (mine) {
-        setStats((s) => (s[0] === mine[3] && s[1] === mine[4] && s[2] === mine[5] ? s : [mine[3], mine[4], mine[5]]));
+        setStats((s) => (s[0] === mine[3] && s[1] === mine[4] && s[2] === mine[5] && s[3] === (mine[6] ?? 0) ? s : [mine[3], mine[4], mine[5], mine[6] ?? 0]));
       }
       let changed = false;
       for (const id of Object.keys(p.p)) {
@@ -126,6 +126,10 @@ export function useBombMazeGame({ gameId, config, startAt, players, meId, live }
       items.current.delete(p.c);
       fx.current.push({ kind: 'pick', at: Date.now(), idx: p.c, who: p.p });
       if (p.p === meId) sfx.perfect();
+    } else if (p.type === 'shield') {
+      fx.current.push({ kind: 'shield', at: Date.now(), who: p.p });
+      if (p.p === meId) sfx.miss();
+      else sfx.tick();
     } else if (p.type === 'die') {
       aliveRef.current[p.p] = false;
       setAlive({ ...aliveRef.current });

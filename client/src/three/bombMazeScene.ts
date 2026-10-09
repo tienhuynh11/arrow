@@ -2,6 +2,8 @@ import {
   BoxGeometry,
   Color,
   ConeGeometry,
+  CylinderGeometry,
+  DoubleSide,
   Group,
   InstancedMesh,
   Matrix4,
@@ -53,7 +55,7 @@ const WALL_H = 1.5;
 const CRATE_H = 1.25;
 const ITEM_POOL = 48;
 const BOMB_POOL = 64;
-const KIND_COLOR: Record<string, string> = { b: '#8a5bff', f: '#ff7a1a', s: '#2fd6a0' };
+const KIND_COLOR: Record<string, string> = { b: '#8a5bff', f: '#ff7a1a', s: '#2fd6a0', h: '#3aa8ff' };
 
 export function createBombMazeScene(o: BombMazeSceneOptions) {
   const cfg = o.read().cfg;
@@ -288,6 +290,7 @@ export function createBombMazeScene(o: BombMazeSceneOptions) {
         b: new SphereGeometry(0.3, 12, 8),
         f: new ConeGeometry(0.3, 0.7, 10),
         s: new OctahedronGeometry(0.34, 0),
+        h: new CylinderGeometry(0.34, 0.12, 0.2, 6),
       };
       for (let i = 0; i < ITEM_POOL; i++) {
         const g = new Group();
@@ -309,7 +312,9 @@ export function createBombMazeScene(o: BombMazeSceneOptions) {
         pz: number;
         placed: boolean;
         dead: boolean;
+        bubble: Mesh;
       }
+      const bubbleGeo = new SphereGeometry(1.15, 20, 14);
       const chars = new Map<string, Entry>();
       for (const p of o.players) {
         const c = k.kit.create(p.color, p.id === o.meId);
@@ -317,7 +322,10 @@ export function createBombMazeScene(o: BombMazeSceneOptions) {
         c.root.scale.setScalar(CHAR_SCALE);
         c.root.visible = false;
         scene.add(c.root);
-        chars.set(p.id, { c, x: 0, z: 0, px: 0, pz: 0, placed: false, dead: false });
+        const bubble = new Mesh(bubbleGeo, new MeshBasicMaterial({ color: '#4db8ff', transparent: true, opacity: 0.3, depthWrite: false, side: DoubleSide }));
+        bubble.visible = false;
+        scene.add(bubble);
+        chars.set(p.id, { c, x: 0, z: 0, px: 0, pz: 0, placed: false, dead: false, bubble });
       }
       k.onTier((tier) => {
         for (const e of chars.values()) e.c.setShadows(tier !== 'low');
@@ -560,7 +568,7 @@ export function createBombMazeScene(o: BombMazeSceneOptions) {
             g.rotation.y = time * 2;
             const core = g.children[1] as Mesh;
             const col = KIND_COLOR[kind] ?? '#ffffff';
-            core.geometry = itemGeo[kind as 'b' | 'f' | 's'] ?? itemGeo.b;
+            core.geometry = itemGeo[kind as 'b' | 'f' | 's' | 'h'] ?? itemGeo.b;
             (core.material as MeshBasicMaterial).color.set(col);
             (g.children[0] as Mesh & { material: MeshBasicMaterial }).material.color.set(col);
           }
@@ -608,6 +616,7 @@ export function createBombMazeScene(o: BombMazeSceneOptions) {
                 k.effects.burst(e.x, 1, e.z, { count: k.count(40), palette: ['#ffffff', p.color, '#ffd166'], speed: 5, life: 0.8, size: 0.22 });
               }
               e.c.root.visible = false;
+              e.bubble.visible = false;
               const el = o.labels.get(p.id);
               if (el) el.style.opacity = '0';
               continue;
@@ -622,6 +631,12 @@ export function createBombMazeScene(o: BombMazeSceneOptions) {
             e.c.face(vx, vz, dt);
             e.c.update(dt, { speed: Math.min(1, Math.hypot(vx, vz) / (cfg.speed * TS)), dead: false, time, pose: 'run' });
             k.label(o.labels.get(p.id), e.x, 2.1, e.z);
+            e.bubble.visible = !!s?.[6];
+            if (e.bubble.visible) {
+              e.bubble.position.set(e.x, 1.05, e.z);
+              e.bubble.scale.setScalar(1 + 0.04 * Math.sin(time * 6));
+              (e.bubble.material as MeshBasicMaterial).opacity = 0.26 + 0.08 * Math.sin(time * 5);
+            }
           }
 
           // hiệu ứng nổ / nhặt đồ
@@ -629,6 +644,10 @@ export function createBombMazeScene(o: BombMazeSceneOptions) {
           while (fxDone < fxs.length) {
             const ev = fxs[fxDone++];
             // 'boom' đã xử lý ở khối lửa phía trên
+            if (ev.kind === 'shield' && ev.who) {
+              const e = chars.get(ev.who);
+              if (e) k.effects.burst(e.x, 1, e.z, { count: k.count(30), palette: ['#ffffff', '#4db8ff', '#bfe6ff'], speed: 5, life: 0.6, size: 0.2 });
+            }
             if (ev.kind === 'pick' && ev.idx !== undefined) {
               const [x, z] = cellPos(ev.idx);
               k.effects.burst(x, 1, z, { count: k.count(16), palette: ['#ffffff', '#ffd23f', '#7df9ff'], speed: 3, life: 0.6, size: 0.16 });

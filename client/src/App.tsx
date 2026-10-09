@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { net } from './network/net';
 import { useStore } from './state/store';
 import { sfx } from './utils/sound';
@@ -8,6 +8,8 @@ import Lobby from './screens/Lobby';
 import Match from './screens/Match';
 import Final from './screens/Final';
 import Toasts from './components/Toasts';
+
+const AdminQuiz = lazy(() => import('./screens/AdminQuiz'));
 
 /** phím dùng để chơi — trong trận không được làm cuộn trang */
 const GAME_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'PageUp', 'PageDown']);
@@ -22,6 +24,13 @@ export default function App() {
   const connected = useStore((s) => s.connected);
   const [muted, setMuted] = useState(sfx.isMuted());
   const fs = useFullscreen();
+  const [admin, setAdmin] = useState(() => location.hash === '#admin');
+
+  useEffect(() => {
+    const onHash = () => setAdmin(location.hash === '#admin');
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   useEffect(() => {
     // mỗi lần (tái) kết nối, store tự khôi phục phiên chơi đã lưu (xem net.onStatus trong store)
@@ -58,7 +67,13 @@ export default function App() {
   }, [fs.supported, fs.toggle]);
 
   let screen = <Home />;
-  if (room) {
+  if (admin) {
+    screen = (
+      <Suspense fallback={<div className="loading">Đang tải…</div>}>
+        <AdminQuiz />
+      </Suspense>
+    );
+  } else if (room) {
     if (room.phase === 'lobby') screen = <Lobby room={room} />;
     else if (room.phase === 'final' && final) screen = <Final room={room} final={final} />;
     else screen = <Match room={room} />;

@@ -7,7 +7,7 @@ import { freeAt, los, makeMap, stepCode, type CodeBox } from '../../../shared/co
  * bị hạ thì hồi sinh ngẫu nhiên ở chỗ khác với MÃ MỚI. Hết 2 phút 30, ai hạ nhiều nhất xếp trên.
  *
  * Bí mật nằm ở server: mã và vị trí của người khác CHỈ được gửi cho ai đang nhìn thấy họ (không bị tường/khối che,
- * trong tầm nhìn VÀ hai mặt đối nhau). Gõ mã của người chưa từng thấy là gõ sai và bị khoá tay một chút, nên đoán mò không ăn thua.
+ * trong tầm nhìn, không cần nhìn mặt nhau). Gõ mã của người chưa từng thấy là gõ sai và bị khoá tay một chút, nên đoán mò không ăn thua.
  */
 interface Config {
   w: number;
@@ -57,10 +57,8 @@ const VIS = 85;
 const DURATION = 150_000;
 const RESPAWN_MS = 2800;
 const INV_MS = 2200;
-const SEEN_MS = 2200;
-/** góc nhìn đối mặt: lệch tối đa 60° so với đường nối hai người */
-const FACE_COS = 0.5;
-const WRONG_LOCK_MS = 900;
+const SEEN_MS = 3000;
+const WRONG_LOCK_MS = 700;
 const HOLD_TIMEOUT = 900;
 const BROADCAST_MS = 66;
 
@@ -100,10 +98,10 @@ export const codeHuntGame: GameDefinition<Config, State> = {
   id: 'codehunt',
   name: 'MÃ SÁT THỦ',
   instructions:
-    'Mỗi người có một MÃ 3 SỐ cố định trên đầu, nhưng chỉ đọc được khi hai bên NHÌN THẲNG VÀO MẶT NHAU (không bị tường che). Gõ đúng 3 số để hạ người ấy. ' +
-    'Bị hạ sẽ hồi sinh ở chỗ khác (mã vẫn giữ nguyên). Sau 2 phút 30, ai hạ nhiều nhất thắng.',
+    'Mỗi người có một MÃ 3 SỐ cố định trên đầu, nhưng đọc được khi bạn thấy bảng số của họ (không bị tường che; số chỉ rõ từ mặt trước bảng). Gõ đúng 3 số để hạ người ấy. ' +
+    'Bị hạ sẽ hồi sinh ở chỗ khác với MÃ MỚI. Sau 2 phút 30, ai hạ nhiều nhất thắng.',
   controls: [
-    { keys: ['←', '↑', '→', '↓'], desc: 'Giữ để chạy và quay mặt · đối mặt người khác để đọc mã' },
+    { keys: ['←', '↑', '→', '↓'], desc: 'Giữ để chạy và quay mặt · thấy bảng số trên đầu ai thì gõ mã đó' },
     { keys: ['0-9'], desc: 'Gõ 3 số trên đầu mục tiêu để hạ · Backspace xoá' },
   ],
   duration: DURATION + 1500,
@@ -218,6 +216,7 @@ export const codeHuntGame: GameDefinition<Config, State> = {
           p.y = y;
           p.alive = true;
           p.invUntil = now + INV_MS;
+          p.code = newCode(state.players, id);
           p.seen = {};
         }
         continue;
@@ -244,13 +243,8 @@ export const codeHuntGame: GameDefinition<Config, State> = {
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         if (dx * dx + dy * dy > vis2 || !los(map, a.x, a.y, b.x, b.y)) continue;
-        // bảng mã nằm cố định trên đầu mỗi người (3D, chỉ mặt trước có số) nên luôn gửi mã cho ai đang thấy người đó;
-        // nhưng CHỈ tính là đã đọc được mã khi HAI MẶT ĐỐI NHAU — a quay mặt về b VÀ b quay mặt về a
-        const dist = Math.hypot(dx, dy) || 1;
-        const aSeesB = (a.fx * dx + a.fy * dy) / dist > FACE_COS;
-        const bFacesA = (b.fx * -dx + b.fy * -dy) / dist > FACE_COS;
-        const behind = a.alive && aSeesB && bFacesA;
-        if (behind) a.seen[bid] = now;
+        // thấy được b (trong tầm + không bị che) là đủ để hạ; việc đọc số trên bảng 3D là chuyện của thị giác
+        if (a.alive) a.seen[bid] = now;
         others[bid] = [Math.round(b.x * 10) / 10, Math.round(b.y * 10) / 10, b.code, now < b.invUntil ? 1 : 0, Math.round(b.fx * 100) / 100, Math.round(b.fy * 100) / 100];
       }
       ctx.send(aid, {

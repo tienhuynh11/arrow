@@ -1,6 +1,10 @@
 import {
   BoxGeometry,
   Color,
+  DodecahedronGeometry,
+  MeshBasicMaterial,
+  OctahedronGeometry,
+  RingGeometry,
   CylinderGeometry,
   ExtrudeGeometry,
   Group,
@@ -15,13 +19,17 @@ import {
 } from 'three';
 import { runScene, type SceneHooks } from './scene';
 import type { Character3D } from './character';
-import type { MtConfig, MtFx, MtPos } from '../games/mountain/useMountainGame';
+import type { MtConfig, MtFx, MtGust, MtPos, MtRock } from '../games/mountain/useMountainGame';
 
 export interface MountainFrame {
   cfg: MtConfig;
   startAt: number;
   positions: { current: Record<string, MtPos> };
   fx: { current: MtFx[] };
+  rocks: { current: MtRock[] };
+  impacts: { current: number[] };
+  gusts: { current: MtGust[] };
+  taken: { current: Set<number> };
   predict(serverNow: number): void;
   posOf(id: string): { x: number; y: number } | undefined;
   serverNow(): number;
@@ -113,7 +121,7 @@ export function createMountainScene(o: MountainSceneOptions) {
       for (const s of [-1, 1]) {
         const rail = new Mesh(new BoxGeometry(0.5, 1.1, LEN + 4), railMat);
         rail.position.set(s * (W / 2 + 0.55), 0.55, -LEN / 2);
-        rail.castShadow = !k.low;
+        rail.castShadow = false;
         slope.add(rail);
       }
 
@@ -132,7 +140,7 @@ export function createMountainScene(o: MountainSceneOptions) {
       slope.add(startLine);
       const poleMat = k.lit({ color: '#ffd23f' });
       for (const s of [-1, 1]) {
-        const pole = new Mesh(new CylinderGeometry(0.28, 0.32, 4.6, 20), poleMat);
+        const pole = new Mesh(new CylinderGeometry(0.28, 0.32, 4.6, 12), poleMat);
         pole.position.set(s * (W / 2 + 0.6), 2.3, -LEN);
         pole.castShadow = !k.low;
         slope.add(pole);
@@ -154,11 +162,11 @@ export function createMountainScene(o: MountainSceneOptions) {
         g.fillStyle = '#cfcfd8';
         for (let i = 0; i < 4; i++) g.fillRect(0, i * (h / 4), w, h / 8);
       });
-      const ballMesh = new InstancedMesh(new SphereGeometry(1, 20, 14), k.lit({ map: stripes }), Math.max(1, balls.length));
+      const ballMesh = new InstancedMesh(new SphereGeometry(1, 16, 10), k.lit({ map: stripes }), Math.max(1, balls.length));
       ballMesh.castShadow = !k.low;
       ballMesh.frustumCulled = false;
       balls.forEach((b, j) => ballMesh.setColorAt(j, new Color(BALL_COLORS[b.i % BALL_COLORS.length])));
-      const logGeo = new CylinderGeometry(cfg.logDepth * S * 1.15, cfg.logDepth * S * 1.15, 1, 18);
+      const logGeo = new CylinderGeometry(cfg.logDepth * S * 1.15, cfg.logDepth * S * 1.15, 1, 12);
       logGeo.rotateZ(Math.PI / 2);
       const logMesh = new InstancedMesh(logGeo, k.lit({ map: stripes }), Math.max(1, logs.length));
       logMesh.castShadow = !k.low;
@@ -168,11 +176,14 @@ export function createMountainScene(o: MountainSceneOptions) {
 
       const hiddenBall = new Uint8Array(balls.length);
       const hiddenLog = new Uint8Array(logs.length);
-      const placeObstacles = (t: number) => {
+      const placeObstacles = (t: number, meY: number) => {
+        // chỉ cập nhật chướng ngại quanh người chơi (ngoài tầm nhìn thì ẩn, không tốn matrix)
+        const lo = meY - 45;
+        const hi = meY + 170;
         let dirty = false;
         balls.forEach(({ ob }, j) => {
           const y = cfg.topY - ob.v * (t - ob.t0);
-          const vis = y > -20 && y < cfg.topY + 2;
+          const vis = y > lo && y < hi && y < cfg.topY + 2;
           if (!vis) {
             if (!hiddenBall[j]) {
               hiddenBall[j] = 1;
@@ -195,7 +206,7 @@ export function createMountainScene(o: MountainSceneOptions) {
         dirty = false;
         logs.forEach(({ ob }, j) => {
           const y = cfg.topY - ob.v * (t - ob.t0);
-          const vis = y > -20 && y < cfg.topY + 2;
+          const vis = y > lo && y < hi && y < cfg.topY + 2;
           if (!vis) {
             if (!hiddenLog[j]) {
               hiddenLog[j] = 1;
@@ -219,17 +230,21 @@ export function createMountainScene(o: MountainSceneOptions) {
 
       // búa quét: thanh quay quanh một trụ
       const spinMat = k.lit({ color: '#ff5e8a' });
-      const poleGeo = new CylinderGeometry(0.22, 0.3, 1.1, 16);
+      const poleGeo = new CylinderGeometry(0.22, 0.3, 1.1, 12);
+      const postMat = k.lit({ color: '#ffd23f' });
+      const capMat = k.lit({ color: '#ffe27a' });
+      const barGeo = new BoxGeometry(cfg.spinners[0] ? cfg.spinners[0].half * 2 * S : 3, 0.34, 0.34);
+      const capGeo = new SphereGeometry(0.42, 10, 8);
       const spinners = cfg.spinners.map((s) => {
         const g = new Group();
         g.position.set(s.x * S, 0, -s.y * S);
-        const post = new Mesh(poleGeo, k.lit({ color: '#ffd23f' }));
+        const post = new Mesh(poleGeo, postMat);
         post.position.y = 0.55;
         post.castShadow = !k.low;
-        const bar = new Mesh(new BoxGeometry(s.half * 2 * S, 0.34, 0.34), spinMat);
+        const bar = new Mesh(barGeo, spinMat);
         bar.position.y = 0.55;
         bar.castShadow = !k.low;
-        const capL = new Mesh(new SphereGeometry(0.42, 14, 10), k.lit({ color: '#ffe27a' }));
+        const capL = new Mesh(capGeo, capMat);
         const capR = capL.clone();
         capL.position.set(-s.half * S, 0.55, 0);
         capR.position.set(s.half * S, 0.55, 0);
@@ -238,6 +253,81 @@ export function createMountainScene(o: MountainSceneOptions) {
         slope.add(g);
         return { g, s };
       });
+
+      /* ---------------- checkpoint ---------------- */
+      const cpMat = new MeshBasicMaterial({ color: '#5ed67a', transparent: true, opacity: 0.45 });
+      for (const cy of cfg.checkpoints) {
+        const strip = new Mesh(new BoxGeometry(W, 0.03, 0.6), cpMat);
+        strip.position.set(0, 0.03, -cy * S);
+        slope.add(strip);
+        for (const sd of [-1, 1]) {
+          const post = new Mesh(new CylinderGeometry(0.16, 0.16, 2.4, 8), cpMat);
+          post.position.set(sd * (W / 2 + 0.6), 1.2, -cy * S);
+          slope.add(post);
+        }
+      }
+
+      /* ---------------- vật phẩm: 2 InstancedMesh ---------------- */
+      const boosts = cfg.pickups.filter((p) => p.k === 0);
+      const shields = cfg.pickups.filter((p) => p.k === 1);
+      const boostMesh = new InstancedMesh(new OctahedronGeometry(0.7), k.lit({ color: '#ffd23f' }), Math.max(1, boosts.length));
+      const shieldMesh = new InstancedMesh(new SphereGeometry(0.62, 12, 8), k.lit({ color: '#2fc4e8' }), Math.max(1, shields.length));
+      boostMesh.frustumCulled = shieldMesh.frustumCulled = false;
+      slope.add(boostMesh, shieldMesh);
+      const placePickups = (time: number, meY: number, taken: Set<number>) => {
+        const put = (mesh: InstancedMesh, list: typeof cfg.pickups, sq: number) => {
+          list.forEach((it, j) => {
+            if (taken.has(it.id) || Math.abs(it.y - meY) > 180) m.makeScale(0, 0, 0);
+            else {
+              quat.setFromEuler(euler.set(0, time * 2 + j, 0));
+              pos.set(it.x * S, 0.9 + Math.sin(time * 3 + j) * 0.12, -it.y * S);
+              m.compose(pos, quat, scl.set(sq, sq, sq));
+            }
+            mesh.setMatrixAt(j, m);
+          });
+          mesh.instanceMatrix.needsUpdate = true;
+        };
+        put(boostMesh, boosts, 1);
+        put(shieldMesh, shields, 1);
+      };
+
+      /* ---------------- đá rơi: pool đá + vòng báo đỏ ---------------- */
+      const ROCK_POOL = 12;
+      const rockGeo = new DodecahedronGeometry(0.5);
+      const rockMat = k.lit({ color: '#7a6a5c' });
+      const ringGeo = new RingGeometry(0.82, 1, 28);
+      ringGeo.rotateX(-Math.PI / 2);
+      const rockPool = Array.from({ length: ROCK_POOL }, () => {
+        const rk = new Mesh(rockGeo, rockMat);
+        rk.visible = false;
+        rk.castShadow = false;
+        const ring = new Mesh(ringGeo, new MeshBasicMaterial({ color: '#ff3b3b', transparent: true, opacity: 0.8, depthWrite: false }));
+        ring.visible = false;
+        slope.add(rk, ring);
+        return { rk, ring };
+      });
+      const ROCK_VIS_R = 5.2 * S;
+      const placeRocks = (now: number, list: MtRock[]) => {
+        for (let i = 0; i < ROCK_POOL; i++) {
+          const slot = rockPool[i];
+          const r = list[i];
+          if (!r) {
+            slot.rk.visible = slot.ring.visible = false;
+            continue;
+          }
+          const left = r.land - now;
+          const u = Math.max(0, Math.min(1, 1 - left / 2200));
+          slot.ring.visible = true;
+          slot.ring.position.set(r.x * S, 0.06, -r.y * S);
+          slot.ring.scale.setScalar(ROCK_VIS_R * (0.6 + 0.4 * u));
+          (slot.ring.material as MeshBasicMaterial).opacity = 0.35 + 0.5 * u * (0.7 + 0.3 * Math.sin(now / 70));
+          const fall = Math.max(0, left) / 900;
+          slot.rk.visible = left < 900 && left > -80;
+          slot.rk.position.set(r.x * S, 0.5 + Math.min(1, fall) ** 2 * 14, -r.y * S);
+          slot.rk.rotation.set(now / 120, now / 160, 0);
+          slot.rk.scale.setScalar(1.3);
+        }
+      };
 
       /* ---------------- nhân vật ---------------- */
       interface Entry {
@@ -274,7 +364,30 @@ export function createMountainScene(o: MountainSceneOptions) {
           const f = o.read();
           const now = f.serverNow();
           f.predict(now);
-          placeObstacles((now - f.startAt) / 1000);
+          const meAt = f.posOf(o.meId);
+          const meY = meAt ? meAt.y : 0;
+          placeObstacles((now - f.startAt) / 1000, meY);
+          placePickups(time, meY, f.taken.current);
+          // đá: tới giờ chạm đất thì nổ hạt rồi bỏ khỏi danh sách
+          const rl = f.rocks.current;
+          for (let i = rl.length - 1; i >= 0; i--) {
+            if (now > rl[i].land + 80) {
+              const r = rl[i];
+              rl.splice(i, 1);
+              k.effects.burst(r.x * S, worldY(r.y) + 0.4, worldZ(r.y), {
+                count: k.count(10),
+                palette: ['#b9a58f', '#7a6a5c', '#ffffff'],
+                speed: 3,
+                life: 0.5,
+                size: 0.18,
+                gravity: -6,
+              });
+              if (Math.abs(r.y - meY) < 30 && Math.abs(r.x - (meAt ? meAt.x : 0)) < 25) k.shake(0.25);
+            }
+          }
+          f.impacts.current.length = 0;
+          f.gusts.current = f.gusts.current.filter((g) => g.to > now - 300);
+          placeRocks(now, rl);
           for (const sp of spinners) sp.g.rotation.y = sp.s.ph + sp.s.w * ((now - f.startAt) / 1000);
 
           // cú trúng: hạt + rung màn hình

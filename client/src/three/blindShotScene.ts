@@ -26,7 +26,9 @@ export interface BlindShotFrame {
   aim: { current: number };
   others: { current: Record<string, [number, number, number]> };
   fire: { current: BsFire | null };
-  phaseAt(serverNow: number): { phase: BsPhase; round: number; left: number };
+  out: { current: Set<string> };
+  phaseAt(serverNow: number): { phase: BsPhase; round: number; left: number; off: number };
+  radiusAt(serverNow: number): number;
   predict(serverNow: number): void;
   serverNow(): number;
 }
@@ -38,6 +40,8 @@ export interface BlindShotSceneOptions {
   meId: string;
   read: () => BlindShotFrame;
   labels: Map<string, HTMLElement | null>;
+  /** nhan TRUNG! noi tren dau nguoi bi ha */
+  hitLabels: Map<string, HTMLElement | null>;
 }
 
 /** 1 đơn vị sân của server = S đơn vị 3D */
@@ -47,7 +51,18 @@ const CHAR_SCALE = 1.05;
 const PITCH = (64 * Math.PI) / 180;
 /** độ cao mặt phẳng ngắm (ngang tầm súng) */
 const AIM_Y = 1;
-const TRACER_S = 0.7;
+/** lich hien thi ket qua, tinh (ms) tu luc nhan event 'fire' */
+const POP_MS = 900; // nhan vat hien hinh (pop) o vi tri that
+const LASER_AT = 1300; // sau do moi hien tia laze
+const LASER_MS = 3200; // laze hien thi lau, mo dan
+const LASER_FULL = 1500; // doan dau giu sang het co
+const DEATH_AT = 4600; // roi moi toi canh nguoi trung dan chet
+const DEATH_MS = 550;
+const HITTXT_MS = 1700;
+const easeOutBack = (t: number) => {
+  const c = 2.2;
+  return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
+};
 const FENCE_POSTS = 44;
 
 const angDiff = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
@@ -100,16 +115,25 @@ export function createBlindShotScene(o: BlindShotSceneOptions) {
 
       // hàng rào thấp: cọc + hai thanh ngang chạy vòng quanh
       const fenceR = RW + 0.12;
+      const rails: Mesh[] = [];
       const posts = new InstancedMesh(new BoxGeometry(0.2, 1.0, 0.2), k.lit({ color: '#ffffff' }), FENCE_POSTS);
       const m = new Matrix4();
       const q = new Quaternion();
       const axisY = new Vector3(0, 1, 0);
-      for (let i = 0; i < FENCE_POSTS; i++) {
-        const a = (i / FENCE_POSTS) * Math.PI * 2;
-        q.setFromAxisAngle(axisY, -a);
-        m.compose(new Vector3(Math.cos(a) * fenceR, 0.5, Math.sin(a) * fenceR), q, new Vector3(1, 1, 1));
-        posts.setMatrixAt(i, m);
-      }
+      const one = new Vector3(1, 1, 1);
+      const pv = new Vector3();
+      const layoutFence = (fr: number) => {
+        for (let i = 0; i < FENCE_POSTS; i++) {
+          const a = (i / FENCE_POSTS) * Math.PI * 2;
+          q.setFromAxisAngle(axisY, -a);
+          m.compose(pv.set(Math.cos(a) * fr, 0.5, Math.sin(a) * fr), q, one);
+          posts.setMatrixAt(i, m);
+        }
+        posts.instanceMatrix.needsUpdate = true;
+        for (const r of rails) r.scale.setScalar(fr / fenceR);
+      };
+      layoutFence(fenceR);
+      let shownR = RW;
       posts.castShadow = !k.low;
       scene.add(posts);
       for (const [h, col] of [
@@ -119,6 +143,7 @@ export function createBlindShotScene(o: BlindShotSceneOptions) {
         const rail = new Mesh(new TorusGeometry(fenceR, 0.07, 8, 96), k.lit({ color: col }));
         rail.rotation.x = Math.PI / 2;
         rail.position.y = h;
+        rails.push(rail);
         scene.add(rail);
       }
 
@@ -170,26 +195,37 @@ export function createBlindShotScene(o: BlindShotSceneOptions) {
         for (const e of chars.values()) e.c.setShadows(tier !== 'low');
       });
 
-      /* ---------------- tia đạn của lượt bắn đồng loạt ---------------- */
+      /* ---------------- tia laze cua luot ban dong loat ---------------- */
       interface Tracer {
-        mesh: Mesh;
-        life: number;
+        core: Mesh;
+        halo: Mesh;
+        age: number;
       }
       const tracers: Tracer[] = [];
-      const tracerGeo = new CylinderGeometry(0.05, 0.05, 1, 6);
+      const tracerGeo = new CylinderGeometry(0.06, 0.06, 1, 8);
+      const haloGeo = new CylinderGeometry(0.2, 0.2, 1, 10);
       const up = new Vector3(0, 1, 0);
       const dir = new Vector3();
       const qq = new Quaternion();
       const spawnTracer = (x: number, z: number, a: number, len: number, color: string) => {
-        const mat = new MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
-        const mesh = new Mesh(tracerGeo, mat);
+        const core = new Mesh(tracerGeo, new MeshBasicMaterial({ color, transparent: true, opacity: 0.95 }));
+        const halo = new Mesh(haloGeo, new MeshBasicMaterial({ color, transparent: true, opacity: 0.25, depthWrite: false }));
         dir.set(Math.sin(a), 0, Math.cos(a));
-        mesh.scale.set(1, len, 1);
-        mesh.position.set(x + dir.x * (len / 2 + 0.9), 1.05, z + dir.z * (len / 2 + 0.9));
         qq.setFromUnitVectors(up, dir);
-        mesh.quaternion.copy(qq);
-        scene.add(mesh);
-        tracers.push({ mesh, life: TRACER_S });
+        for (const mesh of [core, halo]) {
+          mesh.quaternion.copy(qq);
+          mesh.userData = { x, z, len, dx: dir.x, dz: dir.z };
+          scene.add(mesh);
+        }
+        tracers.push({ core, halo, age: 0 });
+      };
+      const placeTracer = (t: Tracer, f: number) => {
+        const u = t.core.userData as { x: number; z: number; len: number; dx: number; dz: number };
+        const l = Math.max(0.01, u.len * f);
+        for (const mesh of [t.core, t.halo]) {
+          mesh.scale.set(1, l, 1);
+          mesh.position.set(u.x + u.dx * (l / 2 + 0.9), 1.05, u.z + u.dz * (l / 2 + 0.9));
+        }
       };
       const colorOf = new Map(o.players.map((p) => [p.id, p.color]));
 
@@ -212,10 +248,11 @@ export function createBlindShotScene(o: BlindShotSceneOptions) {
       const ray = new Raycaster();
       const plane = new Plane(new Vector3(0, 1, 0), -AIM_Y);
       const hitPt = new Vector3();
-      const dist = k.fit(RW + 1.4, RW + 1.6, PITCH) * 1.05;
       let lastPhase: BsPhase | '' = '';
       let lastRound = -1;
       let firedSeen = '';
+      let laserDone = false;
+      let deathDone = false;
 
       return {
         frame(dt, time) {
@@ -224,9 +261,30 @@ export function createBlindShotScene(o: BlindShotSceneOptions) {
           f.predict(now);
           const { phase, round } = f.phaseAt(now);
           const meBody = f.body.current;
+          const meOut = f.out.current.has(o.meId);
+
+          // san thu nho muot theo ban kinh hien tai + camera zoom gan dan
+          const curRW = f.radiusAt(now) * S;
+          if (Math.abs(curRW - shownR) > 1e-4) {
+            shownR = curRW;
+            const sc0 = curRW / RW;
+            arena.scale.set(sc0, 1, sc0);
+            layoutFence(curRW + 0.12);
+          }
+          const dist = k.fit(curRW + 1.2, curRW + 1.4, PITCH) * 1.03;
+
+          // tien trinh cua luot ban hien tai (ms ke tu luc nhan event 'fire')
+          const fireNow = f.fire.current;
+          const inReveal = !!fireNow && phase === 'reveal' && fireNow.r === round;
+          const tf = inReveal && fireNow ? Date.now() - fireNow.at : -1;
+          const victims = fireNow ? fireNow.dead : [];
+          const goneId = (id: string) => {
+            if (victims.includes(id)) return inReveal ? tf >= DEATH_AT + DEATH_MS : true;
+            return f.out.current.has(id);
+          };
 
           // hướng súng theo con trỏ (giữ góc cũ nếu con trỏ quá gần người)
-          if (hasPtr && f.phaseAt(now).phase !== 'reveal') {
+          if (hasPtr && phase !== 'reveal' && !meOut) {
             ray.setFromCamera(ptr, k.engine.camera);
             if (ray.ray.intersectPlane(plane, hitPt)) {
               const ddx = hitPt.x - meBody.x * S;
@@ -269,15 +327,15 @@ export function createBlindShotScene(o: BlindShotSceneOptions) {
               tx = meBody.x * S;
               tz = meBody.y * S;
               ta = meBody.a;
-              visible = true;
+              visible = !goneId(p.id);
             } else {
               // pha ẩn: dữ liệu của người khác bị bỏ hẳn, không vẽ gì cả
-              const t = phase === 'hide' ? undefined : f.others.current[p.id];
+              const t = phase === 'hide' && !meOut ? undefined : f.others.current[p.id];
               if (t) {
                 tx = t[0] * S;
                 tz = t[1] * S;
                 ta = t[2];
-                visible = true;
+                visible = !goneId(p.id);
               } else {
                 tx = e.x;
                 tz = e.z;
@@ -314,53 +372,93 @@ export function createBlindShotScene(o: BlindShotSceneOptions) {
             const vz = (e.z - e.pz) / Math.max(dt, 1e-3);
             e.px = e.x;
             e.pz = e.z;
+            // nhan vat hien hinh (pop) o vi tri that khi het pha an; nguoi trung dan thu nho bien mat
+            let sc = 1;
+            if (!isMe && tf >= 0 && tf < POP_MS) sc = Math.max(0.001, easeOutBack(tf / POP_MS));
+            if (tf >= DEATH_AT && victims.includes(p.id)) sc = Math.max(0.001, 1 - (tf - DEATH_AT) / DEATH_MS);
+            e.c.root.scale.setScalar(CHAR_SCALE * sc);
             e.c.root.position.set(e.x, 0, e.z);
             e.c.setYaw(e.a);
             e.c.update(dt, { speed: Math.min(1, Math.hypot(vx, vz) / (cfg.speed * S)), dead: false, time, pose: 'run' });
             e.flashT = Math.max(0, e.flashT - dt);
             e.flash.visible = e.flashT > 0;
-            if (!isMe) k.label(o.labels.get(p.id), e.x, 2.3, e.z);
+            if (!isMe && sc > 0.9) k.label(o.labels.get(p.id), e.x, 2.3, e.z);
             else {
               const el = o.labels.get(p.id);
               if (el) el.style.opacity = '0';
             }
           }
 
-          // lượt bắn đồng loạt: tia đạn + tia lửa nòng + hiệu ứng trúng
-          const fire = f.fire.current;
-          if (fire && phase === 'reveal') {
-            const key = `${fire.r}:${fire.at}`;
+          // luot ban dong loat theo lich: (1) hien nhan vat -> (2) tia laze (lau) -> (3) nguoi trung dan chet
+          if (fireNow && inReveal) {
+            const key = `${fireNow.r}:${fireNow.at}`;
             if (key !== firedSeen) {
               firedSeen = key;
-              for (const s of fire.shots) {
-                const pos = fire.pos[s.id];
+              laserDone = false;
+              deathDone = false;
+              for (const id of Object.keys(fireNow.pos)) {
+                const v = fireNow.pos[id];
+                if (id === o.meId) continue;
+                k.effects.burst(v[0] * S, 0.3, v[1] * S, {
+                  count: k.count(14),
+                  palette: ['#ffffff', '#c9b8ff'],
+                  speed: 2.2,
+                  life: 0.6,
+                  size: 0.15,
+                  gravity: -0.5,
+                });
+              }
+            }
+            if (!laserDone && tf >= LASER_AT) {
+              laserDone = true;
+              for (const sh of fireNow.shots) {
+                const pos = fireNow.pos[sh.id];
                 if (!pos) continue;
-                spawnTracer(pos[0] * S, pos[1] * S, pos[2], s.len * S, colorOf.get(s.id) ?? '#ffffff');
-                const e = chars.get(s.id);
-                if (e) e.flashT = 0.18;
-                if (s.hit) {
-                  const v = fire.pos[s.hit];
-                  if (v) {
-                    k.effects.burst(v[0] * S, 1.1, v[1] * S, {
-                      count: k.count(40),
-                      palette: ['#ff2d55', '#ffd166', '#ffffff'],
-                      speed: 5,
-                      life: 0.7,
-                      size: 0.2,
-                    });
-                  }
-                  if (s.hit === o.meId) k.shake(0.35);
+                spawnTracer(pos[0] * S, pos[1] * S, pos[2], sh.len * S, colorOf.get(sh.id) ?? '#ffffff');
+                const e = chars.get(sh.id);
+                if (e) e.flashT = 0.25;
+              }
+            }
+            if (!deathDone && tf >= DEATH_AT) {
+              deathDone = true;
+              for (const sh of fireNow.shots) {
+                if (!sh.hit) continue;
+                const v = fireNow.pos[sh.hit];
+                if (v) {
+                  k.effects.burst(v[0] * S, 1.1, v[1] * S, {
+                    count: k.count(46),
+                    palette: ['#ff2d55', '#ffd166', '#ffffff'],
+                    speed: 5.5,
+                    life: 0.8,
+                    size: 0.22,
+                  });
                 }
+                if (sh.hit === o.meId) k.shake(0.4);
               }
             }
           }
+          // chu TRUNG! noi len tren dau nguoi bi ha
+          for (const p of o.players) {
+            const hl = o.hitLabels.get(p.id);
+            if (!hl) continue;
+            const v = fireNow?.pos[p.id];
+            if (inReveal && v && victims.includes(p.id) && tf >= DEATH_AT && tf < DEATH_AT + HITTXT_MS) {
+              k.label(hl, v[0] * S, 2.7 + (tf - DEATH_AT) / 1000, v[1] * S);
+            } else hl.style.opacity = '0';
+          }
           for (let i = tracers.length - 1; i >= 0; i--) {
             const t = tracers[i];
-            t.life -= dt;
-            (t.mesh.material as MeshBasicMaterial).opacity = Math.max(0, t.life / TRACER_S);
-            if (t.life <= 0) {
-              scene.remove(t.mesh);
-              (t.mesh.material as MeshBasicMaterial).dispose();
+            t.age += dt * 1000;
+            const fadeP = t.age <= LASER_FULL ? 0 : (t.age - LASER_FULL) / (LASER_MS - LASER_FULL);
+            const op = Math.max(0, 1 - fadeP);
+            (t.core.material as MeshBasicMaterial).opacity = 0.95 * op;
+            (t.halo.material as MeshBasicMaterial).opacity = 0.25 * op;
+            placeTracer(t, Math.min(1, t.age / 320));
+            if (t.age >= LASER_MS) {
+              for (const mesh of [t.core, t.halo]) {
+                scene.remove(mesh);
+                (mesh.material as MeshBasicMaterial).dispose();
+              }
               tracers.splice(i, 1);
             }
           }

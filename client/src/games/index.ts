@@ -13,7 +13,7 @@ import CoconutGame from './coconut';
 import HexGame from './hex';
 import DoorGame from './door';
 import MountainGame from './mountain';
-import ShowdownGame from './showdown';
+import LavaGame from './lava';
 import BlockPartyGame from './blockparty';
 import MemoryGame from './memory';
 import TipToeGame from './tiptoe';
@@ -22,6 +22,8 @@ import BlindShotGame from './blindshot';
 import BombMazeGame from './bombmaze';
 import ChairsGame from './chairs';
 import ActNaturalGame from './actnatural';
+import QuizGame from './quiz';
+import RooftopGame from './rooftop';
 
 /** Renderer registry - keys must match the server-side game ids. */
 export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
@@ -38,7 +40,7 @@ export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
   hex: HexGame,
   door: DoorGame,
   mountain: MountainGame,
-  showdown: ShowdownGame,
+  lava: LavaGame,
   blockparty: BlockPartyGame,
   memory: MemoryGame,
   tiptoe: TipToeGame,
@@ -47,4 +49,6 @@ export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
   bombmaze: BombMazeGame,
   chairs: ChairsGame,
   actnatural: ActNaturalGame,
+  quiz: QuizGame,
+  rooftop: RooftopGame,
 };

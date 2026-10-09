@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PlayerState } from '@shared/protocol';
 import { createMountainScene } from '../../three/mountainScene';
 import { useLatest, useScene } from '../view3d';
@@ -24,6 +24,15 @@ export default function Mountain3D({ game, players, meId }: { game: MountainGame
     [rosterKey, meId],
   );
 
+  const [left, setLeft] = useState(0);
+  useEffect(() => {
+    if (!game.lastCall) return;
+    const tick = () => setLeft(Math.max(0, Math.ceil((game.lastCall - game.serverNow()) / 1000)));
+    tick();
+    const id = window.setInterval(tick, 500);
+    return () => window.clearInterval(id);
+  }, [game.lastCall]);
+
   const done = Object.keys(game.fin).length;
   const myFin = game.fin[meId] !== undefined;
   const myRank = myFin ? Object.keys(game.fin).sort((a, b) => game.fin[a] - game.fin[b]).indexOf(meId) + 1 : 0;
@@ -43,9 +52,16 @@ export default function Mountain3D({ game, players, meId }: { game: MountainGame
             ĐỘ CAO <b>{game.height}</b>%
           </span>
         )}
+        {game.shield && <span className="hx-floor">🛡 KHIÊN</span>}
+        {game.lastCall > 0 && left > 0 && (
+          <span className="hx-floor mt-last">
+            CHỐT SỔ <b>{left}</b>s
+          </span>
+        )}
       </div>
       <div className="g3d-stage">
         <div ref={hostRef} className="g3d-host" />
+        {game.banner && <div className={`mt-banner mt-${game.banner.tone}`}>{game.banner.text}</div>}
         <div className="g3d-labels">
           {players.map((p) => (
             <div
@@ -61,7 +77,7 @@ export default function Mountain3D({ game, players, meId }: { game: MountainGame
           ))}
         </div>
       </div>
-      <p className="hint">← ↑ → ↓ chạy lên đỉnh · lách sang hai bên để né bóng, khúc gỗ và búa quét · bị trúng sẽ văng xuống dốc</p>
+      <p className="hint">← ↑ → ↓ chạy lên đỉnh · né bóng, gỗ, búa và vòng đỏ đá rơi · nhặt ⚡ tăng tốc, 🛡 khiên · bị trúng sẽ văng xuống (không tụt qua checkpoint)</p>
     </div>
   );
 }
