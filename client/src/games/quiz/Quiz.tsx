@@ -14,15 +14,37 @@ interface Props {
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 
-/** Làm rõ dần theo tiến độ k (0..1): mờ giảm chậm lúc đầu, nhanh dần về cuối */
-function fade(p: number) {
-  const k = Math.max(0, Math.min(1, p));
-  const blur = 28 * (1 - k * k);
-  return {
-    filter: `blur(${blur.toFixed(2)}px) saturate(${(0.25 + 0.75 * k).toFixed(2)}) brightness(${(0.55 + 0.45 * k).toFixed(2)})`,
-    transform: `scale(${(1.16 - 0.16 * k).toFixed(3)})`,
-    fog: (1 - k) * 0.85,
+/** Lưới mảnh ghép phủ lên ảnh/video: các mảnh RƠI DẦN theo thời gian để lộ hình */
+const TCOLS = 8;
+const TROWS = 5;
+const TN = TCOLS * TROWS;
+const TILE_COLORS = ['#4cc9f0', '#7bd88f', '#ffd23f', '#ff8fb1', '#b388ff', '#ff9f5a'];
+
+/** bộ sinh số giả ngẫu nhiên có hạt giống: mọi người chơi thấy cùng một thứ tự rơi */
+function rng(seed: number) {
+  let a = (seed * 2654435761) >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** thứ tự rơi của từng mảnh (ngưỡng 0.04..0.9 của thời gian câu hỏi), màu và độ xoay khi rơi */
+function makeTiles(seed: number) {
+  const r = rng(seed + 7);
+  const order = Array.from({ length: TN }, (_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const thr = new Array<number>(TN);
+  order.forEach((tile, rank) => (thr[tile] = 0.04 + 0.86 * (rank / (TN - 1))));
+  const color = Array.from({ length: TN }, (_, i) => TILE_COLORS[(i + Math.floor(r() * 3)) % TILE_COLORS.length]);
+  const rot = Array.from({ length: TN }, () => (r() < 0.5 ? -1 : 1) * (18 + r() * 40));
+  return { thr, color, rot };
 }
 
 /** Chân dung tròn của người chơi (đầu nhân vật) */
@@ -67,7 +89,9 @@ export default function Quiz({ game, players, meId, live }: Props) {
   const clockRef = useRef<HTMLSpanElement>(null);
   const nextRef = useRef<HTMLSpanElement>(null);
   const mediaRef = useRef<HTMLElement | null>(null);
-  const fogRef = useRef<HTMLDivElement>(null);
+  const tileRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const tileState = useRef(new Uint8Array(TN));
+  const resAt = useRef(0);
   const avRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef<Map<string, HTMLLIElement>>(new Map());
@@ -78,11 +102,17 @@ export default function Quiz({ game, players, meId, live }: Props) {
   const playersRef = useRef(players);
   playersRef.current = players;
 
+  const tiles = useMemo(() => makeTiles(q?.i ?? 0), [q?.i]);
+  const tilesRefData = useRef(tiles);
+  tilesRefData.current = tiles;
+
   // câu mới: xoá ô nhập + lỗi media
   useEffect(() => {
     setText('');
     setMediaErr(null);
     setNeedPlay(false);
+    tileState.current = new Uint8Array(TN);
+    resAt.current = 0;
     if (q) {
       const t = window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 80);
       return () => window.clearTimeout(t);
@@ -115,13 +145,31 @@ export default function Quiz({ game, players, meId, live }: Props) {
           clockRef.current.textContent = res ? '' : ended ? 'Hết giờ…' : `${Math.max(0, Math.ceil((qq.endAt - now) / 1000))}s`;
           clockRef.current.classList.toggle('low', !ended && p > 0.8);
         }
-        const f = fade(p);
+        // ảnh/video luôn rõ nét; mảnh ghép phủ lên rơi dần theo thời gian (hết câu thì rơi nốt rất nhanh)
         const el = mediaRef.current;
         if (el) {
-          el.style.filter = res ? 'none' : f.filter;
-          el.style.transform = res ? 'scale(1)' : f.transform;
+          el.style.filter = 'none';
+          el.style.transform = 'none';
         }
-        if (fogRef.current) fogRef.current.style.opacity = String(res ? 0 : f.fog);
+        if (res && !resAt.current) resAt.current = performance.now();
+        if (!res) resAt.current = 0;
+        const T = tilesRefData.current;
+        const st = tileState.current;
+        for (let i = 0; i < TN; i++) {
+          const tile = tileRefs.current[i];
+          if (!tile || st[i] === 2) continue;
+          const d = res ? (performance.now() - resAt.current) / 520 - T.thr[i] * 0.35 : (p - T.thr[i]) / 0.075;
+          if (d <= 0) continue;
+          if (d >= 1) {
+            tile.style.display = 'none';
+            st[i] = 2;
+          } else {
+            st[i] = 1;
+            const e = d * d;
+            tile.style.transform = `translateY(${(e * 170).toFixed(1)}%) rotate(${(T.rot[i] * e).toFixed(1)}deg)`;
+            tile.style.opacity = String((1 - d * d).toFixed(2));
+          }
+        }
         const av = avRef.current;
         if (av) {
           av.muted = sfx.isMuted();
@@ -356,7 +404,20 @@ export default function Quiz({ game, players, meId, live }: Props) {
                 onError={() => setMediaErr('Không tải được video')}
               />
             )}
-            {(q.image || q.video) && !mediaErr && <div className="qz-fog" ref={fogRef} />}
+            {(q.image || q.video) && !mediaErr && (
+              <div className="qz-tiles" key={`t${q.i}`} aria-hidden="true">
+                {Array.from({ length: TN }, (_, i) => (
+                  <div
+                    key={i}
+                    className={`qz-tile k${(i + Math.floor(i / TCOLS)) % 2}`}
+                    ref={(el) => {
+                      tileRefs.current[i] = el;
+                    }}
+                    style={{ ['--c' as string]: tiles.color[i] }}
+                  />
+                ))}
+              </div>
+            )}
             {q.audio && !q.video && (
               <>
                 <audio
@@ -393,13 +454,17 @@ export default function Quiz({ game, players, meId, live }: Props) {
 
       <div className="qz-crew">
         {crew.map((p) => {
-          const done = prog.ids.includes(p.id) || (p.id === meId && sent);
+          // kết quả hiện NGAY lúc người đó chốt: đúng (xanh, +điểm) hoặc sai (đỏ), không lộ nội dung đáp án
+          const m = prog.marks[p.id];
+          const done = !!m || prog.ids.includes(p.id) || (p.id === meId && sent);
+          const verdict = m ? (m[0] ? 'ok' : 'bad') : '';
           return (
-            <div key={p.id} className={`qz-pl ${p.id === meId ? 'me' : ''} ${done ? 'done' : ''}`}>
+            <div key={p.id} className={`qz-pl ${p.id === meId ? 'me' : ''} ${done ? 'done' : ''} ${verdict}`}>
               <span className="n">{p.name}</span>
               <span className="av">
                 <Portrait p={p} size={46} />
-                {done && <i className="tick">✓</i>}
+                {done && <i className="tick">{verdict === 'bad' ? '✗' : '✓'}</i>}
+                {m && m[0] ? <em className="gain">+{m[1]}</em> : null}
               </span>
               <b>{scores[p.id] ?? 0}</b>
             </div>

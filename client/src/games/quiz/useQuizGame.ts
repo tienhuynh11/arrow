@@ -37,7 +37,7 @@ export interface QuizResult {
 /** Trạng thái QUIZ ĐOÁN NHANH: câu hỏi hiện tại, ai đã chốt, đáp án mình đã chốt, kết quả. Config không chứa câu hỏi/đáp án. */
 export function useQuizGame({ gameId }: GameProps) {
   const [q, setQ] = useState<QuizQuestion | null>(null);
-  const [prog, setProg] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
+  const [prog, setProg] = useState<{ ids: string[]; total: number; marks: Record<string, [number, number]> }>({ ids: [], total: 0, marks: {} });
   const [ack, setAck] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [result, setResult] = useState<QuizResult | null>(null);
@@ -49,13 +49,13 @@ export function useQuizGame({ gameId }: GameProps) {
       if (p.i === cur.current) return; // gói lặp: bỏ qua
       cur.current = p.i;
       setQ(p as QuizQuestion);
-      setProg({ ids: [], total: 0 });
+      setProg({ ids: [], total: 0, marks: {} });
       setAck(null);
       setSent(false);
       setResult(null);
       sfx.start();
     } else if (p.type === 'prog') {
-      if (p.i === cur.current) setProg({ ids: p.ids ?? [], total: p.total ?? 0 });
+      if (p.i === cur.current) setProg({ ids: p.ids ?? [], total: p.total ?? 0, marks: p.marks ?? {} });
     } else if (p.type === 'ack') {
       if (p.i === cur.current) {
         setAck(String(p.text ?? ''));

@@ -81,6 +81,13 @@ function publicQ(s: State, i: number) {
   };
 }
 
+/** ai đã chốt + kết quả ngay lúc chốt (đúng/sai, điểm) để hiện lên vòng tròn nhân vật của họ — KHÔNG kèm nội dung đáp án */
+function progPayload(s: State, total: number) {
+  const marks: Record<string, [number, number]> = {};
+  for (const [id, a] of s.answers) marks[id] = [a.ok ? 1 : 0, a.pts];
+  return { type: 'prog', i: s.idx, ids: [...s.answers.keys()], total, marks };
+}
+
 function resultPayload(s: State, ctxPlayers: string[]) {
   const q = s.questions[s.idx];
   const rows = ctxPlayers.map((id) => {
@@ -115,7 +122,7 @@ export const quizGame: GameDefinition<Config, State> = {
   id: 'quiz',
   name: 'QUIZ ĐOÁN NHANH',
   instructions:
-    'Xem ảnh, nghe nhạc hoặc xem video rồi gõ đáp án và nhấn ENTER để chốt. Chỉ được chốt một lần mỗi câu, phải khớp chính xác (không phân biệt hoa/thường). Đúng và chốt càng sớm càng nhiều điểm.',
+    'Xem ảnh, nghe nhạc hoặc xem video rồi gõ đáp án và nhấn ENTER để chốt. Chỉ được chốt một lần mỗi câu, phải khớp chính xác (không phân biệt hoa/thường). Đúng và chốt càng sớm càng nhiều điểm; kết quả của bạn hiện ngay trên vòng tròn nhân vật.',
   controls: [
     { keys: ['GÕ'], desc: 'Nhập đáp án' },
     { keys: ['ENTER'], desc: 'Chốt đáp án' },
@@ -180,7 +187,7 @@ export const quizGame: GameDefinition<Config, State> = {
       s.correct[playerId] += 1;
     }
     s.answers.set(playerId, { text, ok, pts, at: now });
-    ctx.broadcast({ type: 'prog', i: s.idx, ids: [...s.answers.keys()], total: ctx.playerIds.length });
+    ctx.broadcast(progPayload(s, ctx.playerIds.length));
     ctx.send(playerId, { type: 'ack', i: s.idx, text });
   },
 
@@ -193,12 +200,13 @@ export const quizGame: GameDefinition<Config, State> = {
       return;
     }
     if (s.phase === 'ask') {
-      const all = ctx.playerIds.every((id) => s.answers.has(id));
-      if (now >= s.qEnd || all) {
+      // câu hỏi luôn chạy hết thời gian, kể cả khi mọi người đã chốt
+      if (now >= s.qEnd) {
         startResult(ctx, s);
       } else if (now - s.lastResend >= RESEND_MS) {
         s.lastResend = now;
         ctx.broadcast(publicQ(s, s.idx));
+        if (s.answers.size) ctx.broadcast(progPayload(s, ctx.playerIds.length));
       }
       return;
     }
