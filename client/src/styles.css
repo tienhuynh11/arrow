@@ -3698,3 +3698,169 @@ body.in-match .match-stage > .board { width: 100%; height: 100%; }
 .tc-cross .tc-btn:nth-child(2) { grid-area: u; }
 .tc-cross .tc-btn:nth-child(3) { grid-area: r; }
 .tc-cross .tc-btn:nth-child(4) { grid-area: d; }
+
+/* MÃ SÁT THỦ */
+.ch-label { line-height: 1.1; }
+.ch-label b.cd {
+  display: block;
+  margin-top: 1px;
+  font-size: 17px;
+  letter-spacing: 0.14em;
+  color: #fff;
+  background: rgba(20, 12, 50, 0.85);
+  border: 2px solid currentColor;
+  border-radius: 9px;
+  padding: 1px 7px;
+}
+.ch-label b.cd.inv { opacity: 0.6; border-style: dashed; }
+.ch-rank {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 5;
+  min-width: 128px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: rgba(10, 8, 30, 0.6);
+  font-size: 12px;
+  font-weight: 800;
+}
+.ch-rank div { display: flex; gap: 6px; align-items: baseline; }
+.ch-rank div.me { background: rgba(255, 255, 255, 0.14); border-radius: 6px; }
+.ch-rank span { width: 12px; color: var(--dim); }
+.ch-rank b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; }
+.ch-rank em { font-style: normal; color: var(--gold); }
+.ch-feed {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 5;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 800;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+}
+.ch-code {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 6;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 4px solid #6a5bff;
+  box-shadow: 0 0 26px rgba(106, 91, 255, 0.55);
+}
+.ch-code span {
+  width: min(7vh, 38px);
+  text-align: center;
+  font-size: min(6.5vh, 34px);
+  font-weight: 900;
+  color: #2a1f6e;
+}
+.ch-code.lock { border-color: #ff4d6d; opacity: 0.7; }
+.ch-code.ok { border-color: #2fd6a0; box-shadow: 0 0 34px rgba(47, 214, 160, 0.8); }
+.ch-code.bad { border-color: #ff4d6d; box-shadow: 0 0 30px rgba(255, 77, 109, 0.7); }
+.ch-code em {
+  position: absolute;
+  left: 50%;
+  top: -26px;
+  transform: translateX(-50%);
+  font-style: normal;
+  font-size: 15px;
+  font-weight: 900;
+  color: #fff;
+  white-space: nowrap;
+  text-shadow: 0 2px 4px #000;
+}
+.ch-dead {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 6;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  border-radius: 16px;
+  background: rgba(20, 8, 30, 0.82);
+  color: #fff;
+  font-weight: 900;
+  text-align: center;
+}
+.ch-dead small { display: block; color: var(--dim); font-weight: 600; }
+.ch-pad {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 7;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  touch-action: none;
+}
+.ch-pad button {
+  width: min(11vh, 56px);
+  height: min(9vh, 46px);
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+  font-family: inherit;
+  touch-action: none;
+  user-select: none;
+}
+.ch-pad button:active { background: rgba(255, 255, 255, 0.6); }
+
+/* ĐẤU TRƯỜNG MÙ */
+.bs-banner {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  z-index: 6;
+  transform: translateX(-50%);
+  padding: 6px 18px;
+  border-radius: 18px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.94);
+  border: 4px solid #6a5bff;
+  color: #2a1f6e;
+  pointer-events: none;
+}
+.bs-banner b { display: block; font-size: min(4.4vh, 24px); font-weight: 900; letter-spacing: 0.06em; }
+.bs-banner i { font-style: normal; color: #ff5e8a; margin-left: 4px; }
+.bs-banner small { display: block; font-size: 12px; font-weight: 700; color: #5b4bd6; }
+.bs-banner.hide { background: rgba(20, 12, 50, 0.9); border-color: #b388ff; color: #fff; }
+.bs-banner.hide small { color: #cbb8ff; }
+.bs-banner.reveal { border-color: #ff5e8a; }
+.bs-dark {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(10, 6, 30, 0) 35%, rgba(10, 6, 30, 0.55) 100%);
+}
+
+/* GIẢ DẠNG NPC */
+.g3d-host.an-aim { cursor: crosshair; }
+.an-blind {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  background: rgba(8, 6, 20, 0.97);
+  color: #fff;
+  text-align: center;
+  pointer-events: none;
+}
+.an-blind b { font-size: 26px; letter-spacing: 0.08em; }
+.an-blind span { font-size: 64px; font-weight: 900; color: #ffd23f; line-height: 1; }
+.an-blind small { color: #b9b4d8; font-weight: 600; }

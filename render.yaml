@@ -1,0 +1,10 @@
+# Render Blueprint: một dịch vụ Docker phục vụ cả giao diện (/arrow/) lẫn WebSocket.
+# Dùng: Render dashboard → New → Blueprint → chọn repo này.
+services:
+  - type: web
+    name: arrow-party
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true

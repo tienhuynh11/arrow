@@ -17,6 +17,11 @@ import ShowdownGame from './showdown';
 import BlockPartyGame from './blockparty';
 import MemoryGame from './memory';
 import TipToeGame from './tiptoe';
+import CodeHuntGame from './codehunt';
+import BlindShotGame from './blindshot';
+import BombMazeGame from './bombmaze';
+import ChairsGame from './chairs';
+import ActNaturalGame from './actnatural';
 
 /** Renderer registry - keys must match the server-side game ids. */
 export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
@@ -37,4 +42,9 @@ export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
   blockparty: BlockPartyGame,
   memory: MemoryGame,
   tiptoe: TipToeGame,
+  codehunt: CodeHuntGame,
+  blindshot: BlindShotGame,
+  bombmaze: BombMazeGame,
+  chairs: ChairsGame,
+  actnatural: ActNaturalGame,
 };

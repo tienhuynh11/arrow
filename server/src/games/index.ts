@@ -16,6 +16,11 @@ import { jumpShowdownGame } from './jumpShowdown.js';
 import { blockPartyGame } from './blockParty.js';
 import { memoryMatchGame } from './memoryMatch.js';
 import { tipToeGame } from './tipToe.js';
+import { codeHuntGame } from './codeHunt.js';
+import { blindShotGame } from './blindShot.js';
+import { bombMazeGame } from './bombMaze.js';
+import { musicalChairsGame } from './musicalChairs.js';
+import { actNaturalGame } from './actNatural.js';
 
 /** Add a new minigame here and the match loop picks it up automatically. */
 export const GAMES: GameDefinition[] = [
@@ -36,20 +41,29 @@ export const GAMES: GameDefinition[] = [
   blockPartyGame,
   memoryMatchGame,
   tipToeGame,
+  codeHuntGame,
+  blindShotGame,
+  bombMazeGame,
+  musicalChairsGame,
+  actNaturalGame,
 ];
 
 export const gameById = (id: string) => GAMES.find((g) => g.id === id);
 
+/** game còn gắn nhãn "CHƯA CẬP NHẬT" trong tên thì ẩn khỏi màn chọn và trận thường; bỏ nhãn đi là tự hiện lại */
+export const isHidden = (g: GameDefinition) => g.name.includes('CHƯA CẬP NHẬT');
+const VISIBLE = () => GAMES.filter((g) => !isHidden(g));
+
 /** danh sách gọn để client dựng màn chọn game */
 export const gameCatalog = () =>
-  GAMES.map((g) => ({ id: g.id, name: g.name, instructions: g.instructions }));
+  VISIBLE().map((g) => ({ id: g.id, name: g.name, instructions: g.instructions }));
 
 /**
  * Một trận chơi HẾT các minigame mà phòng đã chọn (mặc định là tất cả),
  * thứ tự xáo trộn mỗi trận.
  */
 export function pickMatchGames(playerCount: number, allowed?: string[]): string[] {
-  const pool = GAMES.filter(
+  const pool = VISIBLE().filter(
     (g) =>
       playerCount >= g.minPlayers &&
       playerCount <= g.maxPlayers &&

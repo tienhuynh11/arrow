@@ -43,6 +43,8 @@ export const sfx = {
   good: () => blip(740, 80, 'triangle', 0.04),
   miss: () => blip(180, 130, 'sawtooth', 0.045, 110),
   tap: () => blip(440, 35, 'square', 0.025),
+  /** một nốt nhạc nền (ghế âm nhạc) */
+  note: (freq: number, ms = 170) => blip(freq, ms, 'triangle', 0.045),
   overtake: () => blip(660, 200, 'triangle', 0.06, 1180),
   winner: () => {
     [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => blip(f, 220, 'triangle', 0.06), i * 130));

@@ -283,6 +283,11 @@ export type GameInput =
   | { type: 'lock' }                                    // math rush: chốt đáp án
   | { type: 'moveXY'; dx: number; dy: number }          // di chuyển tự do 2D trong đấu trường
   | { type: 'pull' }                                    // kéo co
-  | { type: 'climb'; side: 'L' | 'R' };                 // hái dừa: bấm luân phiên trái/phải để leo
+  | { type: 'climb'; side: 'L' | 'R' }                  // hái dừa
+  | { type: 'code'; code: string }                       // mã sát thủ: gõ mã 3 số của người muốn hạ
+  | { type: 'aim'; x: number; y: number }                 // giả dạng NPC: thợ săn rọi laze tới điểm (x, y)
+  | { type: 'shoot'; x: number; y: number }               // giả dạng NPC: thợ săn bắn vào điểm (x, y) trên sàn
+  | { type: 'plant' }                                    // mê cung đặt bom: đặt bom ở ô đang đứng
+  | { type: 'steer'; dx: number; dy: number; a: number };  // đấu trường mù: chạy theo màn hình + góc ngắm của chuột
 
 export type Judgement = 'PERFECT' | 'GREAT' | 'GOOD' | 'MISS' | 'TRAP';
