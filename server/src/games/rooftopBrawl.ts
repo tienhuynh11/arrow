@@ -90,6 +90,7 @@ import {
  */
 const DURATION = 130_000;
 const SHRINK_AT = 55_000;
+const TURN_RATE = 16; // rad/s: tốc độ quay thân tối đa
 const CREDIT_MS = 5500;
 const TICK_BUDGET = 45; // gói input / giây tối đa
 
@@ -191,10 +192,11 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
   id: 'rooftop',
   name: 'ĐẤU VẬT TRÊN NÓC NHÀ',
   instructions:
-    'Cả bọn đánh nhau trên nóc xe tải đang đậu: đấm hất lùi, túm rồi nhấc bổng và quăng đối thủ xuống đường. Sau một lúc nóc xe sập dần từ mép vào, lan can biến mất. Rơi khỏi xe là bị loại, người cuối cùng còn trên xe thắng (tự rơi hay kéo nhầm nhau cũng tính!).',
+    'Cả bọn đánh nhau trên nóc xe tải đang đậu: đấm nhanh, đấm mạnh, túm rồi nhấc bổng và quăng đối thủ xuống đường, có thể khoá mục tiêu và né. Sau một lúc nóc xe sập dần từ mép vào, lan can biến mất. Rơi khỏi xe là bị loại, người cuối cùng còn trên xe thắng (tự rơi hay kéo nhầm nhau cũng tính!).',
   controls: [
     { keys: ['←', '↑', '→', '↓'], desc: 'Đi theo hướng camera · W A S D cũng được · SPACE nhảy' },
-    { keys: ['CHUỘT'], desc: 'Bấm vào màn hình để khoá chuột, di chuột xoay camera · Esc nhả chuột' },
+    { keys: ['CHUỘT'], desc: 'Bấm vào màn hình để khoá chuột, di chuột xoay camera quanh nhân vật · Esc nhả chuột' },
+    { keys: ['CHUỘT GIỮA', 'TAB'], desc: 'Khoá / đổi mục tiêu: thân luôn nhìn mục tiêu, WASD đi vòng quanh nó (F cũng được)' },
     { keys: ['CLICK TRÁI'], desc: 'ĐẤM nhanh (nối 2–3 đòn = combo) · giữ rồi thả = ĐẤM MẠNH · đấm hụt là hở sườn!' },
     { keys: ['CTRL', 'Q'], desc: 'NÉ ngắn theo hướng đi (tránh được đấm, không tránh được túm)' },
     { keys: ['CLICK PHẢI', 'E'], desc: 'Giữ để TÚM người trước mặt (hoặc bám mép xe cho khỏi rơi)' },
@@ -719,8 +721,8 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
       } else if (wantDodge && now >= p.dodgeCd && !dodging) {
         // né ngắn: theo hướng đang đi, đứng yên thì theo hướng ngắm; chỉ tránh được ĐẤM, không tránh được túm
         const mm = Math.hypot(p.mx, p.my);
-        const dx = mm > 0.2 ? p.mx / mm : Math.sin(p.aim);
-        const dy = mm > 0.2 ? p.my / mm : Math.cos(p.aim);
+        const dx = mm > 0.2 ? p.mx / mm : -Math.sin(p.face); // đứng yên: lùi lại phía sau thân
+        const dy = mm > 0.2 ? p.my / mm : -Math.cos(p.face);
         p.dodgeAt = -1e9;
         p.dodgeCd = now + DODGE_CD;
         p.dodgeUntil = now + DODGE_MS;
@@ -850,7 +852,7 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
 
     /* hướng thân */
     // kiểu game sinh tồn góc nhìn thứ ba: điều khiển được thì thân LUÔN hướng theo camera (kể cả đứng yên / đi lùi / đi ngang)
-    if (control && !stunned) p.face = p.aim;
+    if (control && !stunned) p.face += clamp(angDiff(p.face, p.aim), -TURN_RATE * dt, TURN_RATE * dt); // thân quay mượt, giới hạn tốc độ quay
     else if (hold || now < p.punchAnim || p.anchored) p.face = p.aim;
     else if (control && m > 0.15) p.face += angDiff(p.face, Math.atan2(p.mx, p.my)) * Math.min(1, dt * 12);
 

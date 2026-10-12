@@ -37,8 +37,13 @@ export interface FeedItem {
 }
 
 const HARD = F_DOWN | F_HELD | F_FALL | F_OUT | F_THROWN | F_LIFT | F_ANCHOR | F_HOLD | F_DODGE | F_CHARGE;
-const PITCH_MIN = -0.15;
-const PITCH_MAX = 1.05;
+const PITCH_MIN = -0.17; // ~-10°
+const PITCH_MAX = 0.78; // ~45°
+const LOCK_RANGE = 10;
+const LOCK_DROP = 16;
+const ASSIST_RANGE = 2.4;
+const ASSIST_ARC = 0.96; // ±55°
+const angDiff = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
 
 /**
  * Trạng thái + điều khiển của ĐẤU VẬT TRÊN NÓC NHÀ.
@@ -54,7 +59,11 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
   const recvAt = useRef(0);
   const hold = useRef<Record<string, string>>({});
   const fx = useRef<RtFx[]>([]);
-  const cam = useRef({ yaw: cfg.spawns[meId]?.[2] ?? 0, pitch: 0.42 });
+  const cam = useRef({ yaw: cfg.spawns[meId]?.[2] ?? 0, pitch: 0.25 });
+  /** hướng thân = hướng đánh mong muốn (client tính, server nhận qua trường yaw) */
+  const bodyYaw = useRef(cfg.spawns[meId]?.[2] ?? 0);
+  const lockId = useRef('');
+  const [lockName, setLockName] = useState('');
   const body = useRef<RtBody>(newBody(cfg.spawns[meId]?.[0] ?? 0, cfg.spawns[meId]?.[1] ?? 0));
   const synced = useRef(false);
   const lastPredict = useRef(0);
@@ -70,11 +79,56 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
   const jumpLocal = useRef(-1e9);
   const el = useRef<HTMLElement | null>(null);
   const touchBtn = useRef({ grab: false });
+  const enemies = () =>
+    Object.entries(positions.current).filter(([id, p]) => id !== meId && !(p[4] & (F_OUT | F_FALL)));
+  const angTo = (x: number, y: number) => Math.atan2(x - body.current.x, y - body.current.y);
+  const distTo = (x: number, y: number) => Math.hypot(x - body.current.x, y - body.current.y);
+  /** khoá mục tiêu kiểu Wukong: cycle=false chọn người gần nhất trong nón nhìn của camera; cycle=true chuyển sang người kế bên */
+  const pickLock = (cycle: boolean) => {
+    const c = enemies()
+      .map(([id, p]) => ({ id, d: distTo(p[0], p[1]), delta: angDiff(cam.current.yaw, angTo(p[0], p[1])) }))
+      .filter((e) => e.d <= LOCK_RANGE);
+    if (!c.length) return '';
+    if (cycle && lockId.current) {
+      c.sort((a, b) => a.delta - b.delta);
+      const i = c.findIndex((e) => e.id === lockId.current);
+      return c[(i + 1) % c.length].id;
+    }
+    const cone = c.filter((e) => Math.abs(e.delta) < 1.2);
+    const pool = cone.length ? cone : c;
+    pool.sort((a, b) => a.d + Math.abs(a.delta) * 2 - (b.d + Math.abs(b.delta) * 2));
+    return pool[0].id;
+  };
+  const toggleLock = (cycle = false) => {
+    if (lockId.current && !cycle) lockId.current = '';
+    else lockId.current = pickLock(cycle);
+    setLockName(lockId.current ? nameOf.current[lockId.current] ?? '' : '');
+  };
+  /** hỗ trợ ngắm mềm: chỉ xoay HƯỚNG đánh về đối thủ gần nhất trong nón ±55° (không dịch nhân vật) */
+  const assist = () => {
+    const lk = lockId.current && positions.current[lockId.current];
+    if (lk) {
+      bodyYaw.current = angTo(lk[0], lk[1]);
+      return;
+    }
+    let best: RtPos | null = null;
+    let bd = ASSIST_RANGE;
+    for (const [, p] of enemies()) {
+      const d = distTo(p[0], p[1]);
+      if (d < bd && Math.abs(angDiff(bodyYaw.current, angTo(p[0], p[1]))) < ASSIST_ARC) {
+        best = p;
+        bd = d;
+      }
+    }
+    if (best) bodyYaw.current = angTo(best[0], best[1]);
+  };
   /** chuột trái: nhấn nhanh = đấm nhanh; giữ lâu (sau CHARGE_LEAD ms) = tích lực, thả ra = đấm mạnh */
   const lmbDown = () => {
     if (lmb.current.down) return;
     lmb.current.down = performance.now();
+    assist();
     lmb.current.timer = window.setTimeout(() => {
+      assist();
       chargeOn.current = true;
       flushRef.current(true);
     }, CHARGE_LEAD);
@@ -83,6 +137,7 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     if (!lmb.current.down) return;
     window.clearTimeout(lmb.current.timer);
     lmb.current.down = 0;
+    assist();
     if (chargeOn.current) chargeOn.current = false;
     else pulse.current.punch = true;
     flushRef.current(true);
@@ -219,7 +274,7 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     const k = keys.current;
     const fwd = k.f - k.b;
     const right = k.r - k.l;
-    const yaw = cam.current.yaw;
+    const yaw = cam.current.yaw; // di chuyển theo hướng CAMERA
     let dx = fwd * Math.sin(yaw) + right * Math.cos(yaw);
     let dy = fwd * Math.cos(yaw) - right * Math.sin(yaw);
     const m = Math.hypot(dx, dy);
@@ -234,7 +289,7 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     (force = false) => {
       const now = performance.now();
       const { dx, dy } = moveVec();
-      const yaw = cam.current.yaw;
+      const yaw = bodyYaw.current; // gửi hướng thân / hướng đánh
       const grab = grabNow();
       const lift = keys.current.shift;
       const s = sent.current;
@@ -275,7 +330,7 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
 
   useEffect(() => {
     if (!live) return;
-    const setKey = (code: string, on: boolean) => {
+    const setKey = (code: string, on: boolean, e: KeyboardEvent) => {
       const k = keys.current;
       switch (code) {
         case 'KeyW':
@@ -295,7 +350,12 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
           k.r = on ? 1 : 0;
           return true;
         case 'KeyE':
+          if (on && !k.e) assist();
           k.e = on;
+          return true;
+        case 'Tab':
+        case 'KeyF':
+          if (on && !e.repeat) toggleLock(e.code === 'Tab');
           return true;
         case 'ControlLeft':
         case 'ControlRight':
@@ -323,13 +383,13 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
         }
         return;
       }
-      if (setKey(e.code, true)) {
+      if (setKey(e.code, true, e)) {
         e.preventDefault();
         flush();
       }
     };
     const onUp = (e: KeyboardEvent) => {
-      if (setKey(e.code, false)) flush();
+      if (setKey(e.code, false, e)) flush();
     };
     const reset = () => {
       keys.current = { f: 0, b: 0, l: 0, r: 0, e: false, shift: false, rmb: false, dodgeHeld: false };
@@ -357,9 +417,11 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
       if (!host) return;
       const rotate = (dx: number, dy: number, k = 1) => {
         const c = cam.current;
-        c.yaw += dx * 0.0026 * k;
-        if (c.yaw > Math.PI) c.yaw -= Math.PI * 2;
-        if (c.yaw < -Math.PI) c.yaw += Math.PI * 2;
+        if (!lockId.current) {
+          c.yaw += dx * 0.0026 * k; // đang khoá mục tiêu thì camera tự giữ sau lưng, chuột chỉ chỉnh độ cao
+          if (c.yaw > Math.PI) c.yaw -= Math.PI * 2;
+          if (c.yaw < -Math.PI) c.yaw += Math.PI * 2;
+        }
         c.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, c.pitch + dy * 0.0021 * k));
       };
       const onLockError = () => {
@@ -393,9 +455,13 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
           }
           return;
         }
-        if (e.button === 0) {
+        if (e.button === 1) {
+          e.preventDefault();
+          toggleLock();
+        } else if (e.button === 0) {
           lmbDown();
         } else if (e.button === 2) {
+          if (!keys.current.rmb) assist();
           keys.current.rmb = true;
           flush();
         }
@@ -484,16 +550,49 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
       pulse.current.dodge = true;
       flush();
     },
+    lock: () => toggleLock(false),
     grab: (on: boolean) => {
+      if (on && !touchBtn.current.grab) assist();
       touchBtn.current.grab = on;
       flush();
     },
+  };
+
+  /** kiểu action RPG: thân tự quay theo hướng chạy (đứng yên thì giữ nguyên); khoá mục tiêu thì luôn nhìn mục tiêu */
+  const updateBody = (dt: number) => {
+    const me = positions.current[meId];
+    if (!me || dt <= 0) return;
+    if (lockId.current) {
+      const t = positions.current[lockId.current];
+      if (!t || t[4] & (F_OUT | F_FALL) || distTo(t[0], t[1]) > LOCK_DROP) {
+        lockId.current = '';
+        setLockName('');
+      }
+    }
+    if (me[4] & (F_DOWN | F_HELD | F_FALL | F_OUT | F_THROWN)) {
+      bodyYaw.current += angDiff(bodyYaw.current, me[3]) * Math.min(1, dt * 12); // server quyết hướng thân
+      return;
+    }
+    const lk = lockId.current ? positions.current[lockId.current] : null;
+    let want = bodyYaw.current;
+    if (lk) {
+      want = angTo(lk[0], lk[1]);
+      const c = cam.current;
+      c.yaw += angDiff(c.yaw, want) * (1 - Math.exp(-dt * 3.5)); // camera tự đứng sau lưng, hướng về mục tiêu
+    } else {
+      const { dx, dy } = moveVec();
+      if (Math.hypot(dx, dy) > 0.1) want = Math.atan2(dx, dy);
+    }
+    bodyYaw.current += angDiff(bodyYaw.current, want) * Math.min(1, dt * 14);
+    if (bodyYaw.current > Math.PI) bodyYaw.current -= Math.PI * 2;
+    if (bodyYaw.current < -Math.PI) bodyYaw.current += Math.PI * 2;
   };
 
   /* ---------- dự đoán bản thân ---------- */
   const predict = (serverNow: number) => {
     const dtMs = lastPredict.current ? Math.min(serverNow - lastPredict.current, 120) : 0;
     lastPredict.current = serverNow;
+    updateBody(dtMs / 1000);
     const mine = positions.current[meId];
     if (!synced.current || !mine || dtMs <= 0) return;
     const b = body.current;
@@ -563,6 +662,9 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     hold,
     fx,
     cam,
+    bodyYaw,
+    lockId,
+    lockName,
     predict,
     posOf,
     serverNow: () => net.now(),

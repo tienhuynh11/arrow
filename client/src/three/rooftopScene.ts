@@ -41,6 +41,8 @@ export interface RooftopFrame {
   positions: { current: Record<string, RtPos> };
   fx: { current: RtFx[] };
   cam: { current: { yaw: number; pitch: number } };
+  bodyYaw: { current: number };
+  lockId: { current: string };
   predict(serverNow: number): void;
   posOf(id: string): { x: number; y: number; z: number; face: number; flags: number; vx: number; vy: number; wob: number } | undefined;
   serverNow(): number;
@@ -292,7 +294,11 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       const camPos = new Vector3();
       const lookAt = new Vector3();
       const sunOff = new Vector3(-9, 22, 10);
-      let camDist = 6.3;
+      let camDist = 5.6;
+      const lockMark = new Mesh(own(new ConeGeometry(0.22, 0.45, 4)), own(new MeshBasicMaterial({ color: '#ff3b3b' })));
+      lockMark.rotation.x = Math.PI;
+      lockMark.visible = false;
+      scene.add(lockMark);
       let railsOn = true;
 
       const burst = (x: number, y: number, z: number, n: number, palette: string[], speed = 3.5, life = 0.7, grav = 8) =>
@@ -412,10 +418,10 @@ export function createRooftopScene(o: RooftopSceneOptions) {
             const grounded = e.z < 0.08 && !falling;
             const spd = Math.hypot(at.vx, at.vy);
 
-            // người chơi của mình: thân hướng THEO CAMERA ngay (không chờ server), trừ lúc choáng/ngã/bị túm/bị quăng/rơi.
-            // camera nhìn (sin y, -cos y) trong cảnh; mặt nhân vật ở yaw a nhìn (sin a, cos a) → a = π - y
+            // người chơi của mình: thân theo hướng client tính (chạy / khoá mục tiêu / hướng đánh), không chờ server, trừ lúc choáng/ngã/bị túm/bị quăng/rơi.
+            // hướng server (sin y, cos y) ↔ mặt nhân vật trong cảnh ở yaw a nhìn (sin a, cos a) với a = π - y
             const ownYaw = isMe && !(fl & (F_STUN | F_DOWN | F_HELD | F_THROWN | F_FALL | F_OUT)) && time - e.hitAt >= 0.5;
-            const wantYaw = ownYaw ? Math.PI - f.cam.current.yaw : Math.PI - at.face;
+            const wantYaw = ownYaw ? Math.PI - f.bodyYaw.current : Math.PI - at.face;
             e.yaw += angDiff(e.yaw, wantYaw) * (ownYaw ? 1 - Math.exp(-dt * 60) : 1 - Math.exp(-dt * 18));
             e.c.setYaw(e.yaw);
 
@@ -461,27 +467,31 @@ export function createRooftopScene(o: RooftopSceneOptions) {
 
           /* ---------------- camera góc nhìn thứ ba bằng chuột (camera sau vai, song song hướng nhìn của nhân vật) ---------------- */
           const c = f.cam.current;
-          const tx = meOut ? 0 : meX;
+          // pivot ở ngực nhân vật (nhân vật nằm giữa khung hình); đang khoá mục tiêu thì pivot lệch nhẹ về phía mục tiêu
+          let tx = meOut ? 0 : meX;
           const ty = meOut ? 0.4 : meY;
-          const tz = meOut ? 0 : meZ;
+          let tz = meOut ? 0 : meZ;
+          const lockE = !meOut && f.lockId.current ? chars.get(f.lockId.current) : undefined;
+          if (lockE) {
+            tx += (lockE.x - tx) * 0.2;
+            tz += (-lockE.y - tz) * 0.2;
+          }
           const lk = 1 - Math.exp(-dt * 12);
           focus.x += (tx - focus.x) * lk;
           focus.y += (ty - focus.y) * lk;
           focus.z += (tz - focus.z) * lk;
-          camDist += ((meOut ? 13 : 6.3) - camDist) * (1 - Math.exp(-dt * 3));
+          camDist += ((meOut ? 13 : lockE ? 6.4 : 5.6) - camDist) * (1 - Math.exp(-dt * 3));
           const cp = Math.cos(c.pitch);
           const sp2 = Math.sin(c.pitch);
           const fx3 = Math.sin(c.yaw);
           const fz3 = -Math.cos(c.yaw);
           const rx3 = Math.cos(c.yaw);
           const rz3 = Math.sin(c.yaw);
-          const shoulder = meOut ? 0 : 0.6;
-          camPos.set(
-            focus.x - fx3 * camDist * cp + rx3 * shoulder,
-            Math.max(0.5, focus.y + 1.5 + camDist * sp2),
-            focus.z - fz3 * camDist * cp + rz3 * shoulder,
-          );
-          lookAt.set(focus.x + fx3 * 3.5 + rx3 * shoulder, focus.y + 1.35, focus.z + fz3 * 3.5 + rz3 * shoulder);
+          camPos.set(focus.x - fx3 * camDist * cp, Math.max(0.5, focus.y + 1.3 + camDist * sp2), focus.z - fz3 * camDist * cp);
+          lookAt.set(focus.x, focus.y + 1.3, focus.z);
+          // marker khoá mục tiêu
+          lockMark.visible = !!lockE;
+          if (lockE) lockMark.position.set(lockE.x, lockE.z + 2.9 + Math.sin(time * 5) * 0.08, -lockE.y);
           k.look(camPos, lookAt);
 
           k.sun.target.position.copy(focus);

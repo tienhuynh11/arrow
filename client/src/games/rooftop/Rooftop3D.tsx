@@ -34,7 +34,7 @@ export default function Rooftop3D({ game, players, meId }: { game: RooftopGameSt
     return () => bindHost(null);
   }, [bindHost]);
 
-  const { hud, banner, shout, feed } = game;
+  const { hud, banner, shout, feed, lockName } = game;
   const pct = Math.max(0, Math.min(100, hud.grip));
 
   return (
@@ -49,13 +49,12 @@ export default function Rooftop3D({ game, players, meId }: { game: RooftopGameSt
           <span className="hx-floor">BẠN LÀ NGƯỜI CUỐI CÙNG TRÊN XE 🎉</span>
         ) : (
           <span className="hx-floor">
-            {hud.held ? 'ĐANG BỊ TÚM · spam di chuyển / SPACE để vùng thoát' : hud.hold ? 'ĐANG TÚM · SPACE nhấc · click trái / thả nút = quăng' : hud.down ? 'NGÃ SẤP RỒI…' : 'ĐẤU VẬT TRÊN NÓC XE'}
+            {hud.held ? 'ĐANG BỊ TÚM · spam di chuyển / SPACE để vùng thoát' : hud.hold ? 'ĐANG TÚM · SPACE nhấc · click trái / thả nút = quăng' : hud.down ? 'NGÃ SẤP RỒI…' : lockName ? `ĐANG KHOÁ: ${lockName} · Tab đổi mục tiêu` : 'ĐẤU VẬT TRÊN NÓC XE'}
           </span>
         )}
       </div>
       <div className="g3d-stage rt-stage" ref={stageRef}>
         <div ref={hostRef} className="g3d-host" />
-        {!hud.out && <div className="rt-cross" />}
         {banner && <div key={banner.id} className="rt-warn">⚠ {banner.text}</div>}
         {shout && (
           <div key={shout.id} className="rt-shout">
@@ -78,7 +77,7 @@ export default function Rooftop3D({ game, players, meId }: { game: RooftopGameSt
         {!game.locked && !touch && (
           <div className="rt-lock">
             <b>BẤM VÀO MÀN HÌNH ĐỂ KHOÁ CHUỘT</b>
-            <span>di chuột = xoay camera · Esc = nhả chuột</span>
+            <span>di chuột = xoay camera quanh nhân vật · chuột giữa / Tab = khoá mục tiêu · Esc = nhả chuột</span>
           </div>
         )}
         {touch && !hud.out && (
@@ -96,6 +95,16 @@ export default function Rooftop3D({ game, players, meId }: { game: RooftopGameSt
               onLostPointerCapture={() => game.touch.punchUp()}
             >
               ĐẤM
+            </button>
+            <button
+              type="button"
+              className="rt-tbtn lockon"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                game.touch.lock();
+              }}
+            >
+              KHOÁ
             </button>
             <button
               type="button"
@@ -139,7 +148,7 @@ export default function Rooftop3D({ game, players, meId }: { game: RooftopGameSt
         </div>
       </div>
       <p className="hint">
-        WASD đi theo camera · chuột xoay · click trái ĐẤM (nhấn nhanh, nối 2–3 đòn = combo · giữ rồi thả = đấm mạnh) · Ctrl / Q NÉ · giữ click phải / E TÚM (gần mép xe = bám mép) · SPACE nhảy, khi đang túm = nhấc · click trái / thả nút = QUĂNG
+        WASD đi theo camera · chuột xoay camera · chuột giữa / Tab khoá mục tiêu · click trái ĐẤM (nhấn nhanh, nối 2–3 đòn = combo · giữ rồi thả = đấm mạnh) · Ctrl / Q NÉ · giữ click phải / E TÚM (gần mép xe = bám mép) · SPACE nhảy, khi đang túm = nhấc · click trái / thả nút = QUĂNG
       </p>
     </div>
   );
