@@ -158,7 +158,7 @@ export interface RtChar {
 
 export const RT_CHARS: RtChar[] = [
   {
-    id: 'bull', emoji: '🐂', name: 'BÒ TÓT', hp: 115, speed: 0.97, mass: 1.15, scale: 1.08,
+    id: 'bull', emoji: '🐂', name: 'BÒ TÓT', hp: 200, speed: 0.97, mass: 1.15, scale: 1.08,
     blurb: 'Húc thẳng hất văng, gầm làm choáng cả đám',
     skills: [
       { name: 'Húc', icon: '💨', cd: 6000, desc: 'Lao thẳng về phía trước, đâm trúng ai là hất văng + sát thương' },
@@ -166,7 +166,7 @@ export const RT_CHARS: RtChar[] = [
     ],
   },
   {
-    id: 'bear', emoji: '🐻', name: 'GẤU', hp: 125, speed: 0.88, mass: 1.3, scale: 1.14,
+    id: 'bear', emoji: '🐻', name: 'GẤU', hp: 200, speed: 0.88, mass: 1.3, scale: 1.14,
     blurb: 'To xác, đập đất sóng hất ngã, da dày chịu đòn',
     skills: [
       { name: 'Đập đất', icon: '💥', cd: 7000, desc: 'Đập xuống: sóng hất ngã mọi người trong vòng tròn' },
@@ -174,7 +174,7 @@ export const RT_CHARS: RtChar[] = [
     ],
   },
   {
-    id: 'fox', emoji: '🦊', name: 'CÁO', hp: 90, speed: 1.14, mass: 0.85, scale: 0.96,
+    id: 'fox', emoji: '🦊', name: 'CÁO', hp: 200, speed: 1.14, mass: 0.85, scale: 0.96,
     blurb: 'Nhanh nhẹn, lướt ra sau lưng đối thủ, ảo ảnh né đòn',
     skills: [
       { name: 'Lướt chớp', icon: '⚡', cd: 5000, desc: 'Dịch chuyển ra sau lưng đối thủ phía trước (hoặc mục tiêu khoá) và chém' },
@@ -182,7 +182,7 @@ export const RT_CHARS: RtChar[] = [
     ],
   },
   {
-    id: 'turtle', emoji: '🐢', name: 'RÙA', hp: 120, speed: 0.8, mass: 1.25, scale: 1.02,
+    id: 'turtle', emoji: '🐢', name: 'RÙA', hp: 200, speed: 0.8, mass: 1.25, scale: 1.02,
     blurb: 'Chậm nhưng cứng: mai khiên phản đòn, xoáy đẩy mọi người ra',
     skills: [
       { name: 'Mai khiên', icon: '🛡️', cd: 6500, desc: 'Chặn mọi đòn 2,5 giây và phản lại một nửa sát thương' },
@@ -190,7 +190,7 @@ export const RT_CHARS: RtChar[] = [
     ],
   },
   {
-    id: 'monkey', emoji: '🐒', name: 'KHỈ', hp: 95, speed: 1.1, mass: 0.9, scale: 0.98,
+    id: 'monkey', emoji: '🐒', name: 'KHỈ', hp: 200, speed: 1.1, mass: 0.9, scale: 0.98,
     blurb: 'Nhảy đá từ trên cao, ném vỏ chuối làm người ta trượt ngã',
     skills: [
       { name: 'Nhảy đá', icon: '🦵', cd: 6000, desc: 'Bật lên rồi đá xuống: sát thương + hất văng vùng quanh chỗ rơi' },
@@ -198,7 +198,7 @@ export const RT_CHARS: RtChar[] = [
     ],
   },
   {
-    id: 'tiger', emoji: '🐯', name: 'HỔ', hp: 100, speed: 1.05, mass: 1.0, scale: 1.04,
+    id: 'tiger', emoji: '🐯', name: 'HỔ', hp: 200, speed: 1.05, mass: 1.0, scale: 1.04,
     blurb: 'Vồ nhanh gây chảy máu, gầm tăng sức mạnh',
     skills: [
       { name: 'Vồ', icon: '🐾', cd: 6000, desc: 'Vồ nhanh về phía trước, gây chảy máu 3 giây' },
@@ -206,7 +206,7 @@ export const RT_CHARS: RtChar[] = [
     ],
   },
   {
-    id: 'rooster', emoji: '🐓', name: 'GÀ CHỌI', hp: 90, speed: 1.1, mass: 0.85, scale: 0.94,
+    id: 'rooster', emoji: '🐓', name: 'GÀ CHỌI', hp: 200, speed: 1.1, mass: 0.85, scale: 0.94,
     blurb: 'Mổ liên hoàn, đập cánh thành luồng gió đẩy lùi',
     skills: [
       { name: 'Mổ liên hoàn', icon: '🪶', cd: 5000, desc: 'Mổ liên tiếp 5 cú vào người phía trước' },
@@ -226,8 +226,8 @@ export const WHIFF_WALL_DMG = 3; // đánh hụt vào tường: "TỰ ĐẬP!"
 export const KILL_CREDIT_MS = 4000; // người gây sát thương trong 4s gần nhất được tính "hạ"
 /** áp lực cuối trận: mọi người mất máu dần */
 export const PRESSURE_AT = 70000;
-export const PRESSURE_DPS0 = 1.5;
-export const PRESSURE_DPS1 = 6;
+export const PRESSURE_DPS0 = 3;
+export const PRESSURE_DPS1 = 12;
 export const MATCH_MS = 150000;
 /** kỹ năng (delay = thời gian niệm chiêu có chỉ báo trên sàn trước khi nổ) */
 export const SK_RAGE_SPEED = 1.25;
