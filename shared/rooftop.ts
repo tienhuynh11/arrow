@@ -11,7 +11,6 @@ export const AIR_ACCEL = 3.2;
 export const GRAVITY = 17;
 export const JUMP_V = 6.4;
 export const KILL_Z = -3.6; // rơi sâu hơn mức này = bị loại
-export const TRUCK_V = 14; // tốc độ cảnh trôi (hình ảnh) — cũng là tốc độ tương đối của cầu thấp
 
 export interface RtRail {
   /** -1 = mép trái, 1 = mép phải */
@@ -27,8 +26,8 @@ export interface RtConfig {
   /** id -> [x, y, yaw] */
   spawns: Record<string, [number, number, number]>;
   endsAt: number;
-  /** ms kể từ lúc bắt đầu: từ đây xe nghiêng/xóc mạnh dần */
-  tiltAt: number;
+  /** ms kể từ lúc bắt đầu: từ đây nóc xe thu hẹp dần từ mép vào, lan can biến mất */
+  shrinkAt: number;
 }
 
 export interface RtBody {
@@ -57,22 +56,25 @@ export const F_THROWN = 1024; // đang bay vì bị quăng
 export const F_LIFTING = 2048; // đang giơ người khác lên cao
 export const F_REACH = 4096; // đang giơ tay tìm chỗ túm
 export const F_WHIFF = 8192; // vừa đấm hụt
+export const F_DODGE = 16384; // đang lăn né
+export const F_CHARGE = 32768; // đang tích lực đấm mạnh
 
-/** gia tốc ngang của xe (đung đưa) theo thời gian; 0 trước khi xe bắt đầu xóc mạnh */
-export function swayAccel(cfg: { endsAt: number; tiltAt: number }, tMs: number): number {
-  if (tMs < cfg.tiltAt) return 0;
-  const k = Math.min(1, (tMs - cfg.tiltAt) / Math.max(1, cfg.endsAt - cfg.tiltAt));
-  const amp = 2.2 + 7.3 * k;
-  return amp * Math.sin((tMs / 1000) * ((Math.PI * 2) / 4.6));
+/** hệ số kích thước nóc xe còn lại: 1 → 0.28, thu từ mép vào giữa theo lịch cố định (client tự tính theo giờ server) */
+export function roofScale(cfg: { endsAt: number; shrinkAt: number }, tMs: number): number {
+  if (tMs <= cfg.shrinkAt) return 1;
+  const k = Math.min(1, (tMs - cfg.shrinkAt) / Math.max(1, cfg.endsAt - 8000 - cfg.shrinkAt));
+  return 1 - 0.72 * k;
 }
 
 /** vị trí (x,y) có nền xe đỡ không */
-export function supported(cfg: { L: number }, x: number, y: number): boolean {
-  return Math.abs(x) <= HALF_W && y >= -cfg.L / 2 && y <= cfg.L / 2;
+export function supported(cfg: RtConfig, x: number, y: number, t = 0): boolean {
+  const f = roofScale(cfg, t);
+  return Math.abs(x) <= HALF_W * f && Math.abs(y) <= (cfg.L / 2) * f;
 }
 
 /** lan can + tường buồng lái: chặn người đang ở thấp */
-export function constrain(cfg: RtConfig, b: RtBody) {
+export function constrain(cfg: RtConfig, b: RtBody, t = 0) {
+  if (t > cfg.shrinkAt) return; // lan can đã sập cùng mép nóc
   if (b.z < RAIL_H && b.z >= -0.01) {
     if (b.y > cfg.L / 2 - 0.35 && b.y < cfg.L / 2 + 1 && Math.abs(b.x) <= HALF_W + 0.3) {
       b.y = cfg.L / 2 - 0.35;
@@ -97,11 +99,8 @@ export interface StepOpts {
   speedMul?: number;
   /** nhân gia tốc */
   accelMul?: number;
-  /** gia tốc ngoại lực (xe xóc, gió, phanh) */
-  ax?: number;
-  ay?: number;
-  /** sàn trơn (phanh gấp) */
-  slick?: boolean;
+  /** thời gian (ms từ lúc bắt đầu) để tính nóc xe đã thu hẹp */
+  t?: number;
   /** không điều khiển được (ngã, bị túm, rơi) */
   noControl?: boolean;
   jump?: boolean;
@@ -109,7 +108,8 @@ export interface StepOpts {
 
 /** một bước vật lý "mềm" của một người; trả true nếu vừa nhảy */
 export function stepBody(cfg: RtConfig, b: RtBody, mx: number, my: number, dt: number, o: StepOpts = {}): boolean {
-  const sup = supported(cfg, b.x, b.y);
+  const t = o.t ?? 0;
+  const sup = supported(cfg, b.x, b.y, t);
   const ground = b.z <= 0.001 && sup && b.vz <= 0;
   const falling = !sup && b.z <= 0.05;
   let jumped = false;
@@ -122,9 +122,8 @@ export function stepBody(cfg: RtConfig, b: RtBody, mx: number, my: number, dt: n
   const tx = o.noControl || falling ? 0 : mx * sp;
   const ty = o.noControl || falling ? 0 : my * sp;
   let a = ground ? ACCEL * (o.accelMul ?? 1) : AIR_ACCEL;
-  if (o.slick && ground) a = 2.2;
   if (falling) a = 0;
-  if (o.noControl) a = ground ? 6 : 0.4; // ngã: trượt chậm dần; đang bay thì giữ đà
+  if (o.noControl) a = ground ? 14 : 0.4; // ngã: trượt chậm dần; đang bay thì giữ đà
   const dvx = tx - b.vx;
   const dvy = ty - b.vy;
   const dl = Math.hypot(dvx, dvy);
@@ -133,10 +132,6 @@ export function stepBody(cfg: RtConfig, b: RtBody, mx: number, my: number, dt: n
     const k = Math.min(1, maxd / dl);
     b.vx += dvx * k;
     b.vy += dvy * k;
-  }
-  if (ground || b.z > 0) {
-    b.vx += (o.ax ?? 0) * dt;
-    b.vy += (o.ay ?? 0) * dt;
   }
   if (o.jump && ground && !o.noControl) {
     b.vz = JUMP_V;
@@ -154,32 +149,71 @@ export function stepBody(cfg: RtConfig, b: RtBody, mx: number, my: number, dt: n
   b.x += b.vx * dt;
   b.y += b.vy * dt;
   b.z += b.vz * dt;
-  if (b.z <= 0 && supported(cfg, b.x, b.y)) {
+  if (b.z <= 0 && supported(cfg, b.x, b.y, t)) {
     b.z = 0;
     if (b.vz < 0) b.vz = 0;
   }
-  constrain(cfg, b);
+  constrain(cfg, b, t);
   return jumped;
 }
 
-/** hình học các chướng ngại (client + server dùng chung để khớp nhau) */
-export const BRIDGE_GAP_W = (n: number) => Math.min(3.6, 2.2 + n * 0.1);
-export const BRIDGE_H = 1.25;
-export const SIGN_DUR = 1800;
-export const SIGN_REACH = HALF_W + 1.7;
-export const bridgeY = (cfg: { L: number }, hitAt: number, tMs: number) => cfg.L / 2 - (TRUCK_V * (tMs - hitAt)) / 1000;
-export const signX = (s: number, hitAt: number, tMs: number) =>
-  s * SIGN_REACH - s * 2 * SIGN_REACH * Math.max(0, Math.min(1, (tMs - hitAt) / SIGN_DUR));
-
-export type RtHazard = 'bridge' | 'sign' | 'pothole' | 'brake' | 'gust';
-export interface RtWarn {
-  id: number;
-  kind: RtHazard;
-  /** ms kể từ lúc bắt đầu ván: thời điểm chạm */
-  hitAt: number;
-  dur: number;
-  /** bridge: x của khe an toàn · sign: cạnh xuất phát (±1) · gust: hướng gió (±1) */
-  a: number;
-  /** sign: y của biển · bridge: bề rộng khe */
-  b: number;
-}
+/* ======================= CÂN BẰNG COMBAT (mọi thông số tinh chỉnh nằm ở đây) ======================= */
+/** đấm nhanh (nhấn chuột trái) */
+export const QUICK_CD = 380; // hồi chiêu khi trúng (ms)
+export const QUICK_WHIFF_CD = 620; // hồi chiêu khi đấm hụt
+export const QUICK_RANGE = 1.7;
+export const QUICK_ARC = 1.05; // nửa góc quạt (rad)
+export const COMBO_FORCE = [5.2, 6.2, 8]; // lực đẩy từng đòn trong chuỗi (đòn 3 = kết)
+export const COMBO_STUN = [380, 430, 760];
+export const COMBO_WOBBLE = [0.28, 0.34, 0.6];
+export const COMBO_WINDOW = 900; // ms từ đòn trước tới khi còn nối được chuỗi (và đòn trước phải trúng)
+export const COMBO_FINISH_CD = 820;
+/** đấm mạnh (giữ chuột trái rồi thả) */
+export const CHARGE_LEAD = 180; // client chỉ báo "đang tích" sau khi giữ chừng này ms; server cộng bù
+export const HEAVY_MIN = 420; // giữ tối thiểu để thành đòn mạnh
+export const CHARGE_MAX = 1100; // tới đây tự tung
+export const HEAVY_FORCE_MIN = 6.5;
+export const HEAVY_FORCE_MAX = 10;
+export const HEAVY_RANGE = 2.0;
+export const HEAVY_ARC = 0.7;
+export const HEAVY_STUN = 850;
+export const HEAVY_WOBBLE = 1.0; // đòn mạnh trúng là ngã ngay (đổi lại rất dễ bị né/hụt, hồi chiêu dài)
+export const HEAVY_CD = 900;
+export const CHARGE_SPEED_MUL = 0.45; // đang tích lực thì đi chậm
+/** đấm hụt: không trượt dài, nhưng lộ sơ hở cho đòn phản công */
+export const QUICK_LURCH = 1.8;
+export const HEAVY_LURCH = 3.2;
+export const WHIFF_STUN = 250;
+export const HEAVY_WHIFF_STUN = 600;
+export const WHIFF_WOBBLE = 0.25;
+export const HEAVY_WHIFF_WOBBLE = 0.5;
+export const WHIFF_VULN_MS = 450; // trong lúc này bị đánh trúng = phản công
+export const COUNTER_MULT = 1.35;
+export const COUNTER_EXTRA_STUN = 250;
+export const COUNTER_EXTRA_WOBBLE = 0.2;
+export const SPEED_FORCE_K = 0.35; // lao tới đấm thì thêm lực
+export const KNOCK_WOBBLE_BOOST = 0.5; // đối thủ càng loạng choạng càng dễ văng
+export const ANCHOR_KNOCK_MUL = 0.28;
+export const HOLDING_KNOCK_MUL = 0.6;
+/** né (Ctrl / Q) */
+export const DODGE_SPEED = 9.5;
+export const DODGE_MS = 230;
+export const DODGE_IFRAME = 150; // cửa sổ tránh ĐẤM (không tránh được túm)
+export const DODGE_CD = 1100;
+export const DODGE_WOBBLE = 0.08;
+/** thăng bằng */
+export const WOBBLE_DECAY = 0.45; // /s
+export const WOBBLE_STEER_BONUS = 0.35; // /s thêm khi bẻ lái ngược hướng đang trượt
+export const DOWN_MS = 1250;
+export const DOWN_WOBBLE_RESET = 0.3;
+export const GETUP_REDUCE = 150; // mỗi lần bấm Space/né khi nằm ngã rút ngắn thời gian
+/** túm / quăng */
+export const GRAB_RANGE = 1.6;
+export const GRAB_ARC = 1.3;
+export const STRUGGLE_NEED = 2.0;
+export const STRUGGLE_NEED_LIFT = 3.2;
+export const THROW_V = 11.5;
+export const LOB_V = 7;
+export const THROW_VZ_LIFT = 5.6;
+export const THROW_VZ = 3.4;
+export const GRAB_TIE_EPS = 1e-3;

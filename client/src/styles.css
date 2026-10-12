@@ -4071,6 +4071,7 @@ body.in-match .match-stage > .board { width: 100%; height: 100%; }
   touch-action: none;
 }
 .rt-tbtn.grab { background: rgba(47, 128, 237, 0.75); }
+.rt-tbtn.dodge { background: rgba(94, 214, 122, 0.75); }
 .rt-tbtn:active { transform: scale(0.92); }
 
 /* ---- QUIZ ĐOÁN NHANH ---- */

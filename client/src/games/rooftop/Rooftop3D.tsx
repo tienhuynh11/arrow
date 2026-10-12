@@ -88,10 +88,24 @@ export default function Rooftop3D({ game, players, meId }: { game: RooftopGameSt
               className="rt-tbtn punch"
               onPointerDown={(e) => {
                 e.preventDefault();
+                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
                 game.touch.punch();
               }}
+              onPointerUp={() => game.touch.punchUp()}
+              onPointerCancel={() => game.touch.punchUp()}
+              onLostPointerCapture={() => game.touch.punchUp()}
             >
               ĐẤM
+            </button>
+            <button
+              type="button"
+              className="rt-tbtn dodge"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                game.touch.dodge();
+              }}
+            >
+              NÉ
             </button>
             <button
               type="button"
@@ -125,7 +139,7 @@ export default function Rooftop3D({ game, players, meId }: { game: RooftopGameSt
         </div>
       </div>
       <p className="hint">
-        WASD đi theo camera · chuột xoay · click trái ĐẤM · giữ click phải / E TÚM (gần mép xe = bám mép) · SPACE nhảy, khi đang túm = nhấc · click trái / thả nút = QUĂNG
+        WASD đi theo camera · chuột xoay · click trái ĐẤM (nhấn nhanh, nối 2–3 đòn = combo · giữ rồi thả = đấm mạnh) · Ctrl / Q NÉ · giữ click phải / E TÚM (gần mép xe = bám mép) · SPACE nhảy, khi đang túm = nhấc · click trái / thả nút = QUĂNG
       </p>
     </div>
   );
