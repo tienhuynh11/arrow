@@ -2,6 +2,7 @@ import {
   BoxGeometry,
   Color,
   ConeGeometry,
+  SphereGeometry,
   CylinderGeometry,
   Group,
   InstancedMesh,
@@ -14,11 +15,9 @@ import {
 import { runScene, type SceneHooks } from './scene';
 import type { Character3D, Pose } from './character';
 import {
-  F_ANCHOR,
   F_CHARGE,
   F_DODGE,
   F_DOWN,
-  F_FALL,
   F_HELD,
   F_HOLD,
   F_LIFT,
@@ -28,9 +27,14 @@ import {
   F_STUN,
   F_THROWN,
   F_WHIFF,
-  HALF_W,
+  RT_CHARS,
+  SB_ARMOR,
+  SB_HASTE,
+  SB_RAGE,
+  SB_SHIELD,
+  SB_SPIN,
+  type RtChar,
   SPEED,
-  roofScale,
   type RtConfig,
 } from '@shared/rooftop';
 import type { RtFx, RtPos } from '../games/rooftop/useRooftopGame';
@@ -40,11 +44,12 @@ export interface RooftopFrame {
   startAt: number;
   positions: { current: Record<string, RtPos> };
   fx: { current: RtFx[] };
+  bananas: { current: Map<number, { x: number; y: number }> };
   cam: { current: { yaw: number; pitch: number } };
   bodyYaw: { current: number };
   lockId: { current: string };
   predict(serverNow: number): void;
-  posOf(id: string): { x: number; y: number; z: number; face: number; flags: number; vx: number; vy: number; wob: number } | undefined;
+  posOf(id: string): { x: number; y: number; z: number; face: number; flags: number; vx: number; vy: number; wob: number; hp: number; sb: number } | undefined;
   serverNow(): number;
 }
 
@@ -77,6 +82,7 @@ export function createRooftopScene(o: RooftopSceneOptions) {
   const first = o.read();
   const cfg = first.cfg;
   const L = cfg.L;
+  const HALF_W = cfg.hw;
   const total = o.players.length;
 
   return runScene(
@@ -106,7 +112,7 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       grass.rotation.x = -Math.PI / 2;
       grass.position.set(0, ROAD_Y - 0.06, -100);
       scene.add(grass);
-      const road = new Mesh(own(new PlaneGeometry(21, 500)), own(new MeshBasicMaterial({ color: '#4a4f5c' })));
+      const road = new Mesh(own(new PlaneGeometry(40, 500)), own(new MeshBasicMaterial({ color: '#4a4f5c' })));
       road.rotation.x = -Math.PI / 2;
       road.position.set(0, ROAD_Y, -100);
       scene.add(road);
@@ -139,7 +145,7 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       };
       const zs = [-90, -60, -30, 0, 30, 60];
       const dashes: Item[] = [];
-      for (const s of [-1, 1]) for (let z = -120; z < 60; z += 8) dashes.push({ x: s * 6.9, y: ROAD_Y + 0.03, z, sx: 0.28, sy: 0.02, sz: 3.2 });
+      for (const s of [-1, 1]) for (let z = -120; z < 60; z += 8) dashes.push({ x: s * 11.5, y: ROAD_Y + 0.03, z, sx: 0.28, sy: 0.02, sz: 3.2 });
       stat(geoBox, mats.white, dashes);
       const poles: Item[] = [];
       const heads: Item[] = [];
@@ -148,19 +154,19 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       const builds: Item[] = [];
       for (const s of [-1, 1]) {
         for (const z of [-80, -40, 0, 40]) {
-          poles.push({ x: s * 10.8, y: ROAD_Y + 3.2, z, sx: 0.14, sy: 6.4, sz: 0.14 });
-          heads.push({ x: s * 10.0, y: ROAD_Y + 6.4, z, sx: 1.6, sy: 0.18, sz: 0.5 });
+          poles.push({ x: s * 18.8, y: ROAD_Y + 3.2, z, sx: 0.14, sy: 6.4, sz: 0.14 });
+          heads.push({ x: s * 18.0, y: ROAD_Y + 6.4, z, sx: 1.6, sy: 0.18, sz: 0.5 });
         }
         for (const zb of zs) {
           for (let i = 0; i < 2; i++) {
-            const x = s * (12.8 + rand() * 5);
+            const x = s * (21 + rand() * 5);
             const z = zb - i * 14 - rand() * 6;
             const h = 3 + rand() * 2.5;
             trunks.push({ x, y: ROAD_Y + 0.9, z, sx: 0.28, sy: 1.8, sz: 0.28 });
             crowns.push({ x, y: ROAD_Y + 1.8 + h / 2, z, sx: 1.5 + rand() * 0.8, sy: h, sz: 1.5 + rand() * 0.8, c: rand() > 0.5 ? '#3fbf5a' : '#58d36b' });
           }
           const h = 8 + rand() * 24;
-          builds.push({ x: s * (22 + rand() * 12), y: ROAD_Y + h / 2, z: zb - 8 - rand() * 6, sx: 8 + rand() * 7, sy: h, sz: 11 + rand() * 5, c: PASTEL[Math.floor(rand() * PASTEL.length)] });
+          builds.push({ x: s * (30 + rand() * 12), y: ROAD_Y + h / 2, z: zb - 8 - rand() * 6, sx: 8 + rand() * 7, sy: h, sz: 11 + rand() * 5, c: PASTEL[Math.floor(rand() * PASTEL.length)] });
         }
       }
       stat(geoCyl, mats.lamp, poles);
@@ -171,8 +177,8 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       const sPost: Item[] = [];
       const sBoard: Item[] = [];
       for (const s of [-1, 1]) {
-        sPost.push({ x: s * 9.6, y: ROAD_Y + 1.6, z: -20, sx: 0.1, sy: 3.2, sz: 0.1 });
-        sBoard.push({ x: s * 9.6, y: ROAD_Y + 3.0, z: -20, sx: 1.5, sy: 1.1, sz: 0.1, c: s > 0 ? '#2f80ed' : '#ffb627' });
+        sPost.push({ x: s * 16.6, y: ROAD_Y + 1.6, z: -20, sx: 0.1, sy: 3.2, sz: 0.1 });
+        sBoard.push({ x: s * 16.6, y: ROAD_Y + 3.0, z: -20, sx: 1.5, sy: 1.1, sz: 0.1, c: s > 0 ? '#2f80ed' : '#ffb627' });
       }
       stat(geoBox, mats.lamp, sPost);
       stat(geoBox, mats.tinted, sBoard);
@@ -241,8 +247,16 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       wheels.count = wi;
       veh.add(wheels);
 
-      /* lan can: một InstancedMesh duy nhất (thanh ngang + cột), biến mất khi nóc bắt đầu sập */
-      const rails = new InstancedMesh(geoBox, k.lit({ color: '#ffcf33' }), Math.max(1, cfg.rails.reduce((n, r) => n + 2 + 2 + Math.floor((r.y1 - r.y0) / 1.4), 0)));
+      /* lan can kín bao quanh nóc xe (tường vô hình ở phía server): một InstancedMesh duy nhất */
+      const sides: { x0: number; z0: number; x1: number; z1: number }[] = [
+        { x0: -HALF_W, z0: -L / 2, x1: -HALF_W, z1: L / 2 },
+        { x0: HALF_W, z0: -L / 2, x1: HALF_W, z1: L / 2 },
+        { x0: -HALF_W, z0: L / 2, x1: HALF_W, z1: L / 2 },
+        { x0: -HALF_W, z0: -L / 2, x1: HALF_W, z1: -L / 2 },
+      ];
+      const lenOf = (sd: (typeof sides)[number]) => Math.hypot(sd.x1 - sd.x0, sd.z1 - sd.z0);
+      const nPosts = sides.reduce((n, sd) => n + 2 + Math.floor(lenOf(sd) / 1.8), 0);
+      const rails = new InstancedMesh(geoBox, k.lit({ color: '#ffcf33' }), nPosts + 8);
       let ri = 0;
       const put = (x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
         dummy.position.set(x, y, z);
@@ -251,17 +265,103 @@ export function createRooftopScene(o: RooftopSceneOptions) {
         dummy.updateMatrix();
         rails.setMatrixAt(ri++, dummy.matrix);
       };
-      for (const r of cfg.rails) {
-        const len = r.y1 - r.y0;
-        const x = r.s * (HALF_W - 0.1);
-        put(x, 0.82, -(r.y0 + r.y1) / 2, 0.1, 0.1, len);
-        put(x, 0.45, -(r.y0 + r.y1) / 2, 0.1, 0.07, len);
-        const cnt = 2 + Math.floor(len / 1.4);
-        for (let i = 0; i < cnt; i++) put(x, 0.42, -(r.y0 + (len * i) / (cnt - 1)), 0.12, 0.84, 0.12);
+      for (const sd of sides) {
+        const len = lenOf(sd);
+        const alongX = Math.abs(sd.x1 - sd.x0) > 0.01;
+        const cx = (sd.x0 + sd.x1) / 2;
+        const cz = (sd.z0 + sd.z1) / 2;
+        put(cx, 0.82, cz, alongX ? len : 0.1, 0.1, alongX ? 0.1 : len);
+        put(cx, 0.45, cz, alongX ? len : 0.1, 0.07, alongX ? 0.07 : len);
+        const cnt = 2 + Math.floor(len / 1.8);
+        for (let i = 0; i < cnt; i++) {
+          const kk = i / (cnt - 1);
+          put(sd.x0 + (sd.x1 - sd.x0) * kk, 0.42, sd.z0 + (sd.z1 - sd.z0) * kk, 0.12, 0.84, 0.12);
+        }
       }
       rails.count = ri;
       rails.frustumCulled = false;
       veh.add(rails);
+
+      /* ---------------- hình dáng nhân vật thú: mesh nhỏ procedural, dùng chung geometry/material ---------------- */
+      const geoSph = own(new SphereGeometry(1, 10, 8));
+      const matCache = new Map<string, Mesh['material']>();
+      const mat = (c: string) => {
+        let m = matCache.get(c);
+        if (!m) {
+          m = k.lit({ color: c });
+          matCache.set(c, m);
+          disposables.push(m as unknown as { dispose(): void });
+        }
+        return m;
+      };
+      type G = BoxGeometry | CylinderGeometry | ConeGeometry | SphereGeometry;
+      const decorate = (root: Group, ch: RtChar) => {
+        const add = (geo: G, color: string, x: number, y: number, z: number, sx: number, sy: number, sz: number, rx = 0, ry = 0, rz = 0) => {
+          const m = new Mesh(geo, mat(color));
+          m.position.set(x, y, z);
+          m.scale.set(sx, sy, sz);
+          m.rotation.set(rx, ry, rz);
+          root.add(m);
+        };
+        switch (ch.id) {
+          case 'bull':
+            for (const sd of [-1, 1]) add(geoCone, '#f5f0e0', sd * 0.32, 1.72, 0.04, 0.1, 0.42, 0.1, 0, 0, -sd * 0.9);
+            add(geoSph, '#e8b4a0', 0, 1.36, 0.36, 0.13, 0.1, 0.1);
+            break;
+          case 'bear':
+            for (const sd of [-1, 1]) add(geoSph, '#8a5a35', sd * 0.3, 1.74, 0, 0.17, 0.17, 0.12);
+            add(geoSph, '#e8c9a0', 0, 1.38, 0.34, 0.15, 0.11, 0.1);
+            break;
+          case 'fox':
+            for (const sd of [-1, 1]) add(geoCone, '#ff8a3d', sd * 0.2, 1.88, 0, 0.12, 0.36, 0.08);
+            add(geoCone, '#ff8a3d', 0, 0.78, -0.42, 0.18, 0.62, 0.18, -1.0);
+            add(geoSph, '#ffffff', 0, 0.5, -0.78, 0.12, 0.12, 0.12);
+            add(geoCone, '#fff0e0', 0, 1.36, 0.36, 0.1, 0.18, 0.1, Math.PI / 2);
+            break;
+          case 'turtle':
+            add(geoSph, '#3c8f4a', 0, 0.98, -0.3, 0.5, 0.42, 0.3);
+            add(geoSph, '#5cc06a', 0, 1.1, -0.42, 0.28, 0.2, 0.12);
+            for (const sd of [-1, 1]) add(geoSph, '#7fd88a', sd * 0.3, 1.5, 0.05, 0.1, 0.1, 0.1);
+            break;
+          case 'monkey':
+            for (const sd of [-1, 1]) add(geoSph, '#d9a066', sd * 0.38, 1.5, 0, 0.16, 0.16, 0.08);
+            add(geoSph, '#e8c9a0', 0, 1.38, 0.34, 0.16, 0.12, 0.1);
+            add(geoCyl, '#8a5a35', 0, 0.62, -0.46, 0.05, 0.6, 0.05, 0.7);
+            break;
+          case 'tiger':
+            for (const sd of [-1, 1]) add(geoCone, '#ff9f43', sd * 0.24, 1.78, 0, 0.1, 0.2, 0.08);
+            for (let i = -1; i <= 1; i++) add(geoBox, '#2b2b2b', i * 0.1, 1.72, 0.3, 0.035, 0.12, 0.03);
+            add(geoCone, '#ff9f43', 0, 0.78, -0.42, 0.14, 0.58, 0.14, -1.1);
+            add(geoSph, '#2b2b2b', 0, 0.52, -0.74, 0.09, 0.09, 0.09);
+            break;
+          case 'rooster':
+            add(geoSph, '#e63946', 0, 1.88, 0.02, 0.07, 0.14, 0.2);
+            add(geoSph, '#e63946', 0, 1.82, 0.14, 0.06, 0.1, 0.1);
+            add(geoCone, '#ffb627', 0, 1.4, 0.4, 0.08, 0.22, 0.08, Math.PI / 2);
+            add(geoCone, '#3a7bd5', 0, 0.95, -0.42, 0.1, 0.5, 0.1, -0.5, 0, 0.3);
+            add(geoCone, '#2fd6a0', 0, 0.98, -0.44, 0.1, 0.55, 0.1, -0.5);
+            add(geoCone, '#e63946', 0, 0.95, -0.42, 0.1, 0.5, 0.1, -0.5, 0, -0.3);
+            break;
+        }
+      };
+      // hào quang trạng thái kỹ năng (một quả cầu mờ cho mỗi người, đổi màu theo trạng thái)
+      const auraMats = {
+        shield: own(new MeshBasicMaterial({ color: '#7fe0ff', transparent: true, opacity: 0.3, depthWrite: false })),
+        armor: own(new MeshBasicMaterial({ color: '#c98a3a', transparent: true, opacity: 0.28, depthWrite: false })),
+        rage: own(new MeshBasicMaterial({ color: '#ff3b3b', transparent: true, opacity: 0.26, depthWrite: false })),
+        haste: own(new MeshBasicMaterial({ color: '#ffe066', transparent: true, opacity: 0.24, depthWrite: false })),
+        spin: own(new MeshBasicMaterial({ color: '#7aff9a', transparent: true, opacity: 0.25, depthWrite: false })),
+      };
+      // vỏ chuối: dùng lại 6 mesh
+      const bananaMat = own(new MeshBasicMaterial({ color: '#ffe14d' }));
+      const bananaMeshes: Mesh[] = [];
+      for (let i = 0; i < 8; i++) {
+        const m = new Mesh(geoBox, bananaMat);
+        m.scale.set(0.5, 0.12, 0.2);
+        m.visible = false;
+        veh.add(m);
+        bananaMeshes.push(m);
+      }
 
       /* ---------------- nhân vật ---------------- */
       interface Entry {
@@ -275,14 +375,25 @@ export function createRooftopScene(o: RooftopSceneOptions) {
         phase: number;
         hitAt: number;
         freeze: number;
+        koAt: number;
+        aura: Mesh;
+        ch: RtChar;
       }
       const chars = new Map<string, Entry>();
       o.players.forEach((p, i) => {
         const c = k.kit.create(p.color, p.id === o.meId);
+        const ch = RT_CHARS[cfg.chars[p.id] ?? 0];
         c.setShadows(!k.low);
         c.root.visible = false;
+        c.root.scale.setScalar(ch.scale);
+        decorate(c.root, ch);
+        const aura = new Mesh(geoSph, auraMats.shield);
+        aura.scale.set(1.15, 1.25, 1.15);
+        aura.position.y = 1.0;
+        aura.visible = false;
+        c.root.add(aura);
         veh.add(c.root);
-        chars.set(p.id, { c, x: 0, y: 0, z: 0, yaw: 0, placed: false, spin: 0, phase: i * 1.7, hitAt: -1e9, freeze: 0 });
+        chars.set(p.id, { c, x: 0, y: 0, z: 0, yaw: 0, placed: false, spin: 0, phase: i * 1.7, hitAt: -1e9, freeze: 0, koAt: -1, aura, ch });
       });
       k.onTier((tier) => {
         for (const e of chars.values()) e.c.setShadows(tier !== 'low');
@@ -299,7 +410,6 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       lockMark.rotation.x = Math.PI;
       lockMark.visible = false;
       scene.add(lockMark);
-      let railsOn = true;
 
       const burst = (x: number, y: number, z: number, n: number, palette: string[], speed = 3.5, life = 0.7, grav = 8) =>
         k.effects.burst(x, y, -z, { count: k.count(n), palette, speed, life, size: 0.2, gravity: grav });
@@ -311,17 +421,16 @@ export function createRooftopScene(o: RooftopSceneOptions) {
           f.predict(now);
           const t = now - f.startAt; // ms
 
-          /* nóc xe thu hẹp từ mép vào theo lịch cố định (cùng công thức với server) */
-          const sc = roofScale(cfg, Math.max(0, t));
-          roof.scale.set(HALF_W * 2 * sc, 0.4, L * sc);
-          const rOn = t < cfg.shrinkAt;
-          if (rOn !== railsOn) {
-            railsOn = rOn;
-            rails.visible = rOn;
-            k.shake(0.5);
+          // vỏ chuối
+          let bi = 0;
+          for (const bn of f.bananas.current.values()) {
+            if (bi >= bananaMeshes.length) break;
+            const m = bananaMeshes[bi++];
+            m.visible = true;
+            m.position.set(bn.x, 0.08, -bn.y);
+            m.rotation.y = bn.x * 3.1;
           }
-          if (t > cfg.shrinkAt - 3000 && t < cfg.shrinkAt) roof.position.y = -0.2 + Math.sin(time * 40) * 0.02;
-          else roof.position.y = -0.2;
+          for (; bi < bananaMeshes.length; bi++) bananaMeshes[bi].visible = false;
 
           /* ---------------- sự kiện từ server ---------------- */
           const list = f.fx.current;
@@ -374,9 +483,40 @@ export function createRooftopScene(o: RooftopSceneOptions) {
                 case 'land':
                   if (va) burst(va.x, va.z + 0.1, va.y, 10, ['#e6e8f2', '#b8c0d4'], 2.8, 0.5, 4);
                   break;
-                case 'ledge':
                 case 'free':
                   if (va) burst(va.x, va.z + 1, va.y, 8, ['#7aff9a', '#ffffff'], 2.6, 0.5, 3);
+                  break;
+                case 'skill':
+                  if (va) {
+                    const col = ev.ch === 'bull' ? '#ff7a3d' : ev.ch === 'bear' ? '#c98a3a' : ev.ch === 'fox' ? '#ffb366' : ev.ch === 'turtle' ? '#7fe0ff' : ev.ch === 'monkey' ? '#ffe14d' : ev.ch === 'tiger' ? '#ff9f43' : '#ff5e8a';
+                    burst(va.x, va.z + 1, va.y, 14, [col, '#ffffff'], 4, 0.6, 2);
+                    if (ev.ch === 'bear' && ev.s === 1) k.effects.ring(va.x, -va.y, col, 0.6, 2.6);
+                    if (ev.ch === 'bull' && ev.s === 2) k.effects.ring(va.x, -va.y, col, 0.7, 3.2);
+                    if (ev.ch === 'rooster' && ev.s === 2) k.effects.ring(va.x, -va.y, col, 0.5, 3.2);
+                    if (ev.a === o.meId) k.shake(0.25);
+                  }
+                  break;
+                case 'blink':
+                  burst(ev.x2 ?? ev.x, 1, ev.y2 ?? ev.y, 12, ['#ffb366', '#ffffff'], 3, 0.5, 2);
+                  break;
+                case 'stomp':
+                  if (va) {
+                    k.effects.ring(va.x, -va.y, '#ffe14d', 0.5, 1.8);
+                    burst(va.x, 0.2, va.y, 14, ['#e6e8f2', '#ffe14d'], 4, 0.5, 5);
+                  }
+                  k.shake(0.3);
+                  break;
+                case 'spinpulse':
+                  if (va) k.effects.ring(va.x, -va.y, '#7fe0ff', 0.35, 1.9);
+                  break;
+                case 'wall':
+                  if (va) burst(va.x, va.z + 1, va.y, 8, ['#ffffff', '#b8c0d4'], 2.6, 0.4, 4);
+                  break;
+                case 'slip':
+                  if (va) burst(va.x, 0.3, va.y, 10, ['#ffe14d', '#ffffff'], 3, 0.5, 5);
+                  break;
+                case 'reflect':
+                  if (va) burst(va.x, va.z + 1.2, va.y, 12, ['#7fe0ff', '#ffffff'], 4, 0.5, 2);
                   break;
               }
             }
@@ -412,15 +552,14 @@ export function createRooftopScene(o: RooftopSceneOptions) {
               e.z += (at.z - e.z) * (far || isMe ? 1 : 1 - Math.exp(-dt * 24));
             }
             const lifted = !!(fl & F_LIFT);
-            const falling = !!(fl & F_FALL);
             const down = !!(fl & F_DOWN);
             const stunned = !!(fl & F_STUN) || time - e.hitAt < 0.5;
-            const grounded = e.z < 0.08 && !falling;
+            const grounded = e.z < 0.08;
             const spd = Math.hypot(at.vx, at.vy);
 
             // người chơi của mình: thân theo hướng client tính (chạy / khoá mục tiêu / hướng đánh), không chờ server, trừ lúc choáng/ngã/bị túm/bị quăng/rơi.
             // hướng server (sin y, cos y) ↔ mặt nhân vật trong cảnh ở yaw a nhìn (sin a, cos a) với a = π - y
-            const ownYaw = isMe && !(fl & (F_STUN | F_DOWN | F_HELD | F_THROWN | F_FALL | F_OUT)) && time - e.hitAt >= 0.5;
+            const ownYaw = isMe && !(fl & (F_STUN | F_DOWN | F_HELD | F_THROWN | F_OUT)) && time - e.hitAt >= 0.5;
             const wantYaw = ownYaw ? Math.PI - f.bodyYaw.current : Math.PI - at.face;
             e.yaw += angDiff(e.yaw, wantYaw) * (ownYaw ? 1 - Math.exp(-dt * 60) : 1 - Math.exp(-dt * 18));
             e.c.setYaw(e.yaw);
@@ -428,35 +567,41 @@ export function createRooftopScene(o: RooftopSceneOptions) {
             let pose: Pose = 'run';
             let speed = Math.min(1, spd / SPEED);
             if (aliveCount <= 1 && !out && total > 1) pose = 'cheer';
-            else if (falling || fl & F_THROWN) pose = 'jump';
+            else if (out) pose = 'sad';
+            else if (fl & F_THROWN) pose = 'jump';
             else if (lifted) pose = 'hit';
             else if (fl & F_PUNCH) pose = 'punch';
             else if (fl & F_WHIFF) pose = 'sad';
             else if (fl & F_HELD) pose = 'hit';
-            else if (fl & F_ANCHOR || fl & F_HOLD || fl & F_CHARGE) pose = 'pull';
+            else if (fl & F_HOLD || fl & F_CHARGE) pose = 'pull';
             else if (stunned) pose = 'hit';
             else if (fl & F_DODGE) pose = 'jump';
             else if (!grounded) pose = 'jump';
             if (pose !== 'run') speed = 0;
 
-            e.c.update(time < e.freeze ? dt * 0.05 : dt, { speed, dead: down && !falling, time, pose, holder: !!(fl & F_LIFTING) });
+            e.c.update(time < e.freeze ? dt * 0.05 : dt, { speed, dead: down || out, time, pose, holder: !!(fl & F_LIFTING) });
 
             const wob = Math.min(1, at.wob + (stunned ? 0.3 : 0));
-            if (falling) {
-              e.spin += dt * 7;
-              e.c.root.rotation.z = e.spin;
-              e.c.root.rotation.x = Math.sin(e.spin * 0.7) * 0.5;
-            } else {
-              e.spin = 0;
-              e.c.root.rotation.x = 0;
-              e.c.root.rotation.z = Math.sin(time * 8 + e.phase) * wob * 0.32;
-            }
+            e.c.root.rotation.x = 0;
+            e.c.root.rotation.z = Math.sin(time * 8 + e.phase) * wob * 0.32;
             e.c.root.position.set(e.x, e.z, -e.y);
-            e.c.root.visible = !out || (falling && e.z > ROAD_Y - 0.5);
+            // KO: nằm lại một lát rồi biến mất trong làn khói
+            if (out && e.koAt < 0) {
+              e.koAt = time;
+              burst(e.x, 0.6, e.y, 18, ['#c8c8d4', '#ffffff', '#8c8c9c'], 3.5, 0.9, 3);
+            }
+            e.c.root.visible = !out || time - e.koAt < 1.8;
+            // hào quang kỹ năng
+            const sb = at.sb;
+            const aura = sb & SB_SHIELD ? auraMats.shield : sb & SB_ARMOR ? auraMats.armor : sb & SB_RAGE ? auraMats.rage : sb & SB_SPIN ? auraMats.spin : sb & SB_HASTE ? auraMats.haste : null;
+            e.aura.visible = !!aura && !out;
+            if (aura) e.aura.material = aura;
 
             const lab = o.labels.get(p.id);
-            if (!out) k.label(lab, e.x, e.z + 2.35, -e.y);
-            else if (lab) lab.style.opacity = '0';
+            if (!out) {
+              k.label(lab, e.x, e.z + 2.1 * e.ch.scale + 0.3, -e.y);
+              if (lab) lab.style.setProperty('--hp', String(Math.max(0, Math.min(100, (at.hp / e.ch.hp) * 100))));
+            } else if (lab) lab.style.opacity = '0';
             if (isMe) {
               meX = e.x;
               meY = e.z;

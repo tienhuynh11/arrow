@@ -3,11 +3,9 @@ import { net } from '../../network/net';
 import { sfx } from '../../utils/sound';
 import { useGameEvents } from '../../utils/hooks';
 import {
-  F_ANCHOR,
   F_CHARGE,
   F_DODGE,
   F_DOWN,
-  F_FALL,
   F_HELD,
   F_HOLD,
   F_LIFT,
@@ -16,7 +14,13 @@ import {
   F_THROWN,
   newBody,
   stepBody,
-  CHARGE_LEAD,
+  RT_CHARS,
+  SB_DASH,
+  SB_HASTE,
+  SB_PECK,
+  SB_RAGE,
+  SB_SPIN,
+    CHARGE_LEAD,
   type RtBody,
   type RtConfig,
 } from '@shared/rooftop';
@@ -26,9 +30,14 @@ import type { GameProps } from '../types';
 export type RtPos = number[];
 
 export type RtFx =
-  | { kind: 'fx'; k: string; a: string; b?: string; c?: string; x: number; y: number; z: number; hk?: string; idx?: number; counter?: boolean; force?: number; dx?: number; dy?: number; heavy?: boolean }
+  | { kind: 'fx'; k: string; a: string; b?: string; c?: string; x: number; y: number; z: number; hk?: string; idx?: number; counter?: boolean; force?: number; dx?: number; dy?: number; heavy?: boolean; ch?: string; s?: number; x2?: number; y2?: number; dmg?: number; tag?: string }
   | { kind: 'fall'; playerId: string; by: string; how: string }
   | { kind: 'out'; playerId: string };
+
+export interface BananaPos {
+  x: number;
+  y: number;
+}
 
 export interface FeedItem {
   id: number;
@@ -36,7 +45,7 @@ export interface FeedItem {
   tone: 'fun' | 'info' | 'bad';
 }
 
-const HARD = F_DOWN | F_HELD | F_FALL | F_OUT | F_THROWN | F_LIFT | F_ANCHOR | F_HOLD | F_DODGE | F_CHARGE;
+const HARD = F_DOWN | F_HELD | F_OUT | F_THROWN | F_LIFT | F_HOLD | F_DODGE | F_CHARGE;
 const PITCH_MIN = -0.17; // ~-10°
 const PITCH_MAX = 0.78; // ~45°
 const LOCK_RANGE = 10;
@@ -69,7 +78,9 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
   const lastPredict = useRef(0);
 
   const keys = useRef({ f: 0, b: 0, l: 0, r: 0, e: false, shift: false, rmb: false, dodgeHeld: false });
-  const pulse = useRef({ jump: false, punch: false, dodge: false });
+  const pulse = useRef({ jump: false, punch: false, dodge: false, skill1: false, skill2: false });
+  const bananas = useRef(new Map<number, BananaPos>());
+  const myChar = RT_CHARS[(config as RtConfig).chars[meId] ?? 0];
   const lmb = useRef<{ down: number; timer: number }>({ down: 0, timer: 0 });
   const chargeOn = useRef(false);
   const sent = useRef({ dx: 0, dy: 0, yaw: 0, grab: false, lift: false, charge: false, at: 0 });
@@ -80,7 +91,7 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
   const el = useRef<HTMLElement | null>(null);
   const touchBtn = useRef({ grab: false });
   const enemies = () =>
-    Object.entries(positions.current).filter(([id, p]) => id !== meId && !(p[4] & (F_OUT | F_FALL)));
+    Object.entries(positions.current).filter(([id, p]) => id !== meId && !(p[4] & F_OUT));
   const angTo = (x: number, y: number) => Math.atan2(x - body.current.x, y - body.current.y);
   const distTo = (x: number, y: number) => Math.hypot(x - body.current.x, y - body.current.y);
   /** khoá mục tiêu kiểu Wukong: cycle=false chọn người gần nhất trong nón nhìn của camera; cycle=true chuyển sang người kế bên */
@@ -149,7 +160,9 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
   const feedId = useRef(1);
   const [shout, setShout] = useState<{ id: number; text: string } | null>(null);
   const [banner, setBanner] = useState<{ id: number; text: string } | null>(null);
-  const [hud, setHud] = useState({ alive: players.length, grip: 100, out: false, hold: false, held: false, down: false, winner: false });
+  const [hud, setHud] = useState({ alive: players.length, grip: 100, out: false, hold: false, held: false, down: false, winner: false, hp: myChar.hp, maxHp: myChar.hp, cd1: 0, cd2: 0 });
+  const [intro, setIntro] = useState(true);
+  const [pressure, setPressure] = useState(false);
   const aliveRef = useRef(players.length);
   const outRef = useRef(new Set<string>());
 
@@ -189,7 +202,7 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
         }
       }
     } else if (p.type === 'fx') {
-      fx.current.push({ kind: 'fx', k: p.k, a: p.a, b: p.b, c: p.c, x: p.x, y: p.y, z: p.z, hk: p.kind, idx: p.idx, counter: p.counter, force: p.force, dx: p.dx, dy: p.dy, heavy: p.heavy });
+      fx.current.push({ kind: 'fx', k: p.k, a: p.a, b: p.b, c: p.c, x: p.x, y: p.y, z: p.z, hk: p.kind, idx: p.idx, counter: p.counter, force: p.force, dx: p.dx, dy: p.dy, heavy: p.heavy, ch: p.ch, s: p.s, x2: p.x2, y2: p.y2, dmg: p.dmg, tag: p.tag });
       switch (p.k) {
         case 'hit':
           if (p.counter) {
@@ -197,18 +210,40 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
             say(`${nm(p.a)} phản công trúng ${nm(p.b)}!`);
           } else if (p.kind === 'heavy') {
             if (p.a === meId || p.b === meId) shoutBig('ĐẤM MẠNH!');
-          } else if (p.idx === 2 && (p.a === meId || p.b === meId)) shoutBig('COMBO!');
+          } else if (p.idx === 2 && p.kind === 'quick' && (p.a === meId || p.b === meId)) shoutBig('COMBO!');
           else if (p.b === meId) shoutBig('ÚI!');
           if (p.b === meId) sfx.miss();
           else if (p.a === meId) sfx.tick();
           break;
+        case 'skill': {
+          const ch = RT_CHARS.find((c) => c.id === p.ch);
+          const sk = ch?.skills[(p.s ?? 1) - 1];
+          if (sk) say(`${ch!.emoji} ${nm(p.a)}: ${sk.name.toUpperCase()}!`, 'info');
+          if (p.a === meId && sk) shoutBig(`${sk.icon} ${sk.name.toUpperCase()}!`);
+          break;
+        }
         case 'dodged':
           if (p.a === meId) shoutBig('NÉ!');
-          else say(`${nm(p.a)} né cú đấm của ${nm(p.b)}!`, 'info');
+          else say(`${nm(p.a)} né đòn của ${nm(p.b)}!`, 'info');
           break;
         case 'whiff':
           say(`${nm(p.a)} đấm hụt, loạng choạng!`);
           if (p.a === meId) shoutBig('ĐẤM HỤT!');
+          break;
+        case 'wallpunch':
+          say(`${nm(p.a)} TỰ ĐẬP vào tường! 🤦`, 'bad');
+          if (p.a === meId) shoutBig('TỰ ĐẬP!');
+          break;
+        case 'wrong':
+          shoutBig('KÉO NHẦM!');
+          say(`KÉO NHẦM! ${nm(p.c)} đánh ${nm(p.a)}, lây sang ${nm(p.b)}`, 'bad');
+          break;
+        case 'reflect':
+          say(`${nm(p.a)} phản đòn bằng mai khiên!`, 'info');
+          break;
+        case 'slip':
+          say(`${nm(p.a)} trượt vỏ chuối! 🍌`);
+          if (p.a === meId) shoutBig('TRƯỢT!');
           break;
         case 'grab':
           if (p.b === meId) shoutBig('BỊ TÚM!');
@@ -221,9 +256,6 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
           shoutBig('STRIKE!');
           say(`STRIKE! ${nm(p.a)} bay trúng ${nm(p.b)}`);
           break;
-        case 'ledge':
-          say(`${nm(p.a)} bám mép xe, suýt rơi!`, 'info');
-          break;
         case 'free':
           say(`${nm(p.a)} vùng thoát khỏi ${nm(p.b)}`, 'info');
           break;
@@ -231,23 +263,20 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
           say(`${nm(p.a)} mỏi tay, thả người ra`, 'info');
           break;
       }
-    } else if (p.type === 'fall') {
-      fx.current.push({ kind: 'fall', playerId: p.playerId, by: p.by, how: p.how });
+    } else if (p.type === 'banana') {
+      if (p.op === 'add') bananas.current.set(p.id, { x: p.x, y: p.y });
+      else bananas.current.delete(p.id);
+    } else if (p.type === 'ko') {
       const who = nm(p.playerId);
       const by = nm(p.by);
       const how: string = p.how;
-      if (how === 'self') {
-        say(`${who} TỰ RƠI! 🤦`, 'bad');
-        shoutBig('TỰ RƠI!');
-      } else if (how === 'wrong') {
-        say(`KÉO NHẦM! ${who} kéo ${by} rơi theo`, 'bad');
-        shoutBig('KÉO NHẦM!');
-      } else if (how === 'punch') say(`${by} đấm ${who} văng khỏi xe!`, 'bad');
-      else if (how === 'throw') say(`${by} quăng ${who} xuống đường!`, 'bad');
-      else if (how === 'bowl') say(`${who} bị ${by} làm "bowling" rơi!`, 'bad');
-      else if (how === 'drag') say(`${by} kéo ${who} ra mép rồi... rơi!`, 'bad');
-      if (p.playerId === meId) sfx.miss();
-    } else if (p.type === 'out') {
+      if (p.by) say(`${by} hạ ${who}! 💀`, 'bad');
+      else if (how === 'pressure') say(`${who} gục vì áp lực cuối trận`, 'bad');
+      else say(`${who} TỰ ĐẬP KO! 🤦`, 'bad');
+      if (p.playerId === meId) {
+        shoutBig('KO!');
+        sfx.miss();
+      }
       if (!outRef.current.has(p.playerId)) {
         outRef.current.add(p.playerId);
         aliveRef.current = Math.max(0, players.length - outRef.current.size);
@@ -256,18 +285,25 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     }
   });
 
-  // nóc xe thu hẹp theo lịch cố định trong config: báo trước 3 giây
+  // vào ván: thông báo nhân vật thú; áp lực cuối trận có banner báo trước 3 giây
   useEffect(() => {
-    const at = startAt + cfg.shrinkAt - 3000;
+    const t1 = window.setTimeout(() => setIntro(false), Math.max(0, startAt - net.now()) + 5500);
+    const at = startAt + cfg.pressureAt - 3000;
     const wait = at - net.now();
-    if (wait < -3000) return;
-    const id = window.setTimeout(() => {
-      shoutBig('NÓC XE SẬP DẦN!');
-      setBanner({ id: -1, text: 'NÓC XE SẮP SẬP DẦN TỪ MÉP VÀO · lan can biến mất, dồn về giữa!' });
-      window.setTimeout(() => setBanner(null), 5000);
-    }, Math.max(0, wait));
-    return () => window.clearTimeout(id);
-  }, [startAt, cfg.shrinkAt]);
+    let t2 = 0;
+    if (wait > -3000) {
+      t2 = window.setTimeout(() => {
+        shoutBig('ÁP LỰC CUỐI TRẬN!');
+        setPressure(true);
+        setBanner({ id: -1, text: 'ÁP LỰC CUỐI TRẬN · mọi người mất máu dần, càng lúc càng nhanh!' });
+        window.setTimeout(() => setBanner(null), 5000);
+      }, Math.max(0, wait));
+    }
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [startAt, cfg.pressureAt]);
 
   /* ---------- gửi input ---------- */
   const moveVec = () => {
@@ -296,6 +332,8 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
       const pj = pulse.current.jump;
       const pp = pulse.current.punch;
       const pd = pulse.current.dodge;
+      const s1 = pulse.current.skill1;
+      const s2 = pulse.current.skill2;
       const changed =
         Math.abs(dx - s.dx) > 0.02 ||
         Math.abs(dy - s.dy) > 0.02 ||
@@ -305,6 +343,8 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
         pj ||
         pp ||
         pd ||
+        s1 ||
+        s2 ||
         chargeOn.current !== !!s.charge;
       if (!force && !changed && now - s.at < 280) return;
       if (now - s.at < 38 && !force) return; // ≤ ~26 gói/giây
@@ -317,10 +357,12 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
         lift,
         charge: chargeOn.current || undefined,
         dodge: pd || undefined,
+        skill1: s1 || undefined,
+        skill2: s2 || undefined,
         jump: pj || undefined,
         punch: pp || undefined,
       });
-      pulse.current = { jump: false, punch: false, dodge: false };
+      pulse.current = { jump: false, punch: false, dodge: false, skill1: false, skill2: false };
       sent.current = { dx, dy, yaw, grab, lift, charge: chargeOn.current, at: now };
     },
     [gameId],
@@ -356,6 +398,20 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
         case 'Tab':
         case 'KeyF':
           if (on && !e.repeat) toggleLock(e.code === 'Tab');
+          return true;
+        case 'KeyR':
+        case 'Digit1':
+          if (on && !e.repeat) {
+            pulse.current.skill1 = true;
+            flush();
+          }
+          return true;
+        case 'KeyX':
+        case 'Digit2':
+          if (on && !e.repeat) {
+            pulse.current.skill2 = true;
+            flush();
+          }
           return true;
         case 'ControlLeft':
         case 'ControlRight':
@@ -544,6 +600,10 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
 
   /** nút cảm ứng ĐẤM / TÚM */
   const touch = {
+    skill: (n: 1 | 2) => {
+      pulse.current[n === 1 ? 'skill1' : 'skill2'] = true;
+      flush();
+    },
     punch: lmbDown,
     punchUp: lmbUp,
     dodge: () => {
@@ -564,12 +624,12 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     if (!me || dt <= 0) return;
     if (lockId.current) {
       const t = positions.current[lockId.current];
-      if (!t || t[4] & (F_OUT | F_FALL) || distTo(t[0], t[1]) > LOCK_DROP) {
+      if (!t || t[4] & F_OUT || distTo(t[0], t[1]) > LOCK_DROP) {
         lockId.current = '';
         setLockName('');
       }
     }
-    if (me[4] & (F_DOWN | F_HELD | F_FALL | F_OUT | F_THROWN)) {
+    if (me[4] & (F_DOWN | F_HELD | F_OUT | F_THROWN)) {
       bodyYaw.current += angDiff(bodyYaw.current, me[3]) * Math.min(1, dt * 12); // server quyết hướng thân
       return;
     }
@@ -598,7 +658,7 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     const b = body.current;
     const fl = mine[4];
     const dt = dtMs / 1000;
-    if (fl & HARD) {
+    if (fl & HARD || (mine[12] ?? 0) & SB_DASH) {
       // trạng thái do server quyết: bám theo bản ghi mới nhất (có ngoại suy)
       const since = Math.min(0.12, (performance.now() - recvAt.current) / 1000);
       const tx = mine[0] + mine[5] * since;
@@ -618,9 +678,11 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     const sdt = dt / steps;
     const { dx, dy } = moveVec();
     const stun = !!(fl & F_STUN);
+    const sb = mine[12] ?? 0;
+    const spMul = myChar.speed * (sb & SB_HASTE ? 1.35 : 1) * (sb & SB_RAGE ? 1.25 : 1) * (sb & SB_SPIN ? 0.6 : 1) * (sb & SB_PECK ? 0.5 : 1) * (stun ? 0.55 : 1);
     for (let i = 0; i < steps; i++) {
       const wantJump = performance.now() - jumpLocal.current < 150 && !stun;
-      if (stepBody(cfg, b, dx, dy, sdt, { speedMul: stun ? 0.55 : 1, accelMul: stun ? 0.5 : 1, t, jump: wantJump })) jumpLocal.current = -1e9;
+      if (stepBody(cfg, b, dx, dy, sdt, { speedMul: spMul, accelMul: stun ? 0.5 : 1, jump: wantJump })) jumpLocal.current = -1e9;
     }
   };
 
@@ -630,10 +692,10 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     if (!p) return undefined;
     if (id === meId && synced.current && !(p[4] & F_OUT)) {
       const b = body.current;
-      return { x: b.x, y: b.y, z: b.z, face: p[3], flags: p[4], vx: b.vx, vy: b.vy, wob: p[7] };
+      return { x: b.x, y: b.y, z: b.z, face: p[3], flags: p[4], vx: b.vx, vy: b.vy, wob: p[7], hp: p[8], sb: p[12] ?? 0 };
     }
     const since = Math.min(0.12, (performance.now() - recvAt.current) / 1000);
-    return { x: p[0] + p[5] * since, y: p[1] + p[6] * since, z: p[2], face: p[3], flags: p[4], vx: p[5], vy: p[6], wob: p[7] };
+    return { x: p[0] + p[5] * since, y: p[1] + p[6] * since, z: p[2], face: p[3], flags: p[4], vx: p[5], vy: p[6], wob: p[7], hp: p[8], sb: p[12] ?? 0 };
   };
 
   // HUD gọn: vài lần mỗi giây
@@ -643,7 +705,11 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
       const fl = m ? m[4] : 0;
       const next = {
         alive: aliveRef.current,
-        grip: m ? m[8] : 100,
+        grip: m ? m[9] : 100,
+        hp: m ? m[8] : myChar.hp,
+        maxHp: myChar.hp,
+        cd1: m ? m[10] / 10 : 0,
+        cd2: m ? m[11] / 10 : 0,
         out: !!(fl & F_OUT) || outRef.current.has(meId),
         hold: !!(fl & F_HOLD),
         held: !!(fl & F_HELD),
@@ -659,6 +725,10 @@ export function useRooftopGame({ gameId, config, startAt, players, meId, live }:
     cfg,
     startAt,
     positions,
+    bananas,
+    myChar,
+    intro,
+    pressure,
     hold,
     fx,
     cam,

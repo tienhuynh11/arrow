@@ -292,6 +292,6 @@ export type GameInput =
   | { type: 'plant' }                                    // mê cung đặt bom: đặt bom ở ô đang đứng
   | { type: 'steer'; dx: number; dy: number; a: number }       // đấu trường mù: chạy theo màn hình + góc ngắm của chuột
   // đấu vật trên nóc nhà: dx,dy = hướng đi (hệ toạ độ xe, đã tính theo camera), yaw = hướng camera/ngắm; jump/punch/dodge là xung 1 lần (punch = đấm nhanh / quăng), grab/lift/charge là trạng thái giữ (charge = giữ chuột trái để tích lực đấm mạnh)
-  | { type: 'brawl'; dx: number; dy: number; yaw: number; jump?: boolean; punch?: boolean; grab?: boolean; lift?: boolean; charge?: boolean; dodge?: boolean };
+  | { type: 'brawl'; dx: number; dy: number; yaw: number; jump?: boolean; punch?: boolean; grab?: boolean; lift?: boolean; charge?: boolean; dodge?: boolean; skill1?: boolean; skill2?: boolean };
 
 export type Judgement = 'PERFECT' | 'GREAT' | 'GOOD' | 'MISS' | 'TRAP';
