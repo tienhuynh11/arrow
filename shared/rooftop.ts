@@ -42,17 +42,10 @@ export const newBody = (x = 0, y = 0): RtBody => ({ x, y, z: 0, vx: 0, vy: 0, vz
 export const F_GROUND = 1;
 export const F_STUN = 2; // loạng choạng: điều khiển yếu
 export const F_DOWN = 4; // ngã sõng soài
-export const F_HOLD = 8; // đang túm người
-export const F_HELD = 16; // đang bị túm
-export const F_LIFT = 32; // đang bị nhấc bổng
-export const F_PUNCH = 128; // đang tung đấm
+export const F_PUNCH = 128; // đang tung đòn
 export const F_OUT = 512; // đã KO
-export const F_THROWN = 1024; // đang bay vì bị quăng
-export const F_LIFTING = 2048; // đang giơ người khác lên cao
-export const F_REACH = 4096; // đang giơ tay tìm chỗ túm
-export const F_WHIFF = 8192; // vừa đấm hụt
-export const F_DODGE = 16384; // đang lăn né
-export const F_CHARGE = 32768; // đang tích lực đấm mạnh
+export const F_WHIFF = 8192; // vừa đánh hụt
+export const F_CAST = 65536; // đang niệm chiêu (đứng im chờ chiêu nổ)
 /** cờ hiệu ứng kỹ năng (phần tử cuối của gói vị trí) */
 export const SB_ARMOR = 1;
 export const SB_SHIELD = 2;
@@ -223,26 +216,20 @@ export const RT_CHARS: RtChar[] = [
 ];
 
 /* ======================= CÂN BẰNG COMBAT (mọi thông số tinh chỉnh nằm ở đây) ======================= */
-/** sát thương đòn đánh thường */
-export const DMG_QUICK = [4, 5, 9]; // đòn 1, 2, đòn kết combo
-export const DMG_HEAVY_MIN = 12;
-export const DMG_HEAVY_MAX = 22;
+/** đánh thường: chuột trái, nối combo 3 đòn (đòn 3 là đòn kết đẩy + làm ngã) */
+export const DMG_QUICK = [5, 6, 12];
 export const COUNTER_DMG_MULT = 1.5;
-export const DMG_THROW_LAND = 10; // người bị quăng chạm đất
-export const DMG_BOWL = 10; // người bị quăng húc trúng người khác
-export const DMG_BOWL_SELF = 5; // ... và chính người bị quăng cũng đau
 export const WALL_DMG_MIN_SPEED = 7; // va tường mạnh hơn mức này mới mất máu
 export const WALL_DMG_K = 1.1;
 export const WALL_DMG_MAX = 8;
-export const WHIFF_WALL_DMG = 3; // đấm hụt vào tường: "TỰ ĐẬP!"
+export const WHIFF_WALL_DMG = 3; // đánh hụt vào tường: "TỰ ĐẬP!"
 export const KILL_CREDIT_MS = 4000; // người gây sát thương trong 4s gần nhất được tính "hạ"
-export const SPLASH_MULT = 0.5; // túm nhầm: đòn của người thứ ba lan sang người đang dính nhau
 /** áp lực cuối trận: mọi người mất máu dần */
 export const PRESSURE_AT = 70000;
 export const PRESSURE_DPS0 = 1.5;
 export const PRESSURE_DPS1 = 6;
 export const MATCH_MS = 150000;
-/** kỹ năng */
+/** kỹ năng (delay = thời gian niệm chiêu có chỉ báo trên sàn trước khi nổ) */
 export const SK_RAGE_SPEED = 1.25;
 export const SK_RAGE_DMG = 1.3;
 export const SK_HASTE_SPEED = 1.35;
@@ -253,71 +240,46 @@ export const SK_SHIELD_MS = 2500;
 export const SK_SHIELD_REFLECT = 0.5;
 export const SK_HASTE_MS = 4000;
 export const SK_RAGE_MS = 5000;
-export const SK_BULL_DASH = { speed: 14, ms: 450, dmg: 16, force: 9, stun: 700, wob: 0.6 };
-export const SK_BULL_ROAR = { radius: 3.2, dmg: 6, force: 3, stun: 1100, wob: 0.5 };
-export const SK_BEAR_SLAM = { radius: 2.6, dmg: 12, force: 6.5, stun: 800, wob: 1.0 };
-export const SK_FOX_BLINK = { range: 8, arc: 0.6, dmg: 7, force: 2, stun: 350, wob: 0.3, behind: 1.1 };
-export const SK_TURTLE_SPIN = { ms: 1600, every: 200, radius: 1.9, dmg: 3, force: 5.5, stun: 300, wob: 0.15, speedMul: 0.6 };
-export const SK_MONKEY_LEAP = { vz: 7.5, v: 4.5, radius: 1.8, dmg: 16, force: 8, stun: 600, wob: 0.6 };
-export const SK_BANANA = { ahead: 1.6, life: 12000, max: 3, radius: 0.6, dmg: 6, wob: 1.2, slide: 4, immuneMs: 1500 };
-export const SK_TIGER_POUNCE = { speed: 12, ms: 350, dmg: 9, force: 5, stun: 450, wob: 0.4, bleedMs: 3000, bleedDps: 2.5 };
-export const SK_ROOSTER_PECK = { count: 5, every: 110, range: 1.8, arc: 0.9, dmg: 3, force: 1.2, stun: 150, wob: 0.1 };
-export const SK_ROOSTER_WING = { range: 3.2, arc: 0.9, dmg: 5, force: 9, stun: 500, wob: 0.5 };
-/** đấm nhanh (nhấn chuột trái) */
+export const SK_BULL_DASH = { speed: 14, ms: 450, dmg: 20, force: 10, stun: 700, wob: 0.8 };
+export const SK_BULL_ROAR = { radius: 3.4, dmg: 8, force: 3, stun: 1200, wob: 0.5, delay: 450 };
+export const SK_BEAR_SLAM = { radius: 2.8, dmg: 15, force: 7, stun: 900, wob: 1.0, delay: 500 };
+export const SK_FOX_BLINK = { range: 8, arc: 0.6, dmg: 9, force: 2, stun: 350, wob: 0.3, behind: 1.1 };
+export const SK_TURTLE_SPIN = { ms: 1600, every: 200, radius: 1.9, dmg: 4, force: 5.5, stun: 300, wob: 0.15, speedMul: 0.6 };
+export const SK_MONKEY_LEAP = { vz: 7.5, v: 4.5, radius: 1.9, dmg: 20, force: 8, stun: 700, wob: 0.8 };
+export const SK_BANANA = { ahead: 1.8, life: 12000, max: 3, radius: 0.6, dmg: 8, wob: 1.2, slide: 4, immuneMs: 1500 };
+export const SK_TIGER_POUNCE = { speed: 12, ms: 350, dmg: 12, force: 5, stun: 450, wob: 0.4, bleedMs: 3000, bleedDps: 2.5 };
+export const SK_ROOSTER_PECK = { count: 5, every: 110, range: 1.8, arc: 0.9, dmg: 4, force: 1.2, stun: 150, wob: 0.1 };
+export const SK_ROOSTER_WING = { range: 3.4, arc: 0.9, dmg: 7, force: 9, stun: 500, wob: 0.5, delay: 350 };
+export const CAST_MOVE_MUL = 0.7; // đang niệm chiêu vẫn chạy được (vừa chạy vừa tung)
+/** skill linh hoạt: buffer input, huỷ/nối chiêu, lái hướng lúc lao */
+export const INPUT_BUFFER_MS = 200; // bấm sớm tối đa chừng này vẫn ra đòn
+export const SKILL_CANCEL_MS = 150; // lao/vồ sau chừng này ms có thể huỷ sang đánh thường / skill kia
+export const SKILL_LINK_MS = 700; // đánh thường ngay sau skill trong cửa sổ này được thưởng
+export const SKILL_LINK_BONUS = 1.25;
+export const DASH_STEER_MS = 220; // lúc đầu pha lao có thể bẻ hướng theo hướng chạy / mục tiêu khoá
+export const DASH_STEER_RATE = 9; // rad/s
+/** đòn thường */
 export const QUICK_CD = 380; // hồi chiêu khi trúng (ms)
-export const QUICK_WHIFF_CD = 620; // hồi chiêu khi đấm hụt
-export const QUICK_RANGE = 1.7;
+export const QUICK_WHIFF_CD = 620; // hồi chiêu khi đánh hụt
+export const QUICK_RANGE = 1.8;
 export const QUICK_ARC = 1.05; // nửa góc quạt (rad)
-export const COMBO_FORCE = [5.2, 6.2, 8]; // lực đẩy từng đòn trong chuỗi (đòn 3 = kết)
-export const COMBO_STUN = [380, 430, 760];
-export const COMBO_WOBBLE = [0.28, 0.34, 0.6];
+export const COMBO_FORCE = [4.6, 5.6, 8.5]; // lực đẩy từng đòn trong chuỗi (đòn 3 = kết)
+export const COMBO_STUN = [380, 430, 800];
+export const COMBO_WOBBLE = [0.25, 0.3, 0.85];
 export const COMBO_WINDOW = 900; // ms từ đòn trước tới khi còn nối được chuỗi (và đòn trước phải trúng)
 export const COMBO_FINISH_CD = 820;
-/** đấm mạnh (giữ chuột trái rồi thả) */
-export const CHARGE_LEAD = 180; // client chỉ báo "đang tích" sau khi giữ chừng này ms; server cộng bù
-export const HEAVY_MIN = 420; // giữ tối thiểu để thành đòn mạnh
-export const CHARGE_MAX = 1100; // tới đây tự tung
-export const HEAVY_FORCE_MIN = 6.5;
-export const HEAVY_FORCE_MAX = 10;
-export const HEAVY_RANGE = 2.0;
-export const HEAVY_ARC = 0.7;
-export const HEAVY_STUN = 850;
-export const HEAVY_WOBBLE = 1.0; // đòn mạnh trúng là ngã ngay (đổi lại rất dễ bị né/hụt, hồi chiêu dài)
-export const HEAVY_CD = 900;
-export const CHARGE_SPEED_MUL = 0.45; // đang tích lực thì đi chậm
-/** đấm hụt: không trượt dài, nhưng lộ sơ hở cho đòn phản công */
+/** đánh hụt: không trượt dài, nhưng lộ sơ hở cho đòn phản công */
 export const QUICK_LURCH = 1.8;
-export const HEAVY_LURCH = 3.2;
 export const WHIFF_STUN = 250;
-export const HEAVY_WHIFF_STUN = 600;
 export const WHIFF_WOBBLE = 0.25;
-export const HEAVY_WHIFF_WOBBLE = 0.5;
 export const WHIFF_VULN_MS = 450; // trong lúc này bị đánh trúng = phản công
 export const COUNTER_MULT = 1.35;
 export const COUNTER_EXTRA_STUN = 250;
 export const COUNTER_EXTRA_WOBBLE = 0.2;
-export const SPEED_FORCE_K = 0.35; // lao tới đấm thì thêm lực
+export const SPEED_FORCE_K = 0.35; // lao tới đánh thì thêm lực
 export const KNOCK_WOBBLE_BOOST = 0.5; // đối thủ càng loạng choạng càng dễ văng
-export const HOLDING_KNOCK_MUL = 0.6;
-/** né (Ctrl / Q) */
-export const DODGE_SPEED = 9.5;
-export const DODGE_MS = 230;
-export const DODGE_IFRAME = 150; // cửa sổ tránh ĐẤM (không tránh được túm)
-export const DODGE_CD = 1100;
-export const DODGE_WOBBLE = 0.08;
 /** thăng bằng */
 export const WOBBLE_DECAY = 0.45; // /s
-export const WOBBLE_STEER_BONUS = 0.35; // /s thêm khi bẻ lái ngược hướng đang trượt
 export const DOWN_MS = 1250;
 export const DOWN_WOBBLE_RESET = 0.3;
-export const GETUP_REDUCE = 150; // mỗi lần bấm Space/né khi nằm ngã rút ngắn thời gian
-/** túm / quăng */
-export const GRAB_RANGE = 1.6;
-export const GRAB_ARC = 1.3;
-export const STRUGGLE_NEED = 2.0;
-export const STRUGGLE_NEED_LIFT = 3.2;
-export const THROW_V = 11.5;
-export const LOB_V = 7;
-export const THROW_VZ_LIFT = 5.6;
-export const THROW_VZ = 3.4;
-export const GRAB_TIE_EPS = 1e-3;
+export const GETUP_REDUCE = 150; // mỗi lần bấm Space khi nằm ngã rút ngắn thời gian

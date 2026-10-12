@@ -1,9 +1,7 @@
 import type { GameContext, GameDefinition, PlayerResult } from './types.js';
 import type { GameInput } from '../../../shared/protocol.js';
 import {
-  CHARGE_LEAD,
-  CHARGE_MAX,
-  CHARGE_SPEED_MUL,
+  CAST_MOVE_MUL,
   COMBO_FINISH_CD,
   COMBO_FORCE,
   COMBO_STUN,
@@ -13,52 +11,22 @@ import {
   COUNTER_EXTRA_STUN,
   COUNTER_EXTRA_WOBBLE,
   COUNTER_MULT,
-  DMG_BOWL,
-  DMG_BOWL_SELF,
-  DMG_HEAVY_MAX,
-  DMG_HEAVY_MIN,
+  DASH_STEER_MS,
+  DASH_STEER_RATE,
   DMG_QUICK,
-  DMG_THROW_LAND,
-  DODGE_CD,
-  DODGE_IFRAME,
-  DODGE_MS,
-  DODGE_SPEED,
-  DODGE_WOBBLE,
   DOWN_MS,
   DOWN_WOBBLE_RESET,
-  F_CHARGE,
-  F_DODGE,
+  F_CAST,
   F_DOWN,
   F_GROUND,
-  F_HELD,
-  F_HOLD,
-  F_LIFT,
-  F_LIFTING,
   F_OUT,
   F_PUNCH,
-  F_REACH,
   F_STUN,
-  F_THROWN,
   F_WHIFF,
   GETUP_REDUCE,
-  GRAB_ARC,
-  GRAB_RANGE,
-  GRAB_TIE_EPS,
-  HEAVY_ARC,
-  HEAVY_CD,
-  HEAVY_FORCE_MAX,
-  HEAVY_FORCE_MIN,
-  HEAVY_LURCH,
-  HEAVY_MIN,
-  HEAVY_RANGE,
-  HEAVY_STUN,
-  HEAVY_WHIFF_STUN,
-  HEAVY_WHIFF_WOBBLE,
-  HEAVY_WOBBLE,
-  HOLDING_KNOCK_MUL,
+  INPUT_BUFFER_MS,
   KILL_CREDIT_MS,
   KNOCK_WOBBLE_BOOST,
-  LOB_V,
   MATCH_MS,
   PRESSURE_AT,
   PRESSURE_DPS0,
@@ -97,13 +65,10 @@ import {
   SK_SHIELD_REFLECT,
   SK_TIGER_POUNCE,
   SK_TURTLE_SPIN,
+  SKILL_CANCEL_MS,
+  SKILL_LINK_BONUS,
+  SKILL_LINK_MS,
   SPEED_FORCE_K,
-  SPLASH_MULT,
-  STRUGGLE_NEED,
-  STRUGGLE_NEED_LIFT,
-  THROW_V,
-  THROW_VZ,
-  THROW_VZ_LIFT,
   WALL_DMG_K,
   WALL_DMG_MAX,
   WALL_DMG_MIN_SPEED,
@@ -113,7 +78,6 @@ import {
   WHIFF_WALL_DMG,
   WHIFF_WOBBLE,
   WOBBLE_DECAY,
-  WOBBLE_STEER_BONUS,
   constrain,
   newBody,
   stepBody,
@@ -123,19 +87,18 @@ import {
 } from '../../../shared/rooftop.js';
 
 /**
- * ĐẤU VẬT TRÊN NÓC NHÀ (kiểu Gang Beasts + đấu trường thú): mọi người đánh nhau trên nóc xe tải đang đậu.
- * Mỗi người được random một nhân vật thú (HP, tốc độ, khối lượng, 2 kỹ năng). Đòn đánh trừ máu; hết máu là KO.
- * Nóc xe bao kín bằng tường vô hình (không ai rơi). Sau ~70s "áp lực cuối trận" làm mọi người mất máu dần.
- * Server chốt tất cả: đấm nhanh/mạnh/combo, né, túm–nhấc–quăng, kỹ năng, sát thương, KO.
+ * ĐẤU VẬT TRÊN NÓC NHÀ (kiểu đấu trường thú): mỗi người random một nhân vật thú (HP, tốc độ, khối lượng, 2 kỹ năng).
+ * Chỉ có ĐÁNH THƯỜNG (combo 3 đòn) + 2 KỸ NĂNG. Hết máu là KO; nóc xe bao kín bằng tường vô hình; sau ~70s
+ * "áp lực cuối trận" làm mọi người mất máu dần. Server chốt tất cả: đòn, kỹ năng, hồi chiêu, sát thương, KO.
+ * Skill linh hoạt: vừa chạy vừa tung, buffer input, huỷ/nối giữa đánh thường ↔ skill, lái hướng lúc lao.
  */
 const DURATION = MATCH_MS;
 const TURN_RATE = 16; // rad/s: tốc độ quay thân tối đa
 const TICK_BUDGET = 45; // gói input / giây tối đa
 
-type CauseKind = string;
 interface Cause {
   by: string;
-  kind: CauseKind;
+  kind: string;
   at: number;
 }
 
@@ -145,25 +108,14 @@ interface PState {
   hp: number;
   maxHp: number;
   dmgDealt: number;
-  face: number; // hướng thân
-  aim: number; // hướng đánh do client tính (thân / mục tiêu khoá)
+  face: number;
+  aim: number;
   mx: number;
   my: number;
   inAt: number;
-  grab: boolean;
-  lift: boolean;
   jumpAt: number;
   punchAt: number;
   punchCd: number;
-  chargeIn: boolean;
-  lmb: boolean;
-  chargeAt: number;
-  latched: boolean;
-  relHeld: number;
-  dodgeAt: number;
-  dodgeCd: number;
-  dodgeUntil: number;
-  dodgeIframe: number;
   combo: number;
   lastQuickAt: number;
   comboHit: boolean;
@@ -173,26 +125,19 @@ interface PState {
   stunUntil: number;
   downUntil: number;
   wobble: number;
-  grip: number;
-  gripTired: boolean;
-  grabCd: number;
-  holding: string;
-  heldBy: string;
-  lifted: boolean;
-  struggle: number;
   out: boolean;
   outAt: number;
   kills: number;
   lastDmg: Cause | null;
-  thrownUntil: number;
-  thrownBy: string;
-  thrownHit: Set<string>;
   tokens: number;
   tokAt: number;
   /* kỹ năng */
   sk1At: number;
   sk2At: number;
   skCd: [number, number];
+  linkUntil: number;
+  castKey: string;
+  castAt: number;
   armorUntil: number;
   shieldUntil: number;
   hasteUntil: number;
@@ -201,6 +146,7 @@ interface PState {
   spinUntil: number;
   spinNext: number;
   dashUntil: number;
+  dashStart: number;
   dashKind: string;
   dashDx: number;
   dashDy: number;
@@ -231,7 +177,6 @@ interface State {
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const r1 = (v: number) => Math.round(v * 10) / 10;
-const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const angDiff = (a: number, b: number) => {
   let d = (b - a) % (Math.PI * 2);
@@ -251,15 +196,13 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
   id: 'rooftop',
   name: 'ĐẤU VẬT TRÊN NÓC NHÀ',
   instructions:
-    'Mỗi người được random một nhân vật thú với thanh máu và 2 kỹ năng riêng, cùng đấm, túm, nhấc và quăng nhau trên nóc xe tải đang đậu. Hết máu là bị KO, sau một lúc áp lực cuối trận làm mọi người mất máu dần. Người cuối cùng còn sống thắng!',
+    'Mỗi người được random một nhân vật thú với thanh máu và 2 kỹ năng riêng, cùng đánh nhau trên nóc xe tải đang đậu. Đánh thường nối combo 3 đòn, xen kẽ hai kỹ năng để hạ đối thủ về 0 máu, sau một lúc áp lực cuối trận làm mọi người mất máu dần. Người cuối cùng còn sống thắng!',
   controls: [
-    { keys: ['←', '↑', '→', '↓'], desc: 'Đi theo hướng camera · W A S D cũng được · SPACE nhảy' },
-    { keys: ['CHUỘT'], desc: 'Bấm vào màn hình để khoá chuột, di chuột xoay camera quanh nhân vật · Esc nhả chuột' },
-    { keys: ['CHUỘT GIỮA', 'TAB'], desc: 'Khoá / đổi mục tiêu: thân luôn nhìn mục tiêu, WASD đi vòng quanh nó (F cũng được)' },
-    { keys: ['CLICK TRÁI'], desc: 'ĐẤM nhanh (nối 2–3 đòn = combo) · giữ rồi thả = ĐẤM MẠNH · đấm hụt là hở sườn!' },
-    { keys: ['R', 'X'], desc: 'Kỹ năng 1 (hồi ngắn) · Kỹ năng 2 (chiêu cuối, hồi dài) của nhân vật thú — phím 1, 2 cũng được' },
-    { keys: ['CTRL', 'Q'], desc: 'NÉ ngắn theo hướng đi (tránh được đấm, không tránh được túm)' },
-    { keys: ['CLICK PHẢI', 'E'], desc: 'Giữ để TÚM người trước mặt · SPACE / SHIFT nhấc bổng · click trái hoặc thả nút = QUĂNG (gây sát thương)' },
+    { keys: ['W', 'A', 'S', 'D'], desc: 'Di chuyển theo hướng camera · SPACE nhảy' },
+    { keys: ['CHUỘT'], desc: 'Bấm vào màn hình để khoá chuột, di chuột xoay camera quanh nhân vật' },
+    { keys: ['CLICK TRÁI'], desc: 'ĐÁNH thường: bấm liên tiếp nối combo 3 đòn (đòn kết đẩy + làm ngã), hụt là hở sườn' },
+    { keys: ['R', 'X'], desc: 'Kỹ năng 1 (hồi ngắn) · Kỹ năng 2 (chiêu cuối, hồi dài) — phím 1, 2 cũng được; tung được khi đang chạy, nối với đòn thường' },
+    { keys: ['CHUỘT GIỮA', 'TAB'], desc: 'Khoá / đổi mục tiêu: thân luôn nhìn mục tiêu, WASD đi vòng quanh nó' },
   ],
   duration: DURATION + 1500,
   minPlayers: 2,
@@ -303,20 +246,9 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
         mx: 0,
         my: 0,
         inAt: 0,
-        grab: false,
-        lift: false,
         jumpAt: -1e9,
         punchAt: -1e9,
         punchCd: 0,
-        chargeIn: false,
-        lmb: false,
-        chargeAt: 0,
-        latched: false,
-        relHeld: -1,
-        dodgeAt: -1e9,
-        dodgeCd: 0,
-        dodgeUntil: 0,
-        dodgeIframe: 0,
         combo: 0,
         lastQuickAt: -1e9,
         comboHit: false,
@@ -326,25 +258,18 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
         stunUntil: 0,
         downUntil: 0,
         wobble: 0,
-        grip: 100,
-        gripTired: false,
-        grabCd: 0,
-        holding: '',
-        heldBy: '',
-        lifted: false,
-        struggle: 0,
         out: false,
         outAt: 0,
         kills: 0,
         lastDmg: null,
-        thrownUntil: 0,
-        thrownBy: '',
-        thrownHit: new Set(),
         tokens: TICK_BUDGET,
         tokAt: 0,
         sk1At: -1e9,
         sk2At: -1e9,
         skCd: [ctx.startAt + 2500, ctx.startAt + 6000], // mở màn: chưa dùng ngay được
+        linkUntil: 0,
+        castKey: '',
+        castAt: 0,
         armorUntil: 0,
         shieldUntil: 0,
         hasteUntil: 0,
@@ -353,6 +278,7 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
         spinUntil: 0,
         spinNext: 0,
         dashUntil: 0,
+        dashStart: 0,
         dashKind: '',
         dashDx: 0,
         dashDy: 0,
@@ -387,24 +313,7 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
     p.my = dy;
     const yaw = Number(input.yaw);
     if (Number.isFinite(yaw)) p.aim = angDiff(0, yaw);
-    p.grab = !!input.grab;
-    p.lift = !!input.lift;
     p.inAt = now;
-    const c = !!input.charge;
-    if (!c) p.latched = false;
-    if (c && !p.lmb) {
-      p.lmb = true;
-      if (!p.latched && !p.chargeIn) {
-        p.chargeIn = true;
-        p.chargeAt = now;
-      }
-    } else if (!c && p.lmb) {
-      p.lmb = false;
-      if (p.chargeIn) p.relHeld = now - p.chargeAt + CHARGE_LEAD;
-      else if (p.holding) p.relHeld = 0; // đang túm: thả chuột trái = quăng
-      p.chargeIn = false;
-    }
-    if (input.dodge) p.dodgeAt = now;
     if (input.jump) p.jumpAt = now;
     if (input.punch) p.punchAt = now;
     if (input.skill1) p.sk1At = now;
@@ -436,9 +345,8 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
     if (!state.endAt && n >= 2 && state.alive <= 1) state.endAt = now + 2600;
     if (!state.endAt && n === 1 && state.alive === 0) state.endAt = now + 1500;
 
-    /* ---------- gói vị trí ---------- */
+    /* ---------- gói vị trí: [x,y,z,face,cờ,vx,vy,wobble,hp,cd1,cd2,trạng thái kỹ năng] ---------- */
     const pos: Record<string, number[]> = {};
-    const hold: Record<string, string> = {};
     for (const id of ids) {
       const p = P[id];
       const b = p.b;
@@ -446,22 +354,10 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
       if (b.z <= 0.001) f |= F_GROUND;
       if (now < p.stunUntil) f |= F_STUN;
       if (now < p.downUntil) f |= F_DOWN;
-      if (p.holding) {
-        f |= F_HOLD;
-        hold[id] = p.holding;
-        if (p.lifted) f |= F_LIFTING;
-      }
-      if (p.heldBy) {
-        f |= F_HELD;
-        if (P[p.heldBy]?.lifted) f |= F_LIFT;
-      }
       if (now < p.punchAnim) f |= F_PUNCH;
       if (p.out) f |= F_OUT;
-      if (now < p.thrownUntil) f |= F_THROWN;
-      if (p.grab && !p.holding && !p.out) f |= F_REACH;
       if (now < p.whiffUntil) f |= F_WHIFF;
-      if (now < p.dodgeUntil) f |= F_DODGE;
-      if (p.chargeIn) f |= F_CHARGE;
+      if (p.castKey) f |= F_CAST;
       let sb = 0;
       if (now < p.armorUntil) sb |= SB_ARMOR;
       if (now < p.shieldUntil) sb |= SB_SHIELD;
@@ -481,13 +377,12 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
         r1(b.vy),
         Math.round(p.wobble * 100) / 100,
         Math.max(0, Math.round(p.hp * 10) / 10),
-        Math.round(p.grip),
         Math.max(0, Math.ceil((p.skCd[0] - now) / 100)),
         Math.max(0, Math.ceil((p.skCd[1] - now) / 100)),
         sb,
       ];
     }
-    ctx.broadcast({ type: 'pos', t: Math.round(rel), pos, hold });
+    ctx.broadcast({ type: 'pos', t: Math.round(rel), pos });
   },
 
   isFinished(ctx, state) {
@@ -511,11 +406,10 @@ export const rooftopBrawlGame: GameDefinition<RtConfig, State> = {
 
 /* ===================================================================== */
 
-type HitKind = 'quick' | 'heavy' | 'skill';
 interface Hit {
   att: string;
   vic: string;
-  kind: HitKind;
+  kind: 'quick' | 'skill';
   idx: number;
   force: number;
   stun: number;
@@ -526,8 +420,9 @@ interface Hit {
   counter: boolean;
   tag: string;
   bleed?: boolean;
-  slam?: boolean;
 }
+
+type Spec = { dmg: number; force: number; stun: number; wob: number };
 
 function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now: number, t: number) {
   const P = state.players;
@@ -545,14 +440,12 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
     if (p.wobble >= 1 && now >= p.downUntil && !p.out) {
       p.downUntil = now + DOWN_MS;
       p.wobble = DOWN_WOBBLE_RESET;
-      p.chargeIn = false;
-      p.latched = true;
       p.peckLeft = 0;
       p.spinUntil = 0;
       p.dashUntil = 0;
+      p.castKey = '';
       fx('down', findId(p));
       p.stunUntil = Math.max(p.stunUntil, p.downUntil);
-      if (p.holding) release(findId(p), 'drop');
     }
   };
 
@@ -566,16 +459,10 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
     state.alive--;
     const c = v.lastDmg && v.lastDmg.by !== id && now - v.lastDmg.at < KILL_CREDIT_MS ? v.lastDmg : null;
     if (c) P[c.by].kills++;
-    if (v.holding) release(id, 'drop');
-    if (v.heldBy) release(v.heldBy, 'drop');
-    v.chargeIn = false;
-    ctx.broadcast({ type: 'ko', playerId: id, by: c ? c.by : '', how: v.lastDmg && now - v.lastDmg.at < KILL_CREDIT_MS ? v.lastDmg.kind : 'self', left: state.alive });
+    ctx.broadcast({ type: 'ko', playerId: id, by: c ? c.by : '', how: v.lastDmg && now - v.lastDmg.at < KILL_CREDIT_MS ? v.lastDmg.kind : 'self', left: state.alive, x: r1(v.b.x), y: r1(v.b.y) });
   }
 
-  /**
-   * trừ máu. dot = sát thương theo thời gian (không bị khiên/né tự động chặn).
-   * Trả về lượng máu thực sự mất (0 nếu bị chặn).
-   */
+  /** trừ máu. dot = sát thương theo thời gian (không bị khiên/né tự động chặn). Trả về lượng máu thực sự mất. */
   function damage(vid: string, amount: number, att: string, kind: string, dot = false): number {
     const v = P[vid];
     if (v.out || amount <= 0) return 0;
@@ -590,7 +477,6 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
           a.b.vy += ((a.b.y - v.b.y) / rd) * 6;
           a.stunUntil = Math.max(a.stunUntil, now + 350);
           fx('reflect', vid, { b: by });
-          v.lastDmg = null;
           damage(by, amount * SK_SHIELD_REFLECT, vid, 'reflect', true);
         }
         return 0;
@@ -611,48 +497,7 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
     return amount;
   }
 
-  /** nhả người đang túm. mode: free = tự thoát, drop = thả rơi, throw = quăng mạnh, lob = ném nhẹ */
-  function release(holderId: string, mode: 'free' | 'drop' | 'throw' | 'lob') {
-    const h = P[holderId];
-    if (!h || !h.holding) return;
-    const vid = P[h.holding];
-    const vidId = h.holding;
-    const wasLifted = h.lifted;
-    h.holding = '';
-    h.lifted = false;
-    h.grabCd = now + 450;
-    if (!vid) return;
-    vid.heldBy = '';
-    vid.struggle = 0;
-    if (mode === 'throw' || mode === 'lob') {
-      const sp = (mode === 'throw' ? THROW_V : LOB_V) / Math.sqrt(vid.chr.mass);
-      vid.b.vx = Math.sin(h.aim) * sp + h.b.vx * 0.4;
-      vid.b.vy = Math.cos(h.aim) * sp + h.b.vy * 0.4;
-      vid.b.vz = wasLifted ? THROW_VZ_LIFT : THROW_VZ;
-      if (vid.b.z < 0.2) vid.b.z = 0.2;
-      vid.thrownUntil = now + 1700;
-      vid.thrownBy = holderId;
-      vid.thrownHit = new Set([holderId]);
-      vid.stunUntil = Math.max(vid.stunUntil, now + 900);
-      vid.lastDmg = { by: holderId, kind: 'throw', at: now };
-      vid.wobble = Math.min(0.8, vid.wobble + 0.3);
-      h.b.vx -= Math.sin(h.aim) * 1.5;
-      h.b.vy -= Math.cos(h.aim) * 1.5;
-      fx('throw', holderId, { b: vidId });
-    } else if (mode === 'free') {
-      vid.stunUntil = Math.max(vid.stunUntil, now + 350);
-      vid.b.vx = h.b.vx - Math.sin(h.aim) * 2;
-      vid.b.vy = h.b.vy - Math.cos(h.aim) * 2;
-      h.stunUntil = Math.max(h.stunUntil, now + 350);
-      fx('free', vidId, { b: holderId });
-    } else {
-      vid.b.vx = h.b.vx;
-      vid.b.vy = h.b.vy;
-      vid.stunUntil = Math.max(vid.stunUntil, now + 500);
-    }
-  }
-
-  /* ---------- 0. ảnh chụp trạng thái đầu bước: mọi quyết định đấm/túm dựa vào ảnh chụp này nên KHÔNG phụ thuộc thứ tự vòng lặp ---------- */
+  /* ---------- 0. ảnh chụp trạng thái đầu bước: mọi quyết định dựa vào ảnh chụp này nên KHÔNG phụ thuộc thứ tự vòng lặp ---------- */
   interface Snap {
     x: number;
     y: number;
@@ -660,52 +505,27 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
     vx: number;
     vy: number;
     wobble: number;
-    stunned: boolean;
-    downed: boolean;
-    thrown: boolean;
-    heldBy: string;
-    holding: string;
     whiff: boolean;
-    dodgeI: boolean;
   }
   const S: Record<string, Snap> = {};
   for (const id of alive) {
     const q = P[id];
-    S[id] = {
-      x: q.b.x,
-      y: q.b.y,
-      z: q.b.z,
-      vx: q.b.vx,
-      vy: q.b.vy,
-      wobble: q.wobble,
-      stunned: now < q.stunUntil,
-      downed: now < q.downUntil,
-      thrown: now < q.thrownUntil,
-      heldBy: q.heldBy,
-      holding: q.holding,
-      whiff: now < q.whiffUntil,
-      dodgeI: now < q.dodgeIframe,
-    };
+    S[id] = { x: q.b.x, y: q.b.y, z: q.b.z, vx: q.b.vx, vy: q.b.vy, wobble: q.wobble, whiff: now < q.whiffUntil };
   }
   const hits: Hit[] = [];
-  const grabReqs: { by: string; to: string; d: number }[] = [];
 
-  /** đòn kỹ năng lên một nạn nhân (hướng đẩy dx,dy) */
-  const skillHit = (att: string, vic: string, spec: { dmg: number; force: number; stun: number; wob: number }, dx: number, dy: number, tag: string, extra: Partial<Hit> = {}) => {
+  const skillHit = (att: string, vic: string, spec: Spec, dx: number, dy: number, tag: string, extra: Partial<Hit> = {}) => {
     hits.push({ att, vic, kind: 'skill', idx: 0, force: spec.force, stun: spec.stun, wob: spec.wob, dmg: spec.dmg, dx, dy, counter: false, tag, ...extra });
   };
   /** vùng tròn (hoặc quạt nếu có arc) quanh người dùng */
-  const aoe = (id: string, radius: number, spec: { dmg: number; force: number; stun: number; wob: number }, tag: string, arc = 0, extra: Partial<Hit> = {}) => {
+  const aoe = (id: string, radius: number, spec: Spec, tag: string, arc = 0, extra: Partial<Hit> = {}) => {
     const me = P[id];
-    const sx = me.b.x;
-    const sy = me.b.y;
-    let n = 0;
     for (const oid of alive) {
       if (oid === id || P[oid].out) continue;
       const o = S[oid];
       if (Math.abs(o.z - me.b.z) > 1.6) continue;
-      const ox = o.x - sx;
-      const oy = o.y - sy;
+      const ox = o.x - me.b.x;
+      const oy = o.y - me.b.y;
       const d = Math.hypot(ox, oy);
       if (d > radius) continue;
       if (arc > 0 && d > 0.3 && Math.abs(angDiff(me.aim, Math.atan2(ox, oy))) > arc) continue;
@@ -719,37 +539,47 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
         dy /= l;
       }
       skillHit(id, oid, spec, dx, dy, tag, extra);
-      n++;
     }
-    return n;
   };
 
-  /** dùng kỹ năng which (1 hoặc 2) của nhân vật */
+  /** nổ chiêu có niệm (sau chỉ báo trên sàn) */
+  const execCast = (id: string, key: string) => {
+    const p = P[id];
+    p.face = p.aim;
+    fx('skillgo', id, { ch: p.chr.id, s: Number(key.slice(-1)), yaw: r2(p.aim) });
+    if (key === 'bull2') aoe(id, SK_BULL_ROAR.radius, SK_BULL_ROAR, 'roar');
+    else if (key === 'bear1') aoe(id, SK_BEAR_SLAM.radius, SK_BEAR_SLAM, 'slam');
+    else if (key === 'rooster2') aoe(id, SK_ROOSTER_WING.range, SK_ROOSTER_WING, 'wing', SK_ROOSTER_WING.arc);
+  };
+
+  /** dùng kỹ năng which (1 hoặc 2): vừa chạy vừa tung, không khoá di chuyển */
   const useSkill = (id: string, which: 1 | 2) => {
     const p = P[id];
     const b = p.b;
     const chr = p.chr;
     p.skCd[which - 1] = now + chr.skills[which - 1].cd;
     p.face = p.aim;
-    p.chargeIn = false;
-    p.latched = true;
-    p.punchAnim = now + 380;
+    p.punchAnim = now + 300;
+    p.linkUntil = now + SKILL_LINK_MS;
     const ax = Math.sin(p.aim);
     const ay = Math.cos(p.aim);
-    fx('skill', id, { s: which, ch: chr.id });
     const key = chr.id + which;
+    const delay = key === 'bull2' ? SK_BULL_ROAR.delay : key === 'bear1' ? SK_BEAR_SLAM.delay : key === 'rooster2' ? SK_ROOSTER_WING.delay : 0;
+    const dur =
+      key === 'bull1' ? SK_BULL_DASH.ms : key === 'tiger1' ? SK_TIGER_POUNCE.ms : key === 'bear2' ? SK_ARMOR_MS : key === 'turtle1' ? SK_SHIELD_MS : key === 'turtle2' ? SK_TURTLE_SPIN.ms : key === 'fox2' ? SK_HASTE_MS : key === 'tiger2' ? SK_RAGE_MS : 0;
+    fx('skill', id, { s: which, ch: chr.id, yaw: r2(p.aim), delay, dur });
+    if (delay > 0) {
+      p.castKey = key;
+      p.castAt = now + delay;
+      return;
+    }
     switch (key) {
       case 'bull1':
         p.dashUntil = now + SK_BULL_DASH.ms;
+        p.dashStart = now;
         p.dashKind = 'bull';
         p.dashDx = ax;
         p.dashDy = ay;
-        break;
-      case 'bull2':
-        aoe(id, SK_BULL_ROAR.radius, SK_BULL_ROAR, 'roar');
-        break;
-      case 'bear1':
-        aoe(id, SK_BEAR_SLAM.radius, SK_BEAR_SLAM, 'slam');
         break;
       case 'bear2':
         p.armorUntil = now + SK_ARMOR_MS;
@@ -773,7 +603,7 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
             best = oid;
           }
         }
-        fx('blink', id, { x2: r1(b.x), y2: r1(b.y) });
+        fx('blink', id, {});
         if (best) {
           const o = S[best];
           const ox = o.x - b.x;
@@ -789,8 +619,9 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
           b.y += ay * 4.5;
           constrain(cfg, b);
         }
-        b.vx = b.vy = 0;
-        fx('blinkEnd', id);
+        b.vx *= 0.3;
+        b.vy *= 0.3;
+        fx('blinkEnd', id, { yaw: r2(p.aim) });
         break;
       }
       case 'fox2':
@@ -820,11 +651,12 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
         }
         const bn: Banana = { id: state.nextBanana++, x: clamp(b.x + ax * SK_BANANA.ahead, -(cfg.hw - WALL_M), cfg.hw - WALL_M), y: clamp(b.y + ay * SK_BANANA.ahead, -(cfg.L / 2 - WALL_M), cfg.L / 2 - WALL_M), owner: id, born: now };
         state.bananas.push(bn);
-        ctx.broadcast({ type: 'banana', op: 'add', id: bn.id, x: r1(bn.x), y: r1(bn.y) });
+        ctx.broadcast({ type: 'banana', op: 'add', id: bn.id, x: r1(bn.x), y: r1(bn.y), fx: r1(b.x), fy: r1(b.y) });
         break;
       }
       case 'tiger1':
         p.dashUntil = now + SK_TIGER_POUNCE.ms;
+        p.dashStart = now;
         p.dashKind = 'tiger';
         p.dashDx = ax;
         p.dashDy = ay;
@@ -836,9 +668,6 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
         p.peckLeft = SK_ROOSTER_PECK.count;
         p.peckNext = now;
         break;
-      case 'rooster2':
-        aoe(id, SK_ROOSTER_WING.range, SK_ROOSTER_WING, 'wing', SK_ROOSTER_WING.arc);
-        break;
     }
   };
 
@@ -849,109 +678,66 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
     const sn = S[id];
     if (now - p.inAt > 700) {
       p.mx = p.my = 0;
-      p.grab = false;
-      p.lift = false;
-      if (p.chargeIn) {
-        p.chargeIn = false;
-        p.latched = true;
-      }
     }
-    // thăng bằng hồi dần; bẻ lái ngược hướng đang trượt thì hồi nhanh hơn
-    let decay = WOBBLE_DECAY;
-    {
-      const sp = Math.hypot(b.vx, b.vy);
-      const mm = Math.hypot(p.mx, p.my);
-      if (mm > 0.3 && sp > 1 && (p.mx * b.vx + p.my * b.vy) / (mm * sp) < -0.2) decay += WOBBLE_STEER_BONUS;
-    }
-    p.wobble = Math.max(0, p.wobble - dt * decay);
-    const downed = sn.downed;
-    const stunned = sn.stunned;
-    const thrown = sn.thrown;
+    p.wobble = Math.max(0, p.wobble - dt * WOBBLE_DECAY);
+    const downed = now < p.downUntil;
+    const stunned = now < p.stunUntil;
     if (p.wasDown && now >= p.downUntil) {
       p.wasDown = false;
       fx('getup', id);
     }
     if (downed) p.wasDown = true;
 
-    /* tin nhắn ý định */
-    const wantJump = now - p.jumpAt < 200;
-    let wantPunch = now - p.punchAt < 220;
-    const wantDodge = now - p.dodgeAt < 200;
-    let wantSk1 = now - p.sk1At < 220;
-    let wantSk2 = now - p.sk2At < 220;
-    const free = !downed && !p.heldBy && !thrown;
-    let rel = p.relHeld; // chuột trái vừa thả: thời gian đã giữ
-    p.relHeld = -1;
-    if (p.chargeIn && now - p.chargeAt + CHARGE_LEAD >= CHARGE_MAX) {
-      rel = CHARGE_MAX; // đủ tích lực: tự tung
-      p.chargeIn = false;
-      p.latched = true;
-    }
-    if (p.chargeIn && (!free || stunned || p.holding)) {
-      p.chargeIn = false; // bị ngắt: hủy tích lực
-      p.latched = true;
-    }
-    // nằm ngã: bấm Space / né để đứng dậy nhanh hơn
+    /* tin nhắn ý định (buffer: bấm hơi sớm vẫn ra đòn) */
+    const wantJump = now - p.jumpAt < INPUT_BUFFER_MS;
+    let wantPunch = now - p.punchAt < INPUT_BUFFER_MS;
+    let wantSk1 = now - p.sk1At < INPUT_BUFFER_MS;
+    let wantSk2 = now - p.sk2At < INPUT_BUFFER_MS;
+    const free = !downed;
     if (downed) {
-      if (wantJump || wantDodge) {
+      // nằm ngã: bấm Space để đứng dậy nhanh hơn
+      if (wantJump) {
         p.downUntil = Math.max(now + 250, p.downUntil - GETUP_REDUCE);
         p.jumpAt = -1e9;
-        p.dodgeAt = -1e9;
       }
-      rel = -1;
-      wantPunch = false;
-      wantSk1 = wantSk2 = false;
+      wantPunch = wantSk1 = wantSk2 = false;
     }
 
-    /* bị túm: vùng vẫy */
-    if (p.heldBy) {
-      const holder = P[p.heldBy];
-      if (!holder || holder.out) {
-        p.heldBy = '';
-      } else {
-        if (Math.hypot(p.mx, p.my) > 0.3) p.struggle += dt * 1.0;
-        if (wantJump) {
-          p.struggle += 0.45;
-          p.jumpAt = -1e9;
-        }
-        const need = holder.lifted ? STRUGGLE_NEED_LIFT : STRUGGLE_NEED;
-        if (p.struggle >= need) release(p.heldBy, 'free');
-        continue; // vị trí do người túm quyết định (bước 2)
-      }
-    }
-
-    /* thể lực bám */
-    if (p.holding) p.grip -= dt * (p.lifted ? 17 : 9);
-    else p.grip = Math.min(100, p.grip + dt * 16);
-    if (p.grip <= 0) {
-      p.grip = 0;
-      p.gripTired = true;
-      if (p.holding) {
-        fx('tired', id);
-        release(id, 'drop');
-      }
-    }
-    if (p.gripTired && p.grip >= 30) p.gripTired = false;
-
-    /* nhả nút túm */
-    if (!p.grab && p.holding) release(id, p.lifted ? 'lob' : 'drop');
-
-    const dashing = now < p.dashUntil;
+    let dashing = now < p.dashUntil;
     const rageMul = now < p.rageUntil ? SK_RAGE_DMG : 1;
 
-    /* kỹ năng đang chạy: lao, xoáy, mổ liên hoàn */
+    /* chiêu niệm: bị choáng thì gián đoạn, hết niệm thì nổ */
+    if (p.castKey) {
+      if (stunned || downed) p.castKey = '';
+      else if (now >= p.castAt) {
+        const key = p.castKey;
+        p.castKey = '';
+        execCast(id, key);
+      }
+    }
+
+    /* lao: bẻ hướng được trong cửa sổ ngắn theo hướng chạy / mục tiêu khoá (hướng ngắm) */
     if (dashing) {
       const spec = p.dashKind === 'bull' ? SK_BULL_DASH : SK_TIGER_POUNCE;
+      if (now - p.dashStart < DASH_STEER_MS) {
+        const mm = Math.hypot(p.mx, p.my);
+        const cur = Math.atan2(p.dashDx, p.dashDy);
+        const want = mm > 0.3 ? Math.atan2(p.mx, p.my) : p.aim;
+        const na = cur + clamp(angDiff(cur, want), -DASH_STEER_RATE * dt, DASH_STEER_RATE * dt);
+        p.dashDx = Math.sin(na);
+        p.dashDy = Math.cos(na);
+        p.aim = p.face = na;
+      }
       b.vx = p.dashDx * spec.speed;
       b.vy = p.dashDy * spec.speed;
       for (const oid of alive) {
         if (oid === id) continue;
         const o = S[oid];
         if (Math.abs(o.z - sn.z) > 1.4) continue;
-        const d = Math.hypot(o.x - sn.x, o.y - sn.y);
-        if (d > 1.05) continue;
+        if (Math.hypot(o.x - sn.x, o.y - sn.y) > 1.05) continue;
         skillHit(id, oid, spec, p.dashDx, p.dashDy, p.dashKind === 'bull' ? 'charge' : 'pounce', { bleed: p.dashKind === 'tiger' });
         p.dashUntil = now; // chạm người là dừng
+        dashing = false;
         break;
       }
     }
@@ -965,70 +751,41 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
       p.peckLeft--;
       p.face = p.aim;
       aoe(id, SK_ROOSTER_PECK.range, SK_ROOSTER_PECK, 'peck', SK_ROOSTER_PECK.arc);
-      fx('peck', id);
+      fx('peck', id, { yaw: r2(p.aim) });
     } else if (stunned && p.peckLeft > 0) p.peckLeft = 0;
 
-    /* hành động */
-    if (free) {
-      const dodging = now < p.dodgeUntil;
-      if (p.holding) {
-        if (!P[p.holding] || P[p.holding].out) {
-          p.holding = '';
-          p.lifted = false;
-        } else {
-          if ((p.lift || wantJump) && !p.lifted) {
-            p.lifted = true;
-            p.jumpAt = -1e9;
-            fx('lift', id, { b: p.holding });
+    /* hành động: skill / đánh thường; lao có thể huỷ sau SKILL_CANCEL_MS để nối chiêu */
+    if (free && !stunned) {
+      const canAct = !dashing || now - p.dashStart >= SKILL_CANCEL_MS;
+      if ((wantSk1 || wantSk2) && canAct && !p.castKey) {
+        const w1 = wantSk1 && now >= p.skCd[0];
+        const w2 = !w1 && wantSk2 && now >= p.skCd[1];
+        if (w1 || w2) {
+          if (dashing) {
+            p.dashUntil = now;
+            dashing = false;
           }
-          if (wantPunch || rel >= 0) {
-            p.punchAt = -1e9;
-            p.face = p.aim;
-            release(id, 'throw');
-          }
+          if (w1) p.sk1At = -1e9;
+          else p.sk2At = -1e9;
+          useSkill(id, w1 ? 1 : 2);
         }
-      } else if (wantDodge && now >= p.dodgeCd && !dodging && !dashing) {
-        // né ngắn: theo hướng đang đi, đứng yên thì lùi lại; chỉ tránh được ĐẤM, không tránh được túm
-        const mm = Math.hypot(p.mx, p.my);
-        const dx = mm > 0.2 ? p.mx / mm : -Math.sin(p.face);
-        const dy = mm > 0.2 ? p.my / mm : -Math.cos(p.face);
-        p.dodgeAt = -1e9;
-        p.dodgeCd = now + DODGE_CD;
-        p.dodgeUntil = now + DODGE_MS;
-        p.dodgeIframe = now + DODGE_IFRAME;
-        p.chargeIn = false;
-        p.latched = true;
-        b.vx = dx * DODGE_SPEED;
-        b.vy = dy * DODGE_SPEED;
-        addWobble(p, DODGE_WOBBLE);
-        fx('dodge', id);
-      } else if ((wantSk1 || wantSk2) && !stunned && !dodging && !dashing) {
-        if (wantSk1 && now >= p.skCd[0]) {
-          p.sk1At = -1e9;
-          useSkill(id, 1);
-        } else if (wantSk2 && now >= p.skCd[1]) {
-          p.sk2At = -1e9;
-          useSkill(id, 2);
+      } else if (wantPunch && canAct && now >= p.punchCd) {
+        if (dashing) {
+          p.dashUntil = now;
+          dashing = false;
         }
-      } else if (!stunned && !dodging && !dashing && now >= p.punchCd && (wantPunch || rel >= 0)) {
-        const heavy = rel >= HEAVY_MIN && !wantPunch;
         p.punchAt = -1e9;
         p.face = p.aim;
-        const range = heavy ? HEAVY_RANGE : QUICK_RANGE;
-        const arc = heavy ? HEAVY_ARC : QUICK_ARC;
-        let idx = 0;
-        if (!heavy) {
-          idx = p.comboHit && now - p.lastQuickAt <= COMBO_WINDOW && p.combo < 2 ? p.combo + 1 : 0;
-          p.combo = idx;
-          p.lastQuickAt = now;
-        } else p.combo = 0;
+        let idx = p.comboHit && now - p.lastQuickAt <= COMBO_WINDOW && p.combo < 2 ? p.combo + 1 : 0;
+        const linked = now < p.linkUntil; // vừa tung skill: đòn thường bồi thêm có thưởng
+        if (linked && idx === 0) idx = 1;
+        p.combo = idx;
+        p.lastQuickAt = now;
         p.comboHit = false;
-        p.punchAnim = now + (heavy ? 420 : 300);
+        p.punchAnim = now + 300;
         const ax = Math.sin(p.aim);
         const ay = Math.cos(p.aim);
-        const frac = heavy ? clamp((rel - HEAVY_MIN) / (CHARGE_MAX - HEAVY_MIN), 0, 1) : 0;
         let found = 0;
-        let dodgedOne = '';
         for (const oid of alive) {
           if (oid === id) continue;
           const o = S[oid];
@@ -1036,26 +793,20 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
           const ox = o.x - sn.x;
           const oy = o.y - sn.y;
           const dist = Math.hypot(ox, oy);
-          if (dist > range || dist < 1e-4) continue;
-          if (Math.abs(angDiff(p.aim, Math.atan2(ox, oy))) > arc) continue;
-          if (o.dodgeI) {
-            dodgedOne = oid;
-            continue;
-          }
+          if (dist > QUICK_RANGE || dist < 1e-4) continue;
+          if (Math.abs(angDiff(p.aim, Math.atan2(ox, oy))) > QUICK_ARC) continue;
           found++;
-          // hướng đẩy: pha trộn hướng ngắm và hướng từ mình tới đối thủ
           let kx = ax * 0.6 + (ox / dist) * 0.4;
           let ky = ay * 0.6 + (oy / dist) * 0.4;
           const kl = Math.hypot(kx, ky) || 1;
           kx /= kl;
           ky /= kl;
-          let force = heavy ? HEAVY_FORCE_MIN + (HEAVY_FORCE_MAX - HEAVY_FORCE_MIN) * frac : COMBO_FORCE[idx];
-          force += Math.max(0, sn.vx * kx + sn.vy * ky) * SPEED_FORCE_K; // lao tới đấm thì mạnh hơn
+          let force = COMBO_FORCE[idx];
+          force += Math.max(0, sn.vx * kx + sn.vy * ky) * SPEED_FORCE_K; // lao tới đánh thì mạnh hơn
           force *= 1 + o.wobble * KNOCK_WOBBLE_BOOST;
-          force *= o.holding ? HOLDING_KNOCK_MUL : 1;
-          let stun = heavy ? HEAVY_STUN : COMBO_STUN[idx];
-          let wob = heavy ? HEAVY_WOBBLE : COMBO_WOBBLE[idx];
-          let dmg = (heavy ? DMG_HEAVY_MIN + (DMG_HEAVY_MAX - DMG_HEAVY_MIN) * frac : DMG_QUICK[idx]) * rageMul;
+          let stun = COMBO_STUN[idx];
+          let wob = COMBO_WOBBLE[idx];
+          let dmg = DMG_QUICK[idx] * rageMul * (linked ? SKILL_LINK_BONUS : 1);
           const counter = o.whiff;
           if (counter) {
             force *= COUNTER_MULT;
@@ -1063,73 +814,51 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
             wob += COUNTER_EXTRA_WOBBLE;
             dmg *= COUNTER_DMG_MULT;
           }
-          hits.push({ att: id, vic: oid, kind: heavy ? 'heavy' : 'quick', idx, force, stun, wob, dmg, dx: kx, dy: ky, counter, tag: heavy ? 'heavy' : idx === 2 ? 'combo' : 'punch' });
+          hits.push({ att: id, vic: oid, kind: 'quick', idx, force, stun, wob, dmg, dx: kx, dy: ky, counter, tag: counter ? 'counter' : linked ? 'link' : idx === 2 ? 'combo' : 'punch' });
         }
         if (found === 0) {
-          // đấm hụt (hoặc bị né): lộ sơ hở, loạng choạng nhẹ, không trượt dài
+          // đánh hụt: lộ sơ hở, loạng choạng nhẹ, không trượt dài
           p.combo = 0;
-          p.punchCd = now + (heavy ? HEAVY_CD : QUICK_WHIFF_CD);
-          b.vx += ax * (heavy ? HEAVY_LURCH : QUICK_LURCH);
-          b.vy += ay * (heavy ? HEAVY_LURCH : QUICK_LURCH);
-          p.stunUntil = now + (heavy ? HEAVY_WHIFF_STUN : WHIFF_STUN);
+          p.punchCd = now + QUICK_WHIFF_CD;
+          b.vx += ax * QUICK_LURCH;
+          b.vy += ay * QUICK_LURCH;
+          p.stunUntil = now + WHIFF_STUN;
           p.whiffUntil = now + WHIFF_VULN_MS;
-          addWobble(p, heavy ? HEAVY_WHIFF_WOBBLE : WHIFF_WOBBLE);
-          fx('whiff', id, { heavy });
-          if (dodgedOne) fx('dodged', dodgedOne, { b: id });
-          // đấm hụt vào tường: tự đập
-          const wx = b.x + ax * 1.0;
-          const wy = b.y + ay * 1.0;
-          if (Math.abs(wx) > cfg.hw - WALL_M || Math.abs(wy) > cfg.L / 2 - WALL_M) {
+          addWobble(p, WHIFF_WOBBLE);
+          fx('whiff', id, { yaw: r2(p.aim) });
+          // đánh hụt vào tường: tự đập
+          if (Math.abs(b.x + ax) > cfg.hw - WALL_M || Math.abs(b.y + ay) > cfg.L / 2 - WALL_M) {
             damage(id, WHIFF_WALL_DMG, '', 'wallpunch', true);
             fx('wallpunch', id);
           }
         } else {
-          p.punchCd = now + (heavy ? HEAVY_CD : idx === 2 ? COMBO_FINISH_CD : QUICK_CD);
+          p.punchCd = now + (idx === 2 ? COMBO_FINISH_CD : QUICK_CD);
         }
-      } else if (p.grab && !p.holding && !stunned && now >= p.grabCd && !p.gripTired && !dodging && !dashing) {
-        // tìm người để túm (dựa trên ảnh chụp); yêu cầu được phân xử sau vòng lặp để không phụ thuộc thứ tự
-        let best = '';
-        let bestD = GRAB_RANGE;
-        let bestScore = 1e9;
-        for (const oid of alive) {
-          if (oid === id) continue;
-          const o = S[oid];
-          if (o.heldBy || Math.abs(o.z - sn.z) > 1.1) continue;
-          const ox = o.x - sn.x;
-          const oy = o.y - sn.y;
-          const dist = Math.hypot(ox, oy);
-          if (dist > bestD) continue;
-          const ad = dist > 0.4 ? Math.abs(angDiff(p.aim, Math.atan2(ox, oy))) : 0;
-          if (ad > GRAB_ARC) continue;
-          const score = dist + ad * 0.3;
-          if (score < bestScore - GRAB_TIE_EPS || (Math.abs(score - bestScore) <= GRAB_TIE_EPS && oid < best)) {
-            best = oid;
-            bestScore = score;
-          }
-        }
-        p.face = p.aim;
-        if (best) grabReqs.push({ by: id, to: best, d: bestScore });
       }
     }
 
     /* vật lý */
-    const hold = !!p.holding;
     const m = Math.hypot(p.mx, p.my);
-    const control = free;
-    const buff = p.chr.speed * (now < p.hasteUntil ? SK_HASTE_SPEED : 1) * (now < p.rageUntil ? SK_RAGE_SPEED : 1) * (now < p.spinUntil ? SK_TURTLE_SPIN.speedMul : 1) * (p.peckLeft > 0 ? 0.5 : 1);
-    const jumped = stepBody(cfg, b, control ? p.mx : 0, control ? p.my : 0, dt, {
-      speedMul: buff * (hold ? (p.lifted ? 0.5 : 0.62) : p.chargeIn ? CHARGE_SPEED_MUL : stunned ? 0.55 : 1),
+    const buff =
+      p.chr.speed *
+      (now < p.hasteUntil ? SK_HASTE_SPEED : 1) *
+      (now < p.rageUntil ? SK_RAGE_SPEED : 1) *
+      (now < p.spinUntil ? SK_TURTLE_SPIN.speedMul : 1) *
+      (p.peckLeft > 0 ? 0.6 : 1) *
+      (p.castKey ? CAST_MOVE_MUL : 1);
+    const jumped = stepBody(cfg, b, free ? p.mx : 0, free ? p.my : 0, dt, {
+      speedMul: buff * (stunned ? 0.55 : 1),
       accelMul: stunned ? 0.5 : 1,
-      noControl: !control || now < p.dodgeUntil || now < p.dashUntil,
-      jump: control && wantJump && !hold && !stunned && !p.chargeIn && now >= p.dodgeUntil && now >= p.dashUntil,
+      noControl: !free || now < p.dashUntil,
+      jump: free && wantJump && !stunned && now >= p.dashUntil,
     });
     if (jumped) p.jumpAt = -1e9;
-    if (!control && downed) p.mx = p.my = 0;
+    if (downed) p.mx = p.my = 0;
 
     /* hướng thân: quay mượt, giới hạn tốc độ quay */
-    if (control && !stunned) p.face += clamp(angDiff(p.face, p.aim), -TURN_RATE * dt, TURN_RATE * dt);
-    else if (hold || now < p.punchAnim) p.face = p.aim;
-    else if (control && m > 0.15) p.face += angDiff(p.face, Math.atan2(p.mx, p.my)) * Math.min(1, dt * 12);
+    if (free && !stunned) p.face += clamp(angDiff(p.face, p.aim), -TURN_RATE * dt, TURN_RATE * dt);
+    else if (now < p.punchAnim) p.face = p.aim;
+    else if (free && m > 0.15) p.face += angDiff(p.face, Math.atan2(p.mx, p.my)) * Math.min(1, dt * 12);
 
     /* va tường mạnh: mất máu (có công người đẩy gần nhất) */
     if ((b.wall ?? 0) > WALL_DMG_MIN_SPEED) {
@@ -1149,15 +878,6 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
         aoe(id, SK_MONKEY_LEAP.radius, SK_MONKEY_LEAP, 'kick');
         fx('stomp', id);
       }
-    }
-
-    /* người bay hạ cầm đất */
-    if (thrown && b.z <= 0 && b.vz <= 0) {
-      p.thrownUntil = 0;
-      p.stunUntil = Math.max(p.stunUntil, now + 650);
-      addWobble(p, 0.5);
-      fx('land', id);
-      damage(id, DMG_THROW_LAND, p.thrownBy, 'throw');
     }
   }
 
@@ -1180,17 +900,16 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
       }
       for (const id of ids) {
         const p = P[id];
-        if (p.out || p.b.z > 0.3 || now < p.downUntil || p.heldBy) continue;
+        if (p.out || p.b.z > 0.3 || now < p.downUntil) continue;
         if (id === bn.owner && now - bn.born < SK_BANANA.immuneMs) continue;
         if (Math.hypot(p.b.x - bn.x, p.b.y - bn.y) > SK_BANANA.radius) continue;
         state.bananas = state.bananas.filter((x) => x !== bn);
         ctx.broadcast({ type: 'banana', op: 'gone', id: bn.id, hit: id });
         p.b.vx += Math.sin(p.face) * SK_BANANA.slide;
         p.b.vy += Math.cos(p.face) * SK_BANANA.slide;
-        p.lastDmg = { by: bn.owner, kind: 'banana', at: now };
         damage(id, SK_BANANA.dmg, bn.owner === id ? '' : bn.owner, 'banana', true);
         addWobble(p, SK_BANANA.wob);
-        fx('slip', id);
+        fx('slip', id, { dmg: SK_BANANA.dmg });
         break;
       }
     }
@@ -1202,26 +921,15 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
     const o = P[h.vic];
     const att = P[h.att];
     if (o.out || att.out) continue;
-    // túm nhầm: người thứ ba đánh trúng một người đang dính nhau thì đòn lan sang cả người còn lại
-    const partner = o.heldBy || o.holding;
-    if (partner && partner !== h.att && !P[partner].out) {
-      damage(partner, h.dmg * SPLASH_MULT, h.att, h.tag, false);
-      addWobble(P[partner], 0.3);
-      fx('wrong', h.vic, { b: partner, c: h.att });
-    }
-    // chặn bởi khiên / tự né: không hất, không choáng
-    const dmgDone = damage(h.vic, h.dmg * (h.kind === 'skill' ? (now < att.rageUntil ? SK_RAGE_DMG : 1) : 1), h.att, h.tag);
-    if (dmgDone <= 0 && !o.out) continue;
+    const dmgDone = damage(h.vic, h.dmg * (h.kind === 'skill' && now < att.rageUntil ? SK_RAGE_DMG : 1), h.att, h.tag);
+    if (dmgDone <= 0 && !o.out) continue; // chặn bởi khiên / tự né: không hất, không choáng
     const knock = (h.force / o.chr.mass) * (now < o.armorUntil ? SK_ARMOR_KNOCK : 1);
     o.b.vx += h.dx * knock;
     o.b.vy += h.dy * knock;
-    if (o.b.z <= 0) o.b.vz = Math.max(o.b.vz, h.kind === 'heavy' || h.force > 7 ? 3 : 2);
+    if (o.b.z <= 0) o.b.vz = Math.max(o.b.vz, h.force > 7 ? 3 : 2);
     o.stunUntil = Math.max(o.stunUntil, now + h.stun);
-    o.chargeIn = false;
-    o.latched = true;
     o.peckLeft = 0;
-    if (o.heldBy) release(o.heldBy, 'free');
-    if (o.holding) release(h.vic, 'drop');
+    o.castKey = ''; // bị đánh trúng thì gián đoạn chiêu niệm
     addWobble(o, h.wob / (o.chr.mass > 1.2 ? 1.15 : 1));
     if (h.bleed) {
       o.bleedUntil = now + SK_TIGER_POUNCE.bleedMs;
@@ -1231,64 +939,13 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
     fx('hit', h.att, { b: h.vic, kind: h.kind, tag: h.tag, idx: h.idx, counter: h.counter, force: r1(h.force), dmg: r1(dmgDone), dx: r2(h.dx), dy: r2(h.dy) });
   }
 
-  /* ---------- 1c. phân xử túm: ưu tiên người gần/ngắm đúng hơn; ngang nhau thì theo id; mỗi người chỉ vào MỘT cặp ---------- */
-  grabReqs.sort((a, b) => a.d - b.d || (a.by < b.by ? -1 : a.by > b.by ? 1 : 0));
-  const used = new Set<string>();
-  for (const r of grabReqs) {
-    const p = P[r.by];
-    const o = P[r.to];
-    if (used.has(r.by) || used.has(r.to)) continue;
-    if (p.out || o.out || p.holding || o.heldBy || now < p.stunUntil) continue; // vừa bị đánh trúng thì hụt túm
-    used.add(r.by);
-    used.add(r.to);
-    if (o.holding) release(r.to, 'drop');
-    p.holding = r.to;
-    p.lifted = false;
-    p.face = p.aim;
-    o.heldBy = r.by;
-    o.struggle = 0;
-    o.thrownUntil = 0;
-    o.chargeIn = false;
-    o.latched = true;
-    fx('grab', r.by, { b: r.to });
-  }
-
-  /* ---------- 2. người bị túm đi theo người túm ---------- */
-  for (const id of alive) {
-    const h = P[id];
-    if (!h.holding || h.out) continue;
-    const v = P[h.holding];
-    if (!v || v.out) continue;
-    const dx = Math.sin(h.aim);
-    const dy = Math.cos(h.aim);
-    if (h.lifted) {
-      v.b.x = h.b.x + dx * 0.1;
-      v.b.y = h.b.y + dy * 0.1;
-      v.b.z = h.b.z + 1.75;
-    } else {
-      const k = 1 - Math.exp(-dt * 16);
-      v.b.x += (h.b.x + dx * 0.95 - v.b.x) * k;
-      v.b.y += (h.b.y + dy * 0.95 - v.b.y) * k;
-      v.b.z = h.b.z;
-    }
-    v.b.vx = h.b.vx;
-    v.b.vy = h.b.vy;
-    v.b.vz = 0;
-    v.face = h.face + Math.PI;
-    constrain(cfg, v.b);
-    v.b.wall = 0;
-    if (!v.lastDmg || v.lastDmg.kind !== 'drag') v.lastDmg = { by: id, kind: 'drag', at: now };
-    else v.lastDmg.at = now;
-  }
-
-  /* ---------- 3. va chạm giữa người với nhau + người bị quăng ---------- */
+  /* ---------- 3. va chạm giữa người với nhau (đẩy nhau nhẹ) ---------- */
   for (let i = 0; i < alive.length; i++) {
     const A = P[alive[i]];
     if (A.out) continue;
     for (let j = i + 1; j < alive.length; j++) {
       const B = P[alive[j]];
       if (B.out) continue;
-      if (A.heldBy || B.heldBy) continue;
       if (Math.abs(A.b.z - B.b.z) > 1.3) continue;
       const dx = B.b.x - A.b.x;
       const dy = B.b.y - A.b.y;
@@ -1296,27 +953,6 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
       if (d >= 0.85) continue;
       const nx = d > 1e-3 ? dx / d : 1;
       const ny = d > 1e-3 ? dy / d : 0;
-      // người bị quăng đâm trúng: va chạm dây chuyền, cả hai cùng đau
-      for (const [Sx, V, sid, vid] of [
-        [A, B, alive[i], alive[j]],
-        [B, A, alive[j], alive[i]],
-      ] as const) {
-        if (now < Sx.thrownUntil && !Sx.thrownHit.has(vid) && Math.hypot(Sx.b.vx, Sx.b.vy) > 3.5) {
-          Sx.thrownHit.add(vid);
-          V.b.vx += (Sx.b.vx * 0.8) / V.chr.mass;
-          V.b.vy += (Sx.b.vy * 0.8) / V.chr.mass;
-          V.b.vz = Math.max(V.b.vz, 2.5);
-          V.stunUntil = Math.max(V.stunUntil, now + 800);
-          Sx.b.vx *= 0.45;
-          Sx.b.vy *= 0.45;
-          if (V.holding) release(vid, 'drop');
-          const thrower = Sx.thrownBy || sid;
-          damage(vid, DMG_BOWL, thrower, 'bowl');
-          damage(sid, DMG_BOWL_SELF, thrower, 'throw');
-          addWobble(V, 0.75);
-          fx('bowl', sid, { b: vid, c: thrower });
-        }
-      }
       const push = (0.85 - d) / 2;
       A.b.x -= nx * push;
       A.b.y -= ny * push;
@@ -1324,7 +960,6 @@ function simulate(ctx: GameContext, state: State, cfg: RtConfig, dt: number, now
       B.b.y += ny * push;
       const rv = (B.b.vx - A.b.vx) * nx + (B.b.vy - A.b.vy) * ny;
       if (rv < -2.5) {
-        // đâm sầm vào nhau
         A.b.vx -= nx * 1.4;
         A.b.vy -= ny * 1.4;
         B.b.vx += nx * 1.4;

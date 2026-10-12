@@ -13,38 +13,31 @@ import {
   Vector3,
 } from 'three';
 import { runScene, type SceneHooks } from './scene';
-import type { Character3D, Pose } from './character';
+import { createFighterKit, type Fighter } from './fighterRig';
+import { createRooftopFx, type FxChar } from './rooftopFx';
 import {
-  F_CHARGE,
-  F_DODGE,
   F_DOWN,
-  F_HELD,
-  F_HOLD,
-  F_LIFT,
-  F_LIFTING,
   F_OUT,
   F_PUNCH,
   F_STUN,
-  F_THROWN,
-  F_WHIFF,
   RT_CHARS,
   SB_ARMOR,
   SB_HASTE,
   SB_RAGE,
   SB_SHIELD,
-  SB_SPIN,
-  type RtChar,
   SPEED,
+  type RtChar,
   type RtConfig,
 } from '@shared/rooftop';
-import type { RtFx, RtPos } from '../games/rooftop/useRooftopGame';
+import type { BananaPos, RtFx, RtPos } from '../games/rooftop/useRooftopGame';
 
 export interface RooftopFrame {
   cfg: RtConfig;
   startAt: number;
   positions: { current: Record<string, RtPos> };
   fx: { current: RtFx[] };
-  bananas: { current: Map<number, { x: number; y: number }> };
+  bananas: { current: Map<number, BananaPos> };
+  stamps: { current: { punch: number; skill: number; which: 1 | 2 } };
   cam: { current: { yaw: number; pitch: number } };
   bodyYaw: { current: number };
   lockId: { current: string };
@@ -60,6 +53,9 @@ export interface RooftopSceneOptions {
   meId: string;
   read: () => RooftopFrame;
   labels: Map<string, HTMLElement | null>;
+  /** nhãn HTML cho số sát thương / tên chiêu */
+  popups: HTMLElement[];
+  overlay: () => HTMLElement | null;
 }
 
 const ROAD_Y = -3.45;
@@ -106,6 +102,7 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       const geoBox = own(new BoxGeometry(1, 1, 1));
       const geoCyl = own(new CylinderGeometry(1, 1, 1, 8));
       const geoCone = own(new ConeGeometry(1, 1, 8));
+      const geoSph = own(new SphereGeometry(1, 10, 8));
 
       /* ---------------- đất + đường (tĩnh) ---------------- */
       const grass = new Mesh(own(new PlaneGeometry(500, 500)), own(new MeshBasicMaterial({ color: '#76db58' })));
@@ -282,124 +279,71 @@ export function createRooftopScene(o: RooftopSceneOptions) {
       rails.frustumCulled = false;
       veh.add(rails);
 
-      /* ---------------- hình dáng nhân vật thú: mesh nhỏ procedural, dùng chung geometry/material ---------------- */
-      const geoSph = own(new SphereGeometry(1, 10, 8));
-      const matCache = new Map<string, Mesh['material']>();
-      const mat = (c: string) => {
-        let m = matCache.get(c);
-        if (!m) {
-          m = k.lit({ color: c });
-          matCache.set(c, m);
-          disposables.push(m as unknown as { dispose(): void });
-        }
-        return m;
-      };
-      type G = BoxGeometry | CylinderGeometry | ConeGeometry | SphereGeometry;
-      const decorate = (root: Group, ch: RtChar) => {
-        const add = (geo: G, color: string, x: number, y: number, z: number, sx: number, sy: number, sz: number, rx = 0, ry = 0, rz = 0) => {
-          const m = new Mesh(geo, mat(color));
-          m.position.set(x, y, z);
-          m.scale.set(sx, sy, sz);
-          m.rotation.set(rx, ry, rz);
-          root.add(m);
-        };
-        switch (ch.id) {
-          case 'bull':
-            for (const sd of [-1, 1]) add(geoCone, '#f5f0e0', sd * 0.32, 1.72, 0.04, 0.1, 0.42, 0.1, 0, 0, -sd * 0.9);
-            add(geoSph, '#e8b4a0', 0, 1.36, 0.36, 0.13, 0.1, 0.1);
-            break;
-          case 'bear':
-            for (const sd of [-1, 1]) add(geoSph, '#8a5a35', sd * 0.3, 1.74, 0, 0.17, 0.17, 0.12);
-            add(geoSph, '#e8c9a0', 0, 1.38, 0.34, 0.15, 0.11, 0.1);
-            break;
-          case 'fox':
-            for (const sd of [-1, 1]) add(geoCone, '#ff8a3d', sd * 0.2, 1.88, 0, 0.12, 0.36, 0.08);
-            add(geoCone, '#ff8a3d', 0, 0.78, -0.42, 0.18, 0.62, 0.18, -1.0);
-            add(geoSph, '#ffffff', 0, 0.5, -0.78, 0.12, 0.12, 0.12);
-            add(geoCone, '#fff0e0', 0, 1.36, 0.36, 0.1, 0.18, 0.1, Math.PI / 2);
-            break;
-          case 'turtle':
-            add(geoSph, '#3c8f4a', 0, 0.98, -0.3, 0.5, 0.42, 0.3);
-            add(geoSph, '#5cc06a', 0, 1.1, -0.42, 0.28, 0.2, 0.12);
-            for (const sd of [-1, 1]) add(geoSph, '#7fd88a', sd * 0.3, 1.5, 0.05, 0.1, 0.1, 0.1);
-            break;
-          case 'monkey':
-            for (const sd of [-1, 1]) add(geoSph, '#d9a066', sd * 0.38, 1.5, 0, 0.16, 0.16, 0.08);
-            add(geoSph, '#e8c9a0', 0, 1.38, 0.34, 0.16, 0.12, 0.1);
-            add(geoCyl, '#8a5a35', 0, 0.62, -0.46, 0.05, 0.6, 0.05, 0.7);
-            break;
-          case 'tiger':
-            for (const sd of [-1, 1]) add(geoCone, '#ff9f43', sd * 0.24, 1.78, 0, 0.1, 0.2, 0.08);
-            for (let i = -1; i <= 1; i++) add(geoBox, '#2b2b2b', i * 0.1, 1.72, 0.3, 0.035, 0.12, 0.03);
-            add(geoCone, '#ff9f43', 0, 0.78, -0.42, 0.14, 0.58, 0.14, -1.1);
-            add(geoSph, '#2b2b2b', 0, 0.52, -0.74, 0.09, 0.09, 0.09);
-            break;
-          case 'rooster':
-            add(geoSph, '#e63946', 0, 1.88, 0.02, 0.07, 0.14, 0.2);
-            add(geoSph, '#e63946', 0, 1.82, 0.14, 0.06, 0.1, 0.1);
-            add(geoCone, '#ffb627', 0, 1.4, 0.4, 0.08, 0.22, 0.08, Math.PI / 2);
-            add(geoCone, '#3a7bd5', 0, 0.95, -0.42, 0.1, 0.5, 0.1, -0.5, 0, 0.3);
-            add(geoCone, '#2fd6a0', 0, 0.98, -0.44, 0.1, 0.55, 0.1, -0.5);
-            add(geoCone, '#e63946', 0, 0.95, -0.42, 0.1, 0.5, 0.1, -0.5, 0, -0.3);
-            break;
-        }
-      };
-      // hào quang trạng thái kỹ năng (một quả cầu mờ cho mỗi người, đổi màu theo trạng thái)
-      const auraMats = {
-        shield: own(new MeshBasicMaterial({ color: '#7fe0ff', transparent: true, opacity: 0.3, depthWrite: false })),
-        armor: own(new MeshBasicMaterial({ color: '#c98a3a', transparent: true, opacity: 0.28, depthWrite: false })),
-        rage: own(new MeshBasicMaterial({ color: '#ff3b3b', transparent: true, opacity: 0.26, depthWrite: false })),
-        haste: own(new MeshBasicMaterial({ color: '#ffe066', transparent: true, opacity: 0.24, depthWrite: false })),
-        spin: own(new MeshBasicMaterial({ color: '#7aff9a', transparent: true, opacity: 0.25, depthWrite: false })),
-      };
-      // vỏ chuối: dùng lại 6 mesh
+      const popups = o.popups;
+      const fxLib = createRooftopFx({ k, scene, meId: o.meId, popups, overlay: o.overlay });
+      disposables.push(fxLib);
+      const auraMats = fxLib.auraMats;
+
+      // vỏ chuối: dùng lại 8 mesh, bay vòng cung khi vừa ném
       const bananaMat = own(new MeshBasicMaterial({ color: '#ffe14d' }));
       const bananaMeshes: Mesh[] = [];
       for (let i = 0; i < 8; i++) {
         const m = new Mesh(geoBox, bananaMat);
         m.scale.set(0.5, 0.12, 0.2);
         m.visible = false;
-        veh.add(m);
+        scene.add(m);
         bananaMeshes.push(m);
       }
 
-      /* ---------------- nhân vật ---------------- */
+      /* ---------------- nhân vật: bộ rig riêng có khớp (fighterRig) ---------------- */
+      const fighterKit = createFighterKit(k);
+      disposables.push(fighterKit);
       interface Entry {
-        c: Character3D;
+        f: Fighter;
+        pivot: Group;
         x: number;
         y: number;
         z: number;
         yaw: number;
         placed: boolean;
-        spin: number;
-        phase: number;
         hitAt: number;
         freeze: number;
         koAt: number;
         aura: Mesh;
         ch: RtChar;
+        lastPunch: boolean;
+        punchIdx: number;
+        punchAt: number;
+        localUntil: number;
+        localSkillUntil: number;
+        prevZ: number;
       }
       const chars = new Map<string, Entry>();
-      o.players.forEach((p, i) => {
-        const c = k.kit.create(p.color, p.id === o.meId);
+      let stampPunch = 0;
+      let stampSkill = 0;
+      o.players.forEach((p) => {
         const ch = RT_CHARS[cfg.chars[p.id] ?? 0];
-        c.setShadows(!k.low);
-        c.root.visible = false;
-        c.root.scale.setScalar(ch.scale);
-        decorate(c.root, ch);
+        const f = fighterKit.create(ch.id, p.color, p.id === o.meId);
+        f.setShadows(!k.low);
+        const pivot = new Group();
+        pivot.visible = false;
+        pivot.scale.setScalar(ch.scale);
+        pivot.add(f.root);
         const aura = new Mesh(geoSph, auraMats.shield);
         aura.scale.set(1.15, 1.25, 1.15);
         aura.position.y = 1.0;
         aura.visible = false;
-        c.root.add(aura);
-        veh.add(c.root);
-        chars.set(p.id, { c, x: 0, y: 0, z: 0, yaw: 0, placed: false, spin: 0, phase: i * 1.7, hitAt: -1e9, freeze: 0, koAt: -1, aura, ch });
+        pivot.add(aura);
+        veh.add(pivot);
+        chars.set(p.id, { f, pivot, x: 0, y: 0, z: 0, yaw: 0, placed: false, hitAt: -1e9, freeze: 0, koAt: -1, aura, ch, lastPunch: false, punchIdx: 0, punchAt: -1e9, localUntil: 0, localSkillUntil: 0, prevZ: 0 });
       });
       k.onTier((tier) => {
-        for (const e of chars.values()) e.c.setShadows(tier !== 'low');
+        for (const e of chars.values()) e.f.setShadows(tier !== 'low');
       });
       const outSet = new Set<string>();
-
+      const fxList: FxChar[] = o.players.map((p) => ({ id: p.id, x: 0, y: 0, z: 0, yaw: 0, vx: 0, vy: 0, sb: 0, out: false, scale: 1, ch: RT_CHARS[cfg.chars[p.id] ?? 0] }));
+      const SKILL_DUR: Record<string, number> = { bull1: 0.6, bull2: 0.75, bear1: 0.8, bear2: 0.5, fox1: 0.4, fox2: 0.5, turtle1: 0.5, turtle2: 1.6, monkey1: 0.9, monkey2: 0.5, tiger1: 0.45, tiger2: 0.7, rooster1: 0.65, rooster2: 0.55 };
+      const skillDur = (ev: any) => SKILL_DUR[(ev.ch ?? '') + (ev.s ?? 1)] ?? 0.55;
       const spawn0 = cfg.spawns[o.meId] ?? [0, 0, 0];
       const focus = new Vector3(spawn0[0], 0, -spawn0[1]);
       const camPos = new Vector3();
@@ -413,22 +357,53 @@ export function createRooftopScene(o: RooftopSceneOptions) {
 
       const burst = (x: number, y: number, z: number, n: number, palette: string[], speed = 3.5, life = 0.7, grav = 8) =>
         k.effects.burst(x, y, -z, { count: k.count(n), palette, speed, life, size: 0.2, gravity: grav });
+      const spring = (a: number, v: number, dt: number, kk: number, cc: number): [number, number] => {
+        v += (-kk * a - cc * v) * dt;
+        return [a + v * dt, v];
+      };
 
       return {
         frame(dt, time) {
+          dt = Math.min(dt, 0.05);
           const f = o.read();
           const now = f.serverNow();
           f.predict(now);
-          const t = now - f.startAt; // ms
 
-          // vỏ chuối
+          /* danh sách nhân vật cho hiệu ứng (toạ độ server) */
+          let li = 0;
+          for (const p of o.players) {
+            const at = f.posOf(p.id);
+            const e = chars.get(p.id)!;
+            const fc = fxList[li++];
+            if (!at) continue;
+            fc.x = e.placed ? e.x : at.x;
+            fc.y = e.placed ? e.y : at.y;
+            fc.z = at.z;
+            fc.yaw = at.face;
+            fc.vx = at.vx;
+            fc.vy = at.vy;
+            fc.sb = at.sb;
+            fc.out = outSet.has(p.id) || !!(at.flags & F_OUT);
+            fc.scale = e.ch.scale;
+          }
+          fxLib.update(dt, time, fxList);
+
+          // vỏ chuối: bay vòng cung rồi nằm trên sàn
           let bi = 0;
+          const tNow = performance.now();
           for (const bn of f.bananas.current.values()) {
             if (bi >= bananaMeshes.length) break;
             const m = bananaMeshes[bi++];
             m.visible = true;
-            m.position.set(bn.x, 0.08, -bn.y);
-            m.rotation.y = bn.x * 3.1;
+            const age = (tNow - bn.born) / 1000;
+            if (bn.fx !== undefined && age < 0.4) {
+              const u = age / 0.4;
+              m.position.set(bn.fx + (bn.x - bn.fx) * u, 0.5 + 1.8 * 4 * u * (1 - u), -(bn.fy! + (bn.y - bn.fy!) * u));
+              m.rotation.set(u * 9, u * 7, 0);
+            } else {
+              m.position.set(bn.x, 0.08 + Math.sin(time * 4 + bn.x) * 0.02, -bn.y);
+              m.rotation.set(0, bn.x * 3.1, 0);
+            }
           }
           for (; bi < bananaMeshes.length; bi++) bananaMeshes[bi].visible = false;
 
@@ -439,86 +414,24 @@ export function createRooftopScene(o: RooftopSceneOptions) {
             if (ev.kind === 'out') {
               outSet.add(ev.playerId);
               const e = chars.get(ev.playerId);
-              if (e) burst(e.x, ROAD_Y + 0.3, e.y, 18, ['#c8c8d4', '#ffffff', '#8c8c9c'], 4, 0.8, 9);
-            } else if (ev.kind === 'fx') {
-              const va = chars.get(ev.a);
-              const vb = ev.b ? chars.get(ev.b) : undefined;
-              switch (ev.k) {
-                case 'hit': {
-                  // đòn mạnh / kết combo / phản công phản hồi rõ hơn; hit-stop rất ngắn để cảm giác có lực
-                  const big = ev.hk === 'heavy' || ev.idx === 2 || !!ev.counter;
-                  if (vb) {
-                    vb.hitAt = time;
-                    vb.freeze = time + (big ? 0.11 : 0.05);
-                    const sp = Math.min(8, 3 + (ev.force ?? 5) * 0.4);
-                    burst(vb.x + (ev.dx ?? 0) * 0.3, vb.z + 1.1, vb.y + (ev.dy ?? 0) * 0.3, big ? 22 : 12, big ? ['#ffffff', '#ffe066', '#ff5e8a'] : ['#ffffff', '#ffe066', '#ff9f43'], sp, 0.5, 6);
-                  }
-                  if (va) va.freeze = time + (big ? 0.08 : 0.04);
-                  if (ev.a === o.meId || ev.b === o.meId) k.shake(big ? 0.45 : 0.2);
-                  break;
-                }
-                case 'dodge':
-                  if (va) burst(va.x, va.z + 0.2, va.y, 8, ['#ffffff', '#bfe3ff'], 2.4, 0.4, 3);
-                  break;
-                case 'down':
-                  if (va) burst(va.x, va.z + 0.1, va.y, 12, ['#e6e8f2', '#b8c0d4'], 3, 0.6, 4);
-                  break;
-                case 'whiff':
-                  if (va) burst(va.x, va.z + 0.2, va.y, 8, ['#ffffff', '#d7d7e8'], 2.2, 0.5, 5);
-                  break;
-                case 'grab':
-                  if (vb) burst(vb.x, vb.z + 1.1, vb.y, 8, ['#ffd23f', '#ffffff'], 2.4, 0.5, 2);
-                  break;
-                case 'throw':
-                  if (vb) burst(vb.x, vb.z + 1.4, vb.y, 18, ['#ff9f43', '#ffffff', '#ffd23f'], 5, 0.7, 3);
-                  k.shake(0.25);
-                  break;
-                case 'bowl':
-                  if (vb ?? va) {
-                    const e = (vb ?? va)!;
-                    burst(e.x, e.z + 1.2, e.y, 26, ['#ff5e8a', '#ffd23f', '#ffffff', '#5b8cff'], 6.5, 0.9, 6);
-                  }
-                  k.shake(0.5);
-                  break;
-                case 'land':
-                  if (va) burst(va.x, va.z + 0.1, va.y, 10, ['#e6e8f2', '#b8c0d4'], 2.8, 0.5, 4);
-                  break;
-                case 'free':
-                  if (va) burst(va.x, va.z + 1, va.y, 8, ['#7aff9a', '#ffffff'], 2.6, 0.5, 3);
-                  break;
-                case 'skill':
-                  if (va) {
-                    const col = ev.ch === 'bull' ? '#ff7a3d' : ev.ch === 'bear' ? '#c98a3a' : ev.ch === 'fox' ? '#ffb366' : ev.ch === 'turtle' ? '#7fe0ff' : ev.ch === 'monkey' ? '#ffe14d' : ev.ch === 'tiger' ? '#ff9f43' : '#ff5e8a';
-                    burst(va.x, va.z + 1, va.y, 14, [col, '#ffffff'], 4, 0.6, 2);
-                    if (ev.ch === 'bear' && ev.s === 1) k.effects.ring(va.x, -va.y, col, 0.6, 2.6);
-                    if (ev.ch === 'bull' && ev.s === 2) k.effects.ring(va.x, -va.y, col, 0.7, 3.2);
-                    if (ev.ch === 'rooster' && ev.s === 2) k.effects.ring(va.x, -va.y, col, 0.5, 3.2);
-                    if (ev.a === o.meId) k.shake(0.25);
-                  }
-                  break;
-                case 'blink':
-                  burst(ev.x2 ?? ev.x, 1, ev.y2 ?? ev.y, 12, ['#ffb366', '#ffffff'], 3, 0.5, 2);
-                  break;
-                case 'stomp':
-                  if (va) {
-                    k.effects.ring(va.x, -va.y, '#ffe14d', 0.5, 1.8);
-                    burst(va.x, 0.2, va.y, 14, ['#e6e8f2', '#ffe14d'], 4, 0.5, 5);
-                  }
-                  k.shake(0.3);
-                  break;
-                case 'spinpulse':
-                  if (va) k.effects.ring(va.x, -va.y, '#7fe0ff', 0.35, 1.9);
-                  break;
-                case 'wall':
-                  if (va) burst(va.x, va.z + 1, va.y, 8, ['#ffffff', '#b8c0d4'], 2.6, 0.4, 4);
-                  break;
-                case 'slip':
-                  if (va) burst(va.x, 0.3, va.y, 10, ['#ffe14d', '#ffffff'], 3, 0.5, 5);
-                  break;
-                case 'reflect':
-                  if (va) burst(va.x, va.z + 1.2, va.y, 12, ['#7fe0ff', '#ffffff'], 4, 0.5, 2);
-                  break;
+              const fc = fxList.find((x) => x.id === ev.playerId);
+              if (e) {
+                e.koAt = time;
+                fxLib.onKo(fc, ev.x ?? 0, ev.y ?? 0);
               }
+              continue;
+            }
+            fxLib.onFx(ev);
+            const va = chars.get(ev.a);
+            const vb = ev.b ? chars.get(ev.b) : undefined;
+            if (ev.k === 'hit' && vb) {
+              const big = ev.tag === 'combo' || ev.tag === 'charge' || ev.tag === 'slam' || ev.tag === 'kick' || ev.tag === 'pounce' || !!ev.counter;
+              vb.hitAt = time;
+              vb.freeze = time + (big ? 0.11 : 0.05);
+              vb.f.hit(ev.dx ?? 0, -(ev.dy ?? 0), ev.force ?? 4); // bị đánh: ngả / giật theo HƯỚNG LỰC
+              if (va) va.freeze = time + (big ? 0.08 : 0.04);
+            } else if (ev.k === 'skill' && va) {
+              if (!(ev.a === o.meId && time < va.localSkillUntil)) va.f.skill(ev.ch + ev.s, skillDur(ev));
             }
           }
 
@@ -532,7 +445,7 @@ export function createRooftopScene(o: RooftopSceneOptions) {
             const e = chars.get(p.id)!;
             const at = f.posOf(p.id);
             if (!at) {
-              e.c.root.visible = false;
+              e.pivot.visible = false;
               continue;
             }
             const fl = at.flags;
@@ -544,6 +457,7 @@ export function createRooftopScene(o: RooftopSceneOptions) {
               e.z = at.z;
               e.yaw = Math.PI - at.face;
               e.placed = true;
+              e.prevZ = at.z;
             } else {
               const far = Math.hypot(at.x - e.x, at.y - e.y) > 2.5;
               const kk = far || isMe ? 1 : 1 - Math.exp(-dt * 18);
@@ -551,49 +465,79 @@ export function createRooftopScene(o: RooftopSceneOptions) {
               e.y += (at.y - e.y) * kk;
               e.z += (at.z - e.z) * (far || isMe ? 1 : 1 - Math.exp(-dt * 24));
             }
-            const lifted = !!(fl & F_LIFT);
             const down = !!(fl & F_DOWN);
             const stunned = !!(fl & F_STUN) || time - e.hitAt < 0.5;
             const grounded = e.z < 0.08;
             const spd = Math.hypot(at.vx, at.vy);
 
-            // người chơi của mình: thân theo hướng client tính (chạy / khoá mục tiêu / hướng đánh), không chờ server, trừ lúc choáng/ngã/bị túm/bị quăng/rơi.
+            // thân theo hướng client tính (chạy / khoá mục tiêu / hướng đánh), không chờ server, trừ lúc choáng / ngã
             // hướng server (sin y, cos y) ↔ mặt nhân vật trong cảnh ở yaw a nhìn (sin a, cos a) với a = π - y
-            const ownYaw = isMe && !(fl & (F_STUN | F_DOWN | F_HELD | F_THROWN | F_OUT)) && time - e.hitAt >= 0.5;
+            const ownYaw = isMe && !(fl & (F_STUN | F_DOWN | F_OUT)) && time - e.hitAt >= 0.5;
             const wantYaw = ownYaw ? Math.PI - f.bodyYaw.current : Math.PI - at.face;
             e.yaw += angDiff(e.yaw, wantYaw) * (ownYaw ? 1 - Math.exp(-dt * 60) : 1 - Math.exp(-dt * 18));
-            e.c.setYaw(e.yaw);
 
-            let pose: Pose = 'run';
-            let speed = Math.min(1, spd / SPEED);
-            if (aliveCount <= 1 && !out && total > 1) pose = 'cheer';
-            else if (out) pose = 'sad';
-            else if (fl & F_THROWN) pose = 'jump';
-            else if (lifted) pose = 'hit';
-            else if (fl & F_PUNCH) pose = 'punch';
-            else if (fl & F_WHIFF) pose = 'sad';
-            else if (fl & F_HELD) pose = 'hit';
-            else if (fl & F_HOLD || fl & F_CHARGE) pose = 'pull';
-            else if (stunned) pose = 'hit';
-            else if (fl & F_DODGE) pose = 'jump';
-            else if (!grounded) pose = 'jump';
-            if (pose !== 'run') speed = 0;
-
-            e.c.update(time < e.freeze ? dt * 0.05 : dt, { speed, dead: down || out, time, pose, holder: !!(fl & F_LIFTING) });
-
-            const wob = Math.min(1, at.wob + (stunned ? 0.3 : 0));
-            e.c.root.rotation.x = 0;
-            e.c.root.rotation.z = Math.sin(time * 8 + e.phase) * wob * 0.32;
-            e.c.root.position.set(e.x, e.z, -e.y);
-            // KO: nằm lại một lát rồi biến mất trong làn khói
-            if (out && e.koAt < 0) {
-              e.koAt = time;
-              burst(e.x, 0.6, e.y, 18, ['#c8c8d4', '#ffffff', '#8c8c9c'], 3.5, 0.9, 3);
+            /* ---- hoạt hình thủ tục (fighterRig): đứng / chạy / nhảy / đấm / skill / bị đánh / ngã ---- */
+            const punching = !!(fl & F_PUNCH);
+            // nhân vật của mình: ra đòn NGAY khi bấm (không chờ server)
+            if (isMe) {
+              if (f.stamps.current.punch !== stampPunch) {
+                stampPunch = f.stamps.current.punch;
+                if (time > e.localUntil && !down) {
+                  e.punchIdx = time - e.punchAt < 0.9 ? (e.punchIdx + 1) % 3 : 0;
+                  e.punchAt = time;
+                  e.f.punch(e.punchIdx);
+                  e.localUntil = time + 0.2;
+                }
+              }
+              if (f.stamps.current.skill !== stampSkill) {
+                stampSkill = f.stamps.current.skill;
+                const pm = f.positions.current[o.meId];
+                const which = f.stamps.current.which;
+                if (pm && pm[8 + which] === 0 && !down) {
+                  e.f.skill(e.ch.id + which, SKILL_DUR[e.ch.id + which] ?? 0.55);
+                  e.localSkillUntil = time + 0.35;
+                }
+              }
             }
-            e.c.root.visible = !out || time - e.koAt < 1.8;
+            if (punching && !e.lastPunch && !(isMe && time < e.localUntil + 0.3)) {
+              e.punchIdx = time - e.punchAt < 0.9 ? (e.punchIdx + 1) % 3 : 0;
+              e.punchAt = time;
+              e.f.punch(e.punchIdx);
+            }
+            e.lastPunch = punching;
+            const dtA = time < e.freeze ? dt * 0.05 : dt;
+            e.f.setYaw(e.yaw);
+            e.f.update(dtA, {
+              time,
+              vx: at.vx,
+              vz: -at.vy,
+              yaw: e.yaw,
+              grounded,
+              vy: (e.z - e.prevZ) / Math.max(dt, 1e-3),
+              stunned,
+              down,
+              out,
+              cheer: aliveCount <= 1 && !out && total > 1,
+              wob: at.wob,
+            });
+            e.prevZ = e.z;
+            const piv = e.pivot;
+            piv.position.set(e.x, e.z, -e.y);
+            // KO: bay lên xoay tròn rồi tan
+            if (out && e.koAt >= 0) {
+              const u = (time - e.koAt) / 1.3;
+              piv.position.y = e.z + Math.max(0, Math.min(1, u)) * 4.5;
+              piv.rotation.y = u * 10;
+              piv.scale.setScalar(e.ch.scale * Math.max(0.01, 1 - Math.max(0, u - 0.4) / 0.6));
+            } else {
+              piv.rotation.y = 0;
+              piv.scale.setScalar(e.ch.scale);
+            }
+            piv.visible = !out || (e.koAt >= 0 && time - e.koAt < 1.3);
+
             // hào quang kỹ năng
             const sb = at.sb;
-            const aura = sb & SB_SHIELD ? auraMats.shield : sb & SB_ARMOR ? auraMats.armor : sb & SB_RAGE ? auraMats.rage : sb & SB_SPIN ? auraMats.spin : sb & SB_HASTE ? auraMats.haste : null;
+            const aura = sb & SB_SHIELD ? auraMats.shield : sb & SB_ARMOR ? auraMats.armor : sb & SB_RAGE ? auraMats.rage : sb & SB_HASTE ? auraMats.haste : null;
             e.aura.visible = !!aura && !out;
             if (aura) e.aura.material = aura;
 
@@ -610,7 +554,7 @@ export function createRooftopScene(o: RooftopSceneOptions) {
             }
           }
 
-          /* ---------------- camera góc nhìn thứ ba bằng chuột (camera sau vai, song song hướng nhìn của nhân vật) ---------------- */
+          /* ---------------- camera góc nhìn thứ ba bằng chuột ---------------- */
           const c = f.cam.current;
           // pivot ở ngực nhân vật (nhân vật nằm giữa khung hình); đang khoá mục tiêu thì pivot lệch nhẹ về phía mục tiêu
           let tx = meOut ? 0 : meX;
@@ -621,17 +565,15 @@ export function createRooftopScene(o: RooftopSceneOptions) {
             tx += (lockE.x - tx) * 0.2;
             tz += (-lockE.y - tz) * 0.2;
           }
-          const lk = 1 - Math.exp(-dt * 12);
-          focus.x += (tx - focus.x) * lk;
-          focus.y += (ty - focus.y) * lk;
-          focus.z += (tz - focus.z) * lk;
+          const lk2 = 1 - Math.exp(-dt * 12);
+          focus.x += (tx - focus.x) * lk2;
+          focus.y += (ty - focus.y) * lk2;
+          focus.z += (tz - focus.z) * lk2;
           camDist += ((meOut ? 13 : lockE ? 6.4 : 5.6) - camDist) * (1 - Math.exp(-dt * 3));
           const cp = Math.cos(c.pitch);
           const sp2 = Math.sin(c.pitch);
           const fx3 = Math.sin(c.yaw);
           const fz3 = -Math.cos(c.yaw);
-          const rx3 = Math.cos(c.yaw);
-          const rz3 = Math.sin(c.yaw);
           camPos.set(focus.x - fx3 * camDist * cp, Math.max(0.5, focus.y + 1.3 + camDist * sp2), focus.z - fz3 * camDist * cp);
           lookAt.set(focus.x, focus.y + 1.3, focus.z);
           // marker khoá mục tiêu
