@@ -24,6 +24,9 @@ import ChairsGame from './chairs';
 import ActNaturalGame from './actnatural';
 import QuizGame from './quiz';
 import RooftopGame from './rooftop';
+import TanksGame from './tanks';
+import FartGame from './fart';
+import WallRushGame from './wallrush';
 
 /** Renderer registry - keys must match the server-side game ids. */
 export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
@@ -51,4 +54,7 @@ export const GAME_COMPONENTS: Record<string, ComponentType<GameProps>> = {
   actnatural: ActNaturalGame,
   quiz: QuizGame,
   rooftop: RooftopGame,
+  tanks: TanksGame,
+  wallrush: WallRushGame,
+  fart: FartGame,
 };

@@ -289,9 +289,15 @@ export type GameInput =
   | { type: 'shoot'; x: number; y: number }               // giả dạng NPC: thợ săn bắn vào điểm (x, y) trên sàn
   | { type: 'kick' }                                     // con đường ẩn: đá/hất người phía trước
   | { type: 'answer'; text: string }                      // quiz: chốt câu trả lời
+  | { type: 'wmove'; x: number; y: number }                // đua tường: đi quân tới ô (x, y)
+  | { type: 'wwall'; x: number; y: number; o: 'h' | 'v' } // đua tường: đặt tường tại giao điểm (x, y)
+  | { type: 'fart'; t: number; a: number; p: number; n?: number } // xì hơi: tick, góc xì (mrad), lực 0..100, số thứ tự
+  | { type: 'faim'; a: number; c?: number }                // xì hơi: hướng ngắm + mức tích lực để đồng đội thấy
   | { type: 'plant' }                                    // mê cung đặt bom: đặt bom ở ô đang đứng
   | { type: 'steer'; dx: number; dy: number; a: number }       // đấu trường mù: chạy theo màn hình + góc ngắm của chuột
   // đấu vật trên nóc nhà: dx,dy = hướng đi (hệ toạ độ xe, đã tính theo camera), yaw = hướng camera/ngắm; jump/punch/skill là xung 1 lần
-  | { type: 'brawl'; dx: number; dy: number; yaw: number; jump?: boolean; punch?: boolean; skill1?: boolean; skill2?: boolean };
+  | { type: 'brawl'; dx: number; dy: number; yaw: number; jump?: boolean; punch?: boolean; skill1?: boolean; skill2?: boolean }
+  // xe tăng đạn nảy: t = tick client (floor((giờ server − startAt)/STEP)), q = số thứ tự gói, turn/move ∈ −1,0,1, f = tổng số lần bấm bắn (đếm tích luỹ, chịu được mất/lặp gói), d = độ trễ nội suy (tick) mà người chơi đang thấy xe khác, dùng cho bù trễ
+  | { type: 'tank'; t: number; q: number; turn: number; move: number; f: number; d?: number };
 
 export type Judgement = 'PERFECT' | 'GREAT' | 'GOOD' | 'MISS' | 'TRAP';

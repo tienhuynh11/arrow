@@ -9,7 +9,7 @@ const CODE: Record<string, string> = { '←': 'ArrowLeft', '→': 'ArrowRight', 
 const LABEL: Record<string, string> = { ArrowLeft: '◀', ArrowRight: '▶', ArrowUp: '▲', ArrowDown: '▼', Space: '' };
 
 /** game chạy tự do mọi hướng: dùng cần điều khiển thay cho 4 nút */
-const FREE_MOVE = new Set(['bomb', 'tiptoe', 'memory', 'blockparty', 'mountain', 'lava', 'hex', 'door', 'codehunt', 'blindshot', 'bombmaze', 'chairs', 'actnatural', 'rooftop']);
+const FREE_MOVE = new Set(['bomb', 'tiptoe', 'memory', 'blockparty', 'mountain', 'lava', 'hex', 'door', 'codehunt', 'blindshot', 'bombmaze', 'chairs', 'actnatural', 'rooftop', 'tanks']);
 
 export const isTouchDevice = () =>
   typeof window !== 'undefined' &&
@@ -120,8 +120,9 @@ export default function TouchControls({ gameId, controls }: { gameId: string; co
   const cross = !free && arrows.length === 4;
   // game chỉ bấm SPACE: nút to ở giữa phía dưới cho dễ đập
   const spaceOnly = arrows.length === 0 && hasSpace;
-  const actionLabel = gameId === 'math' ? 'CHỐT' : gameId === 'tug' ? 'KÉO!' : gameId === 'button' ? 'BẤM!' : gameId === 'reaction' ? 'BẤM!' : gameId === 'rhythm' ? 'NỐT ●' : gameId === 'bombmaze' ? '💣 BOM' : gameId === 'tiptoe' ? 'ĐÁ!' : gameId === 'rooftop' ? 'NHẢY / NHẤC' : 'NHẢY';
+  const actionLabel = gameId === 'math' ? 'CHỐT' : gameId === 'tug' ? 'KÉO!' : gameId === 'button' ? 'BẤM!' : gameId === 'reaction' ? 'BẤM!' : gameId === 'rhythm' ? 'NỐT ●' : gameId === 'bombmaze' ? '💣 BOM' : gameId === 'tiptoe' ? 'ĐÁ!' : gameId === 'rooftop' ? 'NHẢY / NHẤC' : gameId === 'tanks' ? '💥 BẮN' : 'NHẢY';
 
+  if (gameId === 'fart') return null; // xì hơi có bộ điều khiển cảm ứng riêng
   return (
     <div className={`tc ${spaceOnly ? 'solo' : ''}`} aria-hidden="true">
       {!spaceOnly && (

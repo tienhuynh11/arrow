@@ -4272,3 +4272,86 @@ body.in-match .match-stage > .board { width: 100%; height: 100%; }
 .rt-pop.big { font-size: 30px; color: #ff5a5a; }
 .rt-pop.skill { font-size: 24px; color: #ffe14d; letter-spacing: 0.04em; text-shadow: 0 3px 0 #b8322a, 0 0 12px rgba(0, 0, 0, 0.6); }
 @keyframes rt-dmg { 0% { transform: scale(0.4); opacity: 0; } 15% { transform: scale(1.3); opacity: 1; } 60% { transform: scale(1); opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
+
+/* ĐUA TƯỜNG (wallrush) */
+.wr-bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; }
+.wr-table { font-size: 12px; font-weight: 900; color: var(--dim); letter-spacing: 0.06em; padding: 0 4px; }
+.wr-chip {
+  display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  background: rgba(8, 10, 22, 0.6); border: 2px solid color-mix(in srgb, var(--c) 35%, transparent);
+  font-size: 13px; font-weight: 800; transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s; opacity: 0.8;
+}
+.wr-chip.turn { opacity: 1; transform: scale(1.07); border-color: var(--c); box-shadow: 0 0 16px color-mix(in srgb, var(--c) 70%, transparent); }
+.wr-chip.me .wr-name::after { content: ' (bạn)'; font-weight: 600; opacity: 0.7; }
+.wr-chip.won { border-color: #ffd23f; box-shadow: 0 0 18px #ffd23f; opacity: 1; }
+.wr-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5); }
+.wr-name { color: var(--c); max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wr-stat { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; opacity: 0.95; }
+.wr-wallicon { display: inline-block; width: 15px; height: 6px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6); }
+.wr-host { touch-action: none; }
+.wr-banner {
+  position: absolute; left: 10px; top: 10px; z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-radius: 20px; pointer-events: none;
+  background: rgba(255, 255, 255, 0.94); border: 4px solid var(--c, #fff); color: #2a2440; font-weight: 900;
+  font-size: min(3.6vh, 20px); letter-spacing: 0.04em; white-space: nowrap; position: absolute; overflow: hidden;
+}
+.wr-banner.mine { box-shadow: 0 0 30px var(--c); animation: wr-pulse 0.9s ease-in-out infinite; }
+.wr-banner.win { background: #ffd23f; border-color: #fff; font-size: min(5vh, 30px); }
+.wr-banner.lose, .wr-banner.time { background: #fff; }
+.wr-count { font-size: 1.3em; min-width: 1.2em; text-align: center; color: #5b4bd6; }
+.wr-count.urgent { color: #e8264a; }
+.wr-timer { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: rgba(0, 0, 0, 0.15); }
+.wr-timer i { display: block; height: 100%; }
+.wr-reason {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5; pointer-events: none;
+  padding: 5px 14px; border-radius: 999px; background: rgba(120, 10, 30, 0.88); color: #fff; font-weight: 800; font-size: 13px;
+}
+.wr-reason.ok { background: rgba(10, 100, 50, 0.88); }
+.wr-log { position: absolute; left: 10px; bottom: 10px; z-index: 4; pointer-events: none; display: flex; flex-direction: column; gap: 2px; font-size: 12px; font-weight: 800; text-shadow: 0 1px 3px #000, 0 0 2px #000; }
+.wr-ctl { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+@keyframes wr-pulse { 50% { transform: scale(1.05); } }
+
+/* ---------- XÌ HƠI CÙNG NHAU ---------- */
+.ft-host { cursor: crosshair; touch-action: none; }
+.ft-top { position: absolute; left: 10px; top: 10px; z-index: 4; display: flex; gap: 12px; padding: 6px 12px; border-radius: 12px; background: rgba(10, 30, 50, 0.6); color: #fff; font-size: 13px; font-weight: 800; letter-spacing: 0.04em; pointer-events: none; }
+.ft-top b { font-size: 17px; color: var(--gold, #ffd23f); }
+.ft-mm { position: absolute; right: 10px; top: 10px; z-index: 4; width: 150px; height: 120px; border-radius: 12px; background: rgba(10, 30, 50, 0.55); pointer-events: none; overflow: hidden; }
+.ft-mm canvas { position: absolute; inset: 0; }
+.ft-dot { position: absolute; left: 0; top: 0; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #fff; box-sizing: border-box; will-change: transform; }
+.ft-dot.me { width: 12px; height: 12px; margin: -1px; box-shadow: 0 0 6px #8dff6a; }
+.ft-banner { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); z-index: 6; padding: 8px 16px; border-radius: 12px; background: rgba(10, 40, 60, 0.82); color: #cfffd8; font-weight: 800; letter-spacing: 0.03em; pointer-events: none; transition: opacity 0.2s; text-align: center; }
+.ft-bars { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 4; width: min(360px, 62vw); display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.ft-bar-row { display: flex; align-items: center; gap: 8px; }
+.ft-bar-label { width: 30px; font-size: 11px; font-weight: 900; color: #fff; text-shadow: 0 1px 3px #000; text-align: right; }
+.ft-bar { position: relative; flex: 1; height: 18px; border-radius: 9px; background: rgba(10, 30, 50, 0.65); border: 2px solid rgba(255, 255, 255, 0.85); overflow: hidden; }
+.ft-bar.small { height: 11px; }
+.ft-fill { position: absolute; inset: 0; transform-origin: left center; will-change: transform; }
+.ft-fill.gas { background: linear-gradient(90deg, #3fd070, #a6ff6a); }
+.ft-fill.charge { background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.85) 0 6px, rgba(255, 210, 63, 0.9) 6px 12px); opacity: 0.8; height: 100%; }
+.ft-fill.hp { background: #5be07a; }
+.ft-pad { position: absolute; left: 18px; bottom: 18px; z-index: 7; width: 130px; height: 130px; border-radius: 50%; background: rgba(255, 255, 255, 0.18); border: 2px solid rgba(255, 255, 255, 0.6); touch-action: none; }
+.ft-knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(141, 255, 106, 0.85); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+.ft-fire { position: absolute; right: 22px; bottom: 26px; z-index: 7; width: 108px; height: 108px; border-radius: 50%; border: 3px solid #fff; background: #3fd070; color: #fff; font-size: 24px; font-weight: 900; touch-action: none; box-shadow: 0 4px 0 #1f8f48; }
+.ft-fire.on { transform: scale(0.94); background: #a6ff6a; color: #14501f; }
+
+/* ---- XE TĂNG ĐẠN NẢY (tanks) ---- */
+.tk-board { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; flex-direction: column; gap: 3px; min-width: 120px; max-width: 190px; padding: 6px 8px; border-radius: 10px; background: rgba(10, 14, 36, 0.62); pointer-events: none; }
+.tk-row { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #fff; }
+.tk-row i { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7); }
+.tk-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-row em { font-style: normal; font-size: 11px; }
+.tk-row b { font-variant-numeric: tabular-nums; color: #ffd23f; }
+.tk-row.me { color: #ffd23f; }
+.tk-row.dead { opacity: 0.55; }
+.tk-items { position: absolute; right: 10px; top: 8px; z-index: 5; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; pointer-events: none; }
+.tk-items span { padding: 5px 10px; border-radius: 999px; background: rgba(10, 14, 36, 0.72); border: 2px solid #ffd23f; color: #fff; font-weight: 800; font-size: 13px; }
+.tk-items b { color: #ffd23f; }
+.tk-banner { position: absolute; left: 50%; top: 24%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; text-align: center; padding: 8px 22px; border-radius: 16px; background: rgba(10, 14, 36, 0.55); color: #fff; animation: tk-pop 0.35s ease-out; }
+.tk-banner b { font-size: clamp(26px, 6vw, 56px); letter-spacing: 0.04em; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.45); line-height: 1.05; }
+.tk-banner small { font-size: clamp(12px, 2vw, 17px); opacity: 0.95; font-weight: 700; }
+.tk-banner.count b { font-size: clamp(54px, 12vw, 120px); color: #ffd23f; }
+.tk-banner.go b { color: #7dff9a; }
+.tk-banner.win b { color: #ffd23f; }
+.tk-banner.dead b { color: #ff7a7a; font-size: clamp(20px, 4vw, 36px); }
+.tk-banner.dead, .tk-banner.lose, .tk-banner.draw { top: 18%; }
+@keyframes tk-pop { from { transform: translateX(-50%) scale(0.6); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
