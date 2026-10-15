@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as R from '../../shared/raft.js';
 import { FartCore } from '../../shared/raftClient.js';
 import { fartGame } from '../src/games/fart.js';
-import { botAim } from './fartBot.js';
+import { botAim, HoldBot } from './fartBot.js';
 import { botDriver, makeHarness, type NetProfile } from './fartHarness.js';
 
 let ok = 0;
@@ -16,26 +16,20 @@ const t = (name: string, f: () => void) => {
 /* ---------- (i) tính xác định ---------- */
 type Ev = { t: number; seat: number; a: number; p: number; n: number };
 function makeEvents(c: R.Course, seats: number, ticks: number, seed: number): Ev[] {
-  // sinh sự kiện bằng bot chạy một lần để chúng có ý nghĩa (va chạm thật), rồi dùng lại cho mọi biến thể
-  const rng = R.mulberry32(seed);
+  // sinh sự kiện giữ/thả bằng HoldBot chạy một lần để chúng có ý nghĩa (va chạm thật), rồi dùng lại cho mọi biến thể
   const sim = new R.RaftSim(c, R.SEAT_ORDER[seats], 16, 4000);
+  const bots = Array.from({ length: seats }, (_, i) => new HoldBot(seed * 31 + i));
   const evs: Ev[] = [];
-  const last = new Array(seats).fill(-99);
-  const gas = new Array(seats).fill(1);
   let n = 0;
   for (let k = 0; k < ticks; k++) {
+    sim.advanceTo(k);
     for (let s = 0; s < seats; s++) {
-      if (k - last[s] < 16 + Math.floor(rng() * 20)) continue;
-      const g = R.gasRegen(gas[s], k - last[s]);
-      const pi = Math.min(Math.round((0.3 + rng() * 0.6) * 100), R.gasLimitP(g));
-      if (pi < R.P_MIN) continue;
-      sim.advanceTo(k);
-      const a = rng() < 0.7 ? botAim(c, sim.S, k) : (rng() - 0.5) * 6.28;
-      const ai = Math.round(R.wrapPi(a) * 1000);
-      gas[s] = g - R.gasCost(pi);
-      last[s] = k;
-      evs.push({ t: k, seat: s, a: ai, p: pi, n: ++n });
-      sim.setEvent(k, s, ai, pi, n);
+      const e = bots[s].step(c, sim.S, k);
+      if (!e) continue;
+      const ai = Math.round(R.wrapPi(e.a) * 1000);
+      const p = e.down ? 100 : 0;
+      evs.push({ t: k, seat: s, a: ai, p, n: ++n });
+      sim.setEvent(k, s, ai, p, n);
     }
   }
   return evs;
@@ -64,7 +58,7 @@ const ref = runReference();
 
 t('xác định: chạy lại cùng chuỗi input -> trùng khít', () => {
   assert.equal(runReference().h, ref.h);
-  console.log(`   ${evs.length} cú xì / ${TICKS} tick, va chạm ${ref.S[R.S_HITS]}, hash ${ref.h}`);
+  console.log(`   ${evs.length} sự kiện giữ/thả/đổi hướng / ${TICKS} tick, va chạm ${ref.S[R.S_HITS]}, hash ${ref.h}`);
 });
 
 function lateRun(maxLate: number, ring: number, seed: number): { h: number; S: Float64Array; rollbacks: number } {
@@ -148,20 +142,25 @@ t('chia bè: không có bè 1 người, 2-4 người/bè', () => {
 });
 
 /* ---------- (iii) độ trễ cảm nhận = 0 ---------- */
-t('độ trễ cảm nhận: xì -> khung hình kế tiếp bè đã đổi vận tốc (không chờ mạng)', () => {
+t('độ trễ cảm nhận: bấm giữ -> khung hình kế tiếp bè đã bị đẩy (không chờ mạng)', () => {
   const sent: any[] = [];
   const core = new FartCore({ seed: 12345, teams: [['a', 'b', 'c']], cap: 1 }, 'a', 1000, (i) => sent.push(i));
   let mono = 1000 + 500;
   for (let i = 0; i < 40; i++, mono += 1000 / 60) core.frame(mono, mono);
+  core.setAimWorld(0); // xì về +x => bè bị đẩy về -x
   const v0x = core.sim.S[R.S_VX];
   const x0 = core.px;
-  const pi = core.fire(0.8, 0.0);
-  assert.equal(pi, 80);
+  const tk0 = core.tick;
+  core.press(mono);
   core.frame(mono + 1000 / 60, mono + 1000 / 60);
   const dvx = core.sim.S[R.S_VX] - v0x;
-  const expected = -R.DV_MAX * 0.8;
-  assert.ok(Math.abs(dvx - expected) < 0.12, `dvx ${dvx} vs ${expected}`);
-  console.log(`   xì ở khung N -> khung N+1: Δv = ${dvx.toFixed(3)} (xung lực ${expected.toFixed(3)} + kéo nước), gói gửi: ${JSON.stringify(sent.find((s) => s.type === 'fart'))}`);
+  const expected = (-R.THRUST / 60) * (core.tick - tk0); // mỗi tick mô phỏng kể từ lúc bấm đều có lực
+  assert.ok(core.tick > tk0 && Math.abs(dvx - expected) < 0.01, `dvx ${dvx} vs ${expected}`);
+  let m2 = mono + 1000 / 60;
+  for (let i = 0; i < 30; i++, m2 += 1000 / 60) core.frame(m2, m2);
+  const dv30 = core.sim.S[R.S_VX] - v0x;
+  core.release();
+  console.log(`   bấm giữ ở khung N -> khung N+1: Δv = ${dvx.toFixed(4)} (kỳ vọng ${expected.toFixed(4)}), sau 0.5s Δv = ${dv30.toFixed(2)}; gói gửi: ${JSON.stringify(sent.find((q) => q.type === 'fart'))}`);
   console.log(`   => độ trễ cảm nhận của chính mình = 0ms chờ mạng (áp cục bộ trước khi server biết); Δx hiển thị khung kế = ${(core.px - x0).toFixed(4)}m`);
 });
 
@@ -249,7 +248,7 @@ for (const prof of profiles) {
   const ids = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'];
   const h = makeHarness(ids, prof, { seed: 11 });
   const drive = botDriver(3);
-  h.run(100, (id, core) => drive(id, core));
+  h.run(100, (id, core, mono) => drive(id, core, mono));
   const st = measure(h);
   // server vs tham chiếu: trạng thái server cuối ván trùng với chạy lại từ nhật ký sự kiện đã chốt
   for (let ti = 0; ti < h.state.teams.length; ti++) {
@@ -288,10 +287,11 @@ console.log('\n== TÀI NGUYÊN SERVER: ván 16 người, 4 bè, 150s (bot phía 
       if (!me) continue;
       const team = h.state.teams[me.ti];
       if ((nextAt[id] ?? 0) > tick) continue;
-      nextAt[id] = tick + 22 + ((s + me.seat * 7) % 11);
+      nextAt[id] = tick + 40 + ((s + me.seat * 7) % 23);
       nSent[id] = (nSent[id] ?? 0) + 1;
+      const down = nSent[id] % 2 === 1;
       const a = botAim(h.state.course, team.sim.S, tick);
-      fartGame.handleInput(h.ctx, h.state, h.config, id, { type: 'fart', t: tick - 5, a: Math.round(R.wrapPi(a) * 1000), p: 55, n: nSent[id] });
+      fartGame.handleInput(h.ctx, h.state, h.config, id, { type: 'fart', t: tick - 5, a: Math.round(R.wrapPi(a) * 1000), p: down ? 100 : 0, n: nSent[id] });
       inputs++;
       if (s % 3 === 0) {
         fartGame.handleInput(h.ctx, h.state, h.config, id, { type: 'faim', a: 1000, c: 30 });

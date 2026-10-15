@@ -8,11 +8,9 @@
  * - Trạng thái CUỐI CÙNG từ server (~10Hz) là mốc: lệch dự đoán thì thay mốc + mô phỏng lại.
  */
 import {
-  CHARGE_TIME,
+  GAS_FADE,
   MAX_BACK,
-  MIN_GAP,
   NS,
-  P_MIN,
   RaftSim,
   SEAT_ORDER,
   SEAT_X,
@@ -28,9 +26,9 @@ import {
   S_X,
   S_Y,
   clamp,
-  gasCost,
-  gasLimitP,
-  gasRegen,
+  sAim,
+  sGas,
+  sHold,
   genCourse,
   wrapPi,
   type Course,
@@ -103,13 +101,12 @@ export class FartCore {
   private tmp2 = new Float64Array(NS);
 
   /* điều khiển */
-  gas = 1;
-  gt = 0;
   private nextN = 1;
-  private lastOwnTick = -99;
-  charging = false;
-  private chargeT0 = 0;
-  /** 0..1 lực đang tích (đã giới hạn theo khí) */
+  /** đang giữ nút xì */
+  holding = false;
+  private lastHoldSent = -1e9;
+  private sentHoldAim = 99;
+  /** 0..1 độ mạnh lực xì hiện tại (giảm dần khi cạn khí), 0 khi không xì */
   charge = 0;
   aimWorld = Math.PI;
   aimRel = Math.PI;
@@ -228,10 +225,14 @@ export class FartCore {
     } else this.aimRel = wrapPi(this.aimWorld - this.pa);
 
     // lực đang tích
-    if (this.charging) {
-      const want = Math.min(1, (mono - this.chargeT0) / (CHARGE_TIME * 1000));
-      this.charge = Math.min(want, gasLimitP(this.gasNow()) / 100);
-    } else this.charge = 0;
+    {
+      const g = this.gasNow();
+      this.charge = this.holding && g > 0 ? Math.min(1, g / GAS_FADE) : 0;
+      // đang giữ: gửi đổi hướng (≤12/s) + nhắc lại mỗi 450ms để server biết còn giữ
+      if (this.holding && mono - this.lastHoldSent >= 80) {
+        if (Math.abs(wrapPi(this.aimWorld - this.sentHoldAim)) > 0.07 || mono - this.lastHoldSent > 450) this.sendHold(true, mono);
+      }
+    }
 
     // sự kiện từ trạng thái (va chạm, chìm, hồi sinh)
     const S = sim.S;
@@ -249,7 +250,7 @@ export class FartCore {
     // gửi hướng ngắm cho đồng đội (~15Hz, chỉ khi đổi)
     if (this.teamN > 1 && mono - this.lastAimSent >= 66) {
       const c100 = Math.round(this.charge * 100);
-      if (Math.abs(wrapPi(this.aimWorld - this.sentAim)) > 0.03 || Math.abs(c100 - this.sentC) >= 6) {
+      if (!this.holding && (Math.abs(wrapPi(this.aimWorld - this.sentAim)) > 0.03 || Math.abs(c100 - this.sentC) >= 6)) {
         this.lastAimSent = mono;
         this.sentAim = this.aimWorld;
         this.sentC = c100;
@@ -269,8 +270,24 @@ export class FartCore {
   }
 
   /* ---------------- điều khiển ---------------- */
+  /** khí còn lại 0..1 của mình (từ trạng thái mô phỏng) */
   gasNow(): number {
-    return gasRegen(this.gas, this.tick - this.gt);
+    return this.sim.S[sGas(this.mySeat)];
+  }
+
+  /** chỗ ngồi seat đang xì (theo mô phỏng)? */
+  seatHold(seat: number): boolean {
+    return this.sim.S[sHold(seat)] > 0 && this.sim.S[S_SINK] <= 0 && this.sim.S[sGas(seat)] > 0;
+  }
+  /** hướng xì (rad) của seat: đang giữ thì lấy từ mô phỏng (chính xác), không thì hướng ngắm hiển thị */
+  seatAim(seat: number): number {
+    if (seat === this.mySeat) return this.aimWorld;
+    return this.sim.S[sHold(seat)] > 0 ? this.sim.S[sAim(seat)] / 1000 : this.aimA[seat];
+  }
+  /** độ mạnh xì 0..1 của seat */
+  seatPower(seat: number): number {
+    const g = this.sim.S[sGas(seat)];
+    return this.seatHold(seat) ? Math.min(1, g / GAS_FADE) : 0;
   }
 
   setMouse(wx: number, wy: number): void {
@@ -289,43 +306,37 @@ export class FartCore {
     }
     this.keyDir = dir;
   }
+  /** bắt đầu GIỮ xì: áp NGAY vào mô phỏng ở tick hiện tại + gửi server */
   press(mono: number): void {
-    if (this.charging) return;
-    this.charging = true;
-    this.chargeT0 = mono;
+    if (this.holding) return;
+    this.holding = true;
+    this.sendHold(true, mono);
   }
-  /** thả nút: xì. Trả về lực đã xì (0..100) hoặc 0 nếu không xì được */
-  release(): number {
-    if (!this.charging) return 0;
-    this.charging = false;
-    return this.fire(this.charge, this.aimWorld);
+  /** buông: ngừng xì */
+  release(): void {
+    if (!this.holding) return;
+    this.holding = false;
+    this.sendHold(false, this.lastMono);
   }
   cancel(): void {
-    this.charging = false;
-    this.charge = 0;
+    this.release();
   }
 
-  /** xì NGAY: áp vào mô phỏng ở tick hiện tại + gửi server */
-  fire(power01: number, worldAngle: number): number {
+  private sentDown = false;
+  private sendHold(down: boolean, mono: number): void {
+    // đổi hướng khi đang giữ: cách nhau ≥ 50ms (khớp giới hạn của server)
+    if (down && this.sentDown && mono - this.lastHoldSent < 50) return;
+    this.sentDown = down;
     const tick = this.tick;
-    if (tick < 0 || tick < this.lastOwnTick + MIN_GAP) return 0;
-    const g = gasRegen(this.gas, tick - this.gt);
-    const pi = Math.min(Math.round(power01 * 100), gasLimitP(g));
-    if (pi < P_MIN) {
-      if (power01 * 100 >= P_MIN) this.fx.push({ kind: 'empty', seat: this.mySeat, tick, a: 0, p: 0, mine: true });
-      return 0;
-    }
-    const ai = clamp(Math.round(wrapPi(worldAngle) * 1000), -3142, 3142);
+    const ai = clamp(Math.round(wrapPi(this.aimWorld) * 1000), -3142, 3142);
     const n = this.nextN++;
-    this.gas = g - gasCost(pi);
-    this.gt = tick;
-    this.lastOwnTick = tick;
-    this.pend.push({ n, tick, p: pi, acked: false });
-    if (this.pend.length > 24) this.pend.shift();
-    this.mutate(() => this.sim.setEvent(tick, this.mySeat, ai, pi, n));
-    this.fx.push({ kind: 'fart', seat: this.mySeat, tick, a: ai / 1000, p: pi / 100, mine: true });
-    this.sendInput({ type: 'fart', t: tick, a: ai, p: pi, n });
-    return pi;
+    const p = down ? 100 : 0;
+    this.lastHoldSent = mono;
+    this.sentHoldAim = this.aimWorld;
+    this.pend.push({ n, tick, p, acked: false });
+    if (this.pend.length > 40) this.pend.shift();
+    this.mutate(() => this.sim.setEvent(tick, this.mySeat, ai, p, n));
+    this.sendInput({ type: 'fart', t: tick, a: ai, p, n });
   }
 
   /* ---------------- tin nhắn từ server ---------------- */
@@ -346,31 +357,20 @@ export class FartCore {
       }
       case 'f': {
         if (m.ti !== this.myTeam) return;
-        const known = this.sim.hasEvent(m.s, m.n);
         if (m.s === this.mySeat) {
           const p = this.pend.find((q) => q.n === m.n);
           if (p) {
             p.acked = true;
             p.tick = m.t;
           }
-          if (!this.pend.some((q) => !q.acked)) {
-            this.gas = m.g / 100;
-            this.gt = m.t;
-          }
-          this.mutate(() => this.sim.setEvent(m.t, m.s, m.a, m.p, m.n));
-          if (!p && !known) this.fx.push({ kind: 'fart', seat: m.s, tick: m.t, a: m.a / 1000, p: m.p / 100, mine: true });
-        } else {
-          this.mutate(() => this.sim.setEvent(m.t, m.s, m.a, m.p, m.n));
-          if (!known) this.fx.push({ kind: 'fart', seat: m.s, tick: m.t, a: m.a / 1000, p: m.p / 100, mine: false });
         }
+        this.mutate(() => this.sim.setEvent(m.t, m.s, m.a, m.p, m.n));
         break;
       }
       case 'x': {
         const i = this.pend.findIndex((q) => q.n === m.n);
         if (i >= 0) {
-          const p = this.pend[i];
           this.pend.splice(i, 1);
-          this.gas = Math.min(1, this.gas + gasCost(p.p));
           this.mutate(() => this.sim.removeEvent(this.mySeat, m.n));
         }
         break;

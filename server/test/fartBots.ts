@@ -4,7 +4,7 @@
 import { WebSocket } from 'ws';
 import { FartCore } from '../../shared/raftClient.js';
 import * as R from '../../shared/raft.js';
-import { botAim } from './fartBot.js';
+import { HoldBot } from './fartBot.js';
 
 const N = Number(process.argv[2] ?? 4);
 const PORT = Number(process.argv[3] ?? 8815);
@@ -20,8 +20,7 @@ interface Bot {
   core: FartCore | null;
   offset: number;
   bestRtt: number;
-  next: number;
-  rng: () => number;
+  hb: HoldBot;
 }
 const bots: Bot[] = [];
 let code = JOIN;
@@ -41,7 +40,7 @@ let rejected = 0;
 
 for (let i = 0; i < N; i++) {
   const ws = new WebSocket(WS);
-  const b: Bot = { ws, id: '', name: 'BOT' + i, core: null, offset: 0, bestRtt: 1e9, next: 20 + i * 5, rng: R.mulberry32(1000 + i) };
+  const b: Bot = { ws, id: '', name: 'BOT' + i, core: null, offset: 0, bestRtt: 1e9, hb: new HoldBot(1000 + i * 7) };
   ws.on('message', (d) => {
     const raw = String(d);
     const m = JSON.parse(raw);
@@ -115,10 +114,11 @@ const iv = setInterval(() => {
       }
     }
     c.fx.length = 0;
-    if (c.tick >= b.next) {
-      const aim = botAim(c.c, c.sim.S, c.tick);
-      c.fire(0.45 + b.rng() * 0.3, aim);
-      b.next = c.tick + 20 + Math.floor(b.rng() * 14);
+    const e = b.hb.step(c.c, c.sim.S, c.tick);
+    if (e) {
+      c.setAimWorld(e.a);
+      if (e.down && !c.holding) c.press(mono);
+      else if (!e.down && c.holding) c.release();
     }
   }
 }, 16);

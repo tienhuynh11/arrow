@@ -1,11 +1,9 @@
 import type { GameDefinition, PlayerResult } from './types.js';
 import type { GameInput } from '../../../shared/protocol.js';
 import {
-  GAS_BASE,
   MAX_BACK,
-  MIN_GAP,
+  MIN_GAP_MS,
   NS,
-  P_MIN,
   SEAT_ORDER,
   STEP_MS,
   S_FIN,
@@ -20,9 +18,6 @@ import {
   S_A,
   RaftSim,
   clamp,
-  gasCost,
-  gasLimitP,
-  gasRegen,
   genCourse,
   teamSizes,
   wrapPi,
@@ -45,10 +40,11 @@ interface Config {
 
 interface SeatSt {
   id: string;
-  gas: number;
-  /** tick của lần cập nhật khí */
-  gt: number;
+  /** tick của sự kiện gần nhất */
   last: number;
+  /** thời gian thật của sự kiện gần nhất */
+  evAt: number;
+  holding: boolean;
   lastN: number;
   aimA: number;
   aimC: number;
@@ -114,12 +110,12 @@ export const fartGame: GameDefinition<Config, State> = {
   id: 'fart',
   name: 'XÌ HƠI CÙNG NHAU',
   instructions:
-    'Cả bè chung một chiếc bè trên sông: mỗi cú xì đẩy bè NGƯỢC hướng bạn xì, nên phải phối hợp cùng hướng, cùng lúc để né đá, cổng, khúc gỗ và xoáy nước. Va mạnh làm hỏng bè, hết độ bền bè chìm và hồi sinh ở cột mốc. Bè nào về đích đầu tiên thắng!',
+    'Cả bè chung một chiếc bè trên sông: GIỮ để xì liên tục, bè bị đẩy NGƯỢC hướng bạn xì, nên phải phối hợp cùng hướng, cùng lúc để né gai, thanh gai quay/trượt, cổng gai và xoáy nước. Chạm gai hay va mạnh là mất độ bền, hết độ bền bè chìm và hồi sinh ở cột mốc. Bè nào về đích đầu tiên thắng!',
   controls: [
     { keys: ['CHUỘT'], desc: 'Rê chuột để chọn hướng xì (mũi tên xanh trên bè)' },
     { keys: ['A', 'D'], desc: 'hoặc ← → xoay hướng xì' },
-    { keys: ['SPACE'], desc: 'Giữ để tích lực, THẢ để xì (cũng dùng được chuột trái)' },
-    { keys: ['KHÍ'], desc: 'Thanh khí hao khi xì và hồi dần, xì cùng nhau mới đúng nhịp' },
+    { keys: ['SPACE'], desc: 'GIỮ để xì liên tục, buông để ngừng (cũng dùng được chuột trái)' },
+    { keys: ['KHÍ'], desc: 'Giữ lâu thì cạn khí và xì yếu dần, buông thì hồi; xì cùng nhau mới đúng nhịp' },
   ],
   duration: DURATION + 3000,
   minPlayers: 2,
@@ -145,7 +141,7 @@ export const fartGame: GameDefinition<Config, State> = {
       ids.forEach((id, seat) => (of[id] = { ti, seat }));
       const t: Team = {
         sim,
-        seats: ids.map((id) => ({ id, gas: 1, gt: 0, last: -99, lastN: -1, aimA: 0, aimC: 0, aimDirty: false, aimAt: 0 })),
+        seats: ids.map((id) => ({ id, last: -99, evAt: 0, holding: false, lastN: -1, aimA: 0, aimC: 0, aimDirty: false, aimAt: 0 })),
         finFinal: false,
         finTick: -1,
         finAt: 0,
@@ -197,21 +193,19 @@ export const fartGame: GameDefinition<Config, State> = {
     const a0 = Number(input.a);
     const p0 = Number(input.p);
     if (!Number.isFinite(t0) || !Number.isFinite(a0) || !Number.isFinite(p0) || n <= seat.lastN || n > 1e9) return reject();
-    // tick: không quá cũ (rollback tối đa MAX_BACK), không ở tương lai, mỗi người cách nhau ≥ MIN_GAP tick
+    const down = p0 > 0;
+    // giữ/đổi hướng bị giới hạn tần suất; thả luôn được nhận
+    if (down && seat.holding && now - seat.evAt < MIN_GAP_MS) return reject();
+    // tick: không quá cũ (rollback tối đa MAX_BACK), không ở tương lai, không lùi so với sự kiện trước của người này
     let tick = clamp(Math.floor(t0), cur - MAX_BACK, cur);
-    if (tick < seat.last + MIN_GAP) tick = seat.last + MIN_GAP;
-    if (tick > cur) return reject();
+    if (tick < seat.last) tick = seat.last;
     const ai = clamp(Math.round(wrapPi(a0 / 1000) * 1000), -3142, 3142);
-    let pi = clamp(Math.round(p0), 0, 100);
-    const g = gasRegen(seat.gas, tick - seat.gt);
-    pi = Math.min(pi, gasLimitP(g));
-    if (pi < P_MIN) return reject();
-    seat.gas = g - gasCost(pi);
-    seat.gt = tick;
     seat.last = tick;
     seat.lastN = n;
-    sim.setEvent(tick, me.seat, ai, pi, n);
-    const msg = { k: 'f', ti: me.ti, s: me.seat, n, t: tick, a: ai, p: pi, g: Math.round(seat.gas * 100) };
+    seat.evAt = now;
+    seat.holding = down;
+    sim.setEvent(tick, me.seat, ai, down ? 100 : 0, n);
+    const msg = { k: 'f', ti: me.ti, s: me.seat, n, t: tick, a: ai, p: down ? 100 : 0 };
     for (const s of team.seats) ctx.send(s.id, msg);
   },
 
@@ -224,6 +218,18 @@ export const fartGame: GameDefinition<Config, State> = {
       const sim = t.sim;
       sim.advanceTo(tick);
       sim.prune(tick - 20);
+      // người đang giữ mà im lặng quá lâu (rớt mạng/đóng tab): tự thả để bè không bị đẩy mãi
+      for (let si = 0; si < t.seats.length; si++) {
+        const se = t.seats[si];
+        if (se.holding && now - se.evAt > 1500) {
+          se.holding = false;
+          se.lastN++;
+          se.last = Math.max(se.last, tick);
+          sim.setEvent(se.last, si, 0, 0, se.lastN);
+          const msg = { k: 'f', ti, s: si, n: se.lastN, t: se.last, a: 0, p: 0 };
+          for (const s2 of t.seats) ctx.send(s2.id, msg);
+        }
+      }
       const sk = sim.S[S_SINK] > 0;
       if (sk && !t.wasSink) t.sinks++;
       t.wasSink = sk;
@@ -313,4 +319,3 @@ export const fartGame: GameDefinition<Config, State> = {
 };
 
 const tmpState = new Float64Array(NS);
-void GAS_BASE;

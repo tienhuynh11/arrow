@@ -500,7 +500,7 @@ client/src/
 | ĐUỔI BẮT BOM | `←` `↑` `→` `↓` chạy tự do, chạm vào người khác để chuyền bom |
 | KÉO CO | `SPACE` bấm liên tục để kéo |
 | ĐUA TƯỜNG (Quoridor) | chuột / chạm chọn ô để đi hoặc đặt tường |
-| XÌ HƠI CÙNG NHAU (`fart`) | `A` `D` / chuột để ngắm, GIỮ `SPACE` để nạp, thả ra để xì |
+| XÌ HƠI CÙNG NHAU (`fart`) | `A` `D` / chuột để ngắm, GIỮ `SPACE` (hoặc chuột trái) để xì liên tục, buông để ngừng |
 | XE TĂNG ĐẠN NẢY (`tanks`) | `W` `S` tiến/lùi, `A` `D` xoay thân xe, `SPACE` hoặc chuột trái để bắn |
 
 

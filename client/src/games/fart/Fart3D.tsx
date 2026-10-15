@@ -5,7 +5,6 @@ import { S_FIN, S_HP, S_SINK, STEP_MS } from '@shared/raft';
 import { createFartScene, TEAM_COLORS, type FartBridge } from '../../three/fartScene';
 import { isTouchDevice } from '../../components/TouchControls';
 import { net } from '../../network/net';
-import { sfx } from '../../utils/sound';
 import { useLatest, useScene } from '../view3d';
 
 interface Props {
@@ -184,10 +183,7 @@ export default function Fart3D({ core, config, players, meId, live, startAt }: P
     let right = false;
     const upd = () => core.turn((left ? 1 : 0) - (right ? 1 : 0));
     const doPress = () => core.press(performance.now());
-    const doRelease = () => {
-      const p = core.release();
-      if (p > 0) sfx.fart(p / 100);
-    };
+    const doRelease = () => core.release();
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         e.preventDefault();
@@ -321,7 +317,7 @@ export default function Fart3D({ core, config, players, meId, live, startAt }: P
         {touch && live && <FartTouch core={core} bridge={bridge.current} />}
       </div>
       <p className="hint">
-        Rê chuột chọn hướng xì (hoặc A/D · ←/→) · giữ SPACE/chuột trái để tích lực, thả để xì · bè bị đẩy NGƯỢC hướng xì · cả bè xì cùng hướng mới đi nhanh
+        Rê chuột chọn hướng xì (hoặc A/D · ←/→) · GIỮ SPACE/chuột trái để xì liên tục, buông để ngừng · bè bị đẩy NGƯỢC hướng xì · tránh gai, cả bè xì cùng hướng mới đi nhanh
       </p>
     </div>
   );
@@ -378,8 +374,7 @@ function FartTouch({ core, bridge }: { core: FartCore; bridge: FartBridge }) {
         }}
         onPointerUp={() => {
           setOn(false);
-          const p = core.release();
-          if (p > 0) sfx.fart(p / 100);
+          core.release();
         }}
         onPointerCancel={() => {
           setOn(false);
@@ -387,7 +382,7 @@ function FartTouch({ core, bridge }: { core: FartCore; bridge: FartBridge }) {
         }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        XÌ!
+        GIỮ XÌ
       </button>
     </>
   );

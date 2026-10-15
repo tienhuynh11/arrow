@@ -22,12 +22,13 @@ export function botAim(c: R.Course, S: Float64Array, tick: number): number {
     if (c.obK[i] === R.OB_ROCK) {
       const ci = Math.min(c.n - 2, Math.max(0, Math.round(c.obS[i] / c.ds)));
       const lr = (ev[0] - c.px[ci]) * -c.ty[ci] + (ev[1] - c.py[ci]) * c.tx[ci];
-      const gap = ev[4] + 2.3;
+      const gap = ev[4] + 2.6;
       const c1 = lr - gap;
       const c2 = lr + gap;
-      const lim = c.hw[ci] - 2.3;
-      const ok1 = Math.abs(c1) < lim;
-      const ok2 = Math.abs(c2) < lim;
+      const lim1 = c.hw[ci] - (c1 > 0 ? (c.spL[ci] ? 3.2 : 2.3) : c.spR[ci] ? 3.2 : 2.3);
+      const lim2 = c.hw[ci] - (c2 > 0 ? (c.spL[ci] ? 3.2 : 2.3) : c.spR[ci] ? 3.2 : 2.3);
+      const ok1 = Math.abs(c1) < lim1;
+      const ok2 = Math.abs(c2) < lim2;
       latT = ok1 && ok2 ? (Math.abs(c1 - lat) < Math.abs(c2 - lat) ? c1 : c2) : ok1 ? c1 : c2;
       break;
     }
@@ -53,12 +54,45 @@ export function botAim(c: R.Course, S: Float64Array, tick: number): number {
   const steer = Math.max(-1.6, Math.min(1.6, (latT - lat) * 0.55)) + push;
   dx += nx * steer;
   dy += ny * steer;
-  if (Math.abs(lat) > hw - 2.6) {
-    const k = (Math.abs(lat) - (hw - 2.6)) * 0.9;
+  const edgeM = (lat > 0 ? c.spL[i0] : c.spR[i0]) ? 3.5 : 2.6;
+  if (Math.abs(lat) > hw - edgeM) {
+    const k = (Math.abs(lat) - (hw - edgeM)) * 0.9;
     dx -= Math.sign(lat) * nx * k;
     dy -= Math.sign(lat) * ny * k;
   }
   dx += tx * 0.5;
   dy += ty * 0.5;
   return Math.atan2(dy, dx) + Math.PI;
+}
+
+/** bot GIỮ/BUÔNG theo chu kỳ: giữ ~0.7-1.3s, nghỉ ~0.4-1s; khi giữ thì cập nhật hướng nếu đổi nhiều */
+export class HoldBot {
+  holding = false;
+  private until: number;
+  private lastEv = -99;
+  private lastA = 0;
+  private rng: () => number;
+  constructor(seed: number) {
+    this.rng = R.mulberry32(seed);
+    this.until = 5 + Math.floor(this.rng() * 40);
+  }
+  /** trả về sự kiện cần gửi hoặc null */
+  step(c: R.Course, S: Float64Array, tick: number): { down: boolean; a: number } | null {
+    if (tick >= this.until) {
+      this.holding = !this.holding;
+      this.until = tick + (this.holding ? 40 + Math.floor(this.rng() * 40) : 25 + Math.floor(this.rng() * 35));
+      this.lastEv = tick;
+      this.lastA = botAim(c, S, tick);
+      return { down: this.holding, a: this.lastA };
+    }
+    if (this.holding && tick - this.lastEv >= 8) {
+      const a = botAim(c, S, tick);
+      if (Math.abs(R.wrapPi(a - this.lastA)) > 0.12) {
+        this.lastEv = tick;
+        this.lastA = a;
+        return { down: true, a };
+      }
+    }
+    return null;
+  }
 }

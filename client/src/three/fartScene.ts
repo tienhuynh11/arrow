@@ -297,16 +297,15 @@ export function createFartScene(o: FartSceneOptions) {
       });
       scene.add(trunk, foliage, foliage2);
 
-      /* ---------------- chướng ngại ---------------- */
+      /* ---------------- chướng ngại: GAI ---------------- */
       const rockIdx: number[] = [];
+      const mineIdx: number[] = [];
       const dynIdx: number[] = [];
-      for (let i = 0; i < c.nOb; i++) (c.obK[i] === OB_ROCK ? rockIdx : dynIdx).push(i);
+      for (let i = 0; i < c.nOb; i++) {
+        if (c.obK[i] === OB_ROCK) (c.obSp[i] ? mineIdx : rockIdx).push(i);
+        else dynIdx.push(i);
+      }
       const rockMesh = new InstancedMesh(new IcosahedronGeometry(1, 1), k.lit({ color: '#ffffff', flatShading: true }), Math.max(1, rockIdx.length));
-      const foamMesh = new InstancedMesh(
-        new CircleGeometry(1, 20),
-        new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.32, depthWrite: false }),
-        Math.max(1, rockIdx.length),
-      );
       rockIdx.forEach((oi, i) => {
         const f = c.ob;
         const o5 = oi * OB_STRIDE;
@@ -317,15 +316,116 @@ export function createFartScene(o: FartSceneOptions) {
         rockMesh.setMatrixAt(i, m4);
         color.set(['#8d8a86', '#9b958d', '#7b7f86'][i % 3]);
         rockMesh.setColorAt(i, color);
-        quat.setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI / 2);
-        scl.set(r + 0.9, r + 0.9, 1);
-        m4.compose(pos.set(wx(f[o5]), 0.05, wz(f[o5 + 1])), quat, scl);
-        foamMesh.setMatrixAt(i, m4);
       });
-      scene.add(rockMesh, foamMesh);
+      rockMesh.count = rockIdx.length;
+      scene.add(rockMesh);
 
-      const woodMat = k.lit({ color: '#b07a45' });
+      const spikeGeo = new ConeGeometry(0.15, 0.5, 6);
+      const spikeMat = new MeshLambertMaterial({ color: '#e8edf6' });
+      const upV = new Vector3(0, 1, 0);
+      const dirV = new Vector3();
+      /** đặt một gai: gốc (bx,by,bz), hướng (dx,dy,dz), dài len */
+      const putSpike = (mesh: InstancedMesh, idx: number, bx: number, by: number, bz: number, dx: number, dy: number, dz: number, len: number, thick = 1) => {
+        dirV.set(dx, dy, dz).normalize();
+        quat.setFromUnitVectors(upV, dirV);
+        scl.set(thick, len / 0.5, thick);
+        m4.compose(pos.set(bx + dirV.x * len * 0.5, by + dirV.y * len * 0.5, bz + dirV.z * len * 0.5), quat, scl);
+        mesh.setMatrixAt(idx, m4);
+      };
+
+      // MÌN GAI: quả cầu thép + gai toả đều
+      const mineDirs: [number, number, number][] = [];
+      {
+        const t = (1 + Math.sqrt(5)) / 2;
+        for (const [a, b] of [[1, t], [-1, t], [1, -t], [-1, -t]]) {
+          mineDirs.push([0, a, b], [a, b, 0], [b, 0, a]);
+        }
+        for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) mineDirs.push([x, y, z]);
+      }
+      const mineBody = new InstancedMesh(new IcosahedronGeometry(1, 1), new MeshLambertMaterial({ color: '#3b414d' }), Math.max(1, mineIdx.length));
+      const mineSpikes = new InstancedMesh(spikeGeo, spikeMat, Math.max(1, mineIdx.length * mineDirs.length));
+      const mineRing = new InstancedMesh(
+        new CircleGeometry(1, 24),
+        new MeshBasicMaterial({ color: '#ff4a3d', transparent: true, opacity: 0.3, depthWrite: false }),
+        Math.max(1, mineIdx.length),
+      );
+      mineIdx.forEach((oi, i) => {
+        const f = c.ob;
+        const o5 = oi * OB_STRIDE;
+        const r = f[o5 + 2];
+        const X = wx(f[o5]);
+        const Z = wz(f[o5 + 1]);
+        quat.identity();
+        scl.setScalar(r * 0.6);
+        m4.compose(pos.set(X, 0.25, Z), quat, scl);
+        mineBody.setMatrixAt(i, m4);
+        mineDirs.forEach((d, q) => putSpike(mineSpikes, i * mineDirs.length + q, X, 0.25, Z, d[0], d[1], d[2], r * 1.05, 1.1));
+        quat.setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI / 2);
+        scl.set(r + 0.6, r + 0.6, 1);
+        m4.compose(pos.set(X, 0.06, Z), quat, scl);
+        mineRing.setMatrixAt(i, m4);
+      });
+      mineBody.count = mineIdx.length;
+      mineSpikes.count = mineIdx.length * mineDirs.length;
+      mineRing.count = mineIdx.length;
+      scene.add(mineBody, mineSpikes, mineRing);
+
+      // GAI Ở BỜ: hàng gai nghiêng vào lòng sông + dải cảnh báo đỏ-trắng
+      {
+        const pts: [number, number][] = [];
+        for (let i = 1; i < c.n - 1; i++) {
+          if (c.spL[i]) pts.push([i, 1]);
+          if (c.spR[i]) pts.push([i, -1]);
+        }
+        const per = 3;
+        const bank = new InstancedMesh(spikeGeo, spikeMat, Math.max(1, pts.length * per));
+        const tilt = Math.sin((50 * Math.PI) / 180);
+        const tcos = Math.cos((50 * Math.PI) / 180);
+        pts.forEach(([i, sg], q) => {
+          const [tx, ty] = nT(i);
+          for (let u = 0; u < per; u++) {
+            const along = (u / per - 0.33) * c.ds;
+            const lat = sg * (c.hw[i] + 0.15);
+            const ex = c.px[i] - ty * lat + tx * along;
+            const ey = c.py[i] + tx * lat + ty * along;
+            // hướng vào sông (ngược dấu lat) và lên trên
+            const inX = ty * sg;
+            const inY = -tx * sg;
+            putSpike(bank, q * per + u, wx(ex), 0.3, wz(ey), inX * tilt, tcos, -inY * tilt, 1.0 + rng() * 0.25, 1.25);
+          }
+        });
+        bank.count = pts.length * per;
+        scene.add(bank);
+        const verts: number[] = [];
+        const cols: number[] = [];
+        const idxs: number[] = [];
+        let vi = 0;
+        for (const sg of [1, -1]) {
+          for (let i = 1; i < c.n - 2; i++) {
+            const on = sg > 0 ? c.spL[i] && c.spL[i + 1] : c.spR[i] && c.spR[i + 1];
+            if (!on) continue;
+            const a = edge(i, sg * (c.hw[i] + 0.05));
+            const b = edge(i, sg * (c.hw[i] + 1.1));
+            const a2 = edge(i + 1, sg * (c.hw[i + 1] + 0.05));
+            const b2 = edge(i + 1, sg * (c.hw[i + 1] + 1.1));
+            verts.push(wx(a[0]), 0.36, wz(a[1]), wx(b[0]), 0.36, wz(b[1]), wx(a2[0]), 0.36, wz(a2[1]), wx(b2[0]), 0.36, wz(b2[1]));
+            const red = i % 2 === 0;
+            for (let q = 0; q < 4; q++) cols.push(red ? 0.9 : 1, red ? 0.25 : 0.95, red ? 0.2 : 0.9);
+            idxs.push(vi, vi + 1, vi + 2, vi + 1, vi + 3, vi + 2);
+            vi += 4;
+          }
+        }
+        if (vi > 0) {
+          const g = new BufferGeometry();
+          g.setAttribute('position', new BufferAttribute(new Float32Array(verts), 3));
+          g.setAttribute('color', new BufferAttribute(new Float32Array(cols), 3));
+          g.setIndex(idxs);
+          scene.add(new Mesh(g, new MeshBasicMaterial({ vertexColors: true, side: DoubleSide })));
+        }
+      }
+
       const redMat = k.lit({ color: '#e0453a' });
+      const steel = k.lit({ color: '#4a4f5c' });
       const stripeTex = k.texture(64, 16, (g, w, h) => {
         g.fillStyle = '#ffd23f';
         g.fillRect(0, 0, w, h);
@@ -347,10 +447,10 @@ export function createFartScene(o: FartSceneOptions) {
         kind: number;
         group: Group;
         bar?: Mesh;
-        mat?: MeshLambertMaterial;
-        lamp?: Mesh;
+        spikes?: InstancedMesh;
         lampMat?: MeshBasicMaterial;
         len: number;
+        spikeStep?: number;
       }
       const dyns: Dyn[] = [];
       for (const oi of dynIdx) {
@@ -360,28 +460,28 @@ export function createFartScene(o: FartSceneOptions) {
         const group = new Group();
         const d: Dyn = { i: oi, kind, group, len: 1 };
         if (kind === OB_SLIDER) {
+          // THANH GAI TRƯỢT: trục dọc theo z cục bộ, gai toả 5 hướng
           const hl = f[o5 + 6];
-          const rad = f[o5 + 10];
-          const log = new Mesh(new CapsuleGeometry(rad, hl * 2, 4, 10), woodMat);
-          log.rotation.x = Math.PI / 2; // nằm dọc theo trục z cục bộ
-          log.position.y = 0.18;
-          group.add(log);
-          for (const sgn of [-1, 1]) {
-            const band = new Mesh(new TorusGeometry(rad + 0.02, 0.06, 6, 14), k.lit({ color: '#6b4524' }));
-            band.position.set(0, 0.18, sgn * hl * 0.6);
-            group.add(band);
+          const bar = new Mesh(new CylinderGeometry(0.3, 0.3, hl * 2 + 0.6, 10), steel);
+          bar.rotation.x = Math.PI / 2;
+          bar.position.y = 0.3;
+          group.add(bar);
+          const dirs: [number, number, number][] = [[0, 1, 0], [1, 0.4, 0], [-1, 0.4, 0], [0.7, 0.9, 0], [-0.7, 0.9, 0]];
+          const nz = 7;
+          const sp = new InstancedMesh(spikeGeo, spikeMat, nz * dirs.length);
+          for (let z = 0; z < nz; z++) {
+            const zz = -hl + (z / (nz - 1)) * hl * 2;
+            dirs.forEach((dv, q) => putSpike(sp, z * dirs.length + q, dv[0] * 0.2, 0.3 + dv[1] * 0.2, zz, dv[0], dv[1], 0, 0.65));
           }
-          // đường ray + phao ở hai đầu hành trình: dấu hiệu "khúc gỗ quét ngang"
+          group.add(sp);
+          // ray + phao ở hai đầu hành trình: dấu hiệu "thanh gai quét ngang"
           const A = f[o5 + 7];
           const railGeo = new PlaneGeometry(A * 2.1, 0.35);
           railGeo.rotateX(-Math.PI / 2);
           const rail = new Mesh(railGeo, new MeshBasicMaterial({ map: stripeTex, transparent: true, opacity: 0.55, depthWrite: false }));
           rail.position.set(wx(f[o5]), 0.06, wz(f[o5 + 1]));
-          // trục dài của rail theo phương quét (nx, ny của server)
           rail.rotation.y = Math.atan2(f[o5 + 3], f[o5 + 2]);
           scene.add(rail);
-          dyns.push(d);
-          scene.add(group);
           const buoyGeo = new SphereGeometry(0.4, 10, 8);
           for (const sg of [-1, 1]) {
             const b = new Mesh(buoyGeo, redMat);
@@ -389,36 +489,46 @@ export function createFartScene(o: FartSceneOptions) {
             scene.add(b);
           }
         } else if (kind === OB_ARM) {
+          // THANH GAI QUAY: thân thép dọc x cục bộ, gai trên/trước/sau, trục giữa đỏ
           const L = f[o5 + 2];
-          const bar = new Mesh(new BoxGeometry(L * 2, 0.5, 0.6), k.lit({ color: '#ffffff', map: stripeTex }));
-          (bar.material as MeshLambertMaterial).map!.repeat.set(L / 1.2, 1);
+          const bar = new Mesh(new BoxGeometry(L * 2, 0.36, 0.36), steel);
           bar.position.y = 0.3;
           const hub = new Mesh(new CylinderGeometry(0.75, 0.9, 1.1, 14), redMat);
           hub.position.y = 0.45;
           group.add(bar, hub);
-          d.bar = bar;
-          dyns.push(d);
-          scene.add(group);
+          const nx = Math.max(3, Math.floor((L * 2) / 0.6));
+          const dirs: [number, number, number][] = [[0, 1, 0], [0, 0.3, 1], [0, 0.3, -1]];
+          const sp = new InstancedMesh(spikeGeo, spikeMat, nx * dirs.length);
+          for (let x = 0; x < nx; x++) {
+            const xx = -L + ((x + 0.5) / nx) * L * 2;
+            dirs.forEach((dv, q) => putSpike(sp, x * dirs.length + q, xx, 0.3 + dv[1] * 0.15, dv[2] * 0.15, dv[0], dv[1], dv[2], 0.65));
+          }
+          group.add(sp);
         } else {
-          // cổng đóng/mở: trụ ở bờ + thanh trượt ra + đèn báo (đỏ nhấp nháy trước khi đóng)
+          // CỔNG GAI: trụ ở bờ + thanh gai trượt ra + đèn báo (đỏ nhấp nháy trước khi đóng)
           const post = new Mesh(new CylinderGeometry(0.45, 0.55, 2.4, 10), k.lit({ color: '#ffffff', map: stripeTex }));
           post.position.y = 1.0;
-          const mat = new MeshLambertMaterial({ color: '#f1d58a' });
-          const bar = new Mesh(new BoxGeometry(1, 0.5, 0.5), mat);
+          const bar = new Mesh(new BoxGeometry(1, 0.36, 0.36), steel);
           bar.position.y = 0.3;
           bar.geometry.translate(0.5, 0, 0);
           const lampMat = new MeshBasicMaterial({ color: '#59ff7a' });
           const lamp = new Mesh(new SphereGeometry(0.4, 10, 8), lampMat);
           lamp.position.y = 2.5;
           group.add(post, bar, lamp);
+          const step = 0.7;
+          const nx = Math.ceil((f[o5 + 4] + 0.5) / step);
+          const dirs: [number, number, number][] = [[0, 1, 0], [0, 0.3, 1], [0, 0.3, -1]];
+          const sp = new InstancedMesh(spikeGeo, spikeMat, nx * dirs.length);
+          for (let x = 0; x < nx; x++) dirs.forEach((dv, q) => putSpike(sp, x * dirs.length + q, 0.45 + x * step, 0.3 + dv[1] * 0.15, dv[2] * 0.15, dv[0], dv[1], dv[2], 0.65));
+          group.add(sp);
           d.bar = bar;
-          d.mat = mat;
-          d.lamp = lamp;
+          d.spikes = sp;
+          d.spikeStep = step;
           d.lampMat = lampMat;
           d.len = f[o5 + 4];
-          dyns.push(d);
-          scene.add(group);
         }
+        dyns.push(d);
+        scene.add(group);
       }
 
       /* ---------------- xoáy nước ---------------- */
@@ -553,6 +663,9 @@ export function createFartScene(o: FartSceneOptions) {
 
       const chars: Character3D[] = [];
       const charT: { fireAt: number; hitAt: number }[] = [];
+      const puffT: number[] = [0, 0, 0, 0];
+      const ringT: number[] = [0, 0, 0, 0];
+      const sndT: number[] = [0, 0, 0, 0];
       for (let s = 0; s < o.team.length; s++) {
         const slot = core.sim.slots[s];
         const ch = k.kit.create(o.team[s].color, o.team[s].id === o.meId);
@@ -703,7 +816,7 @@ export function createFartScene(o: FartSceneOptions) {
               const warn = obWarn(c, d.i, Math.floor(tk));
               const closing = len > 0.05;
               const flash = warn > 0 ? (Math.sin(time * 18) > 0 ? 1 : 0.3) : 0;
-              d.mat!.color.set(closing ? '#e8b64c' : '#f1d58a');
+              d.spikes!.count = closing ? 3 * Math.max(0, Math.floor((len - 0.3) / d.spikeStep!) + 1) : 0;
               d.lampMat!.color.set(warn > 0 ? (flash > 0.5 ? '#ff3b30' : '#7a1f1a') : closing ? '#ff6a3d' : '#59ff7a');
             }
           }
@@ -777,14 +890,43 @@ export function createFartScene(o: FartSceneOptions) {
           for (let s = 0; s < chars.length; s++) {
             const ch = chars[s];
             const isMe = s === core.mySeat;
-            const aimA = isMe ? core.aimWorld : core.aimA[s];
-            const charge = isMe ? core.charge : core.aimC[s];
+            const aimA = core.seatAim(s);
+            const charge = core.seatPower(s);
+            // khí xì LIÊN TỤC khi đang giữ
+            if (charge > 0 && !sinking) {
+              puffT[s] -= dt;
+              if (puffT[s] <= 0) {
+                puffT[s] = k.low ? 0.1 : 0.06;
+                const sp0 = seatPos(s, v3);
+                const sp = 2.2 + charge * 2.6;
+                for (let j = 0; j < (k.low ? 1 : 2); j++) {
+                  const aa = aimA + (Math.random() - 0.5) * 0.55;
+                  spawnPuff(sp0.x + Math.cos(aa) * 0.5, sp0.z - Math.sin(aa) * 0.5, Math.cos(aa) * sp, -Math.sin(aa) * sp, 0.8 + charge * 0.9 + Math.random() * 0.4, 0.5 + charge * 0.25);
+                }
+              }
+              ringT[s] -= dt;
+              if (ringT[s] <= 0) {
+                ringT[s] = 0.32;
+                const sp0 = seatPos(s, v3);
+                k.effects.ring(sp0.x + Math.cos(aimA) * 0.7, sp0.z - Math.sin(aimA) * 0.7, '#bfffd0', 0.6, 2.4);
+              }
+              charT[s].fireAt = time;
+              // âm thanh lặp nhẹ: của mình rõ hơn, của đồng đội nhỏ
+              sndT[s] -= dt;
+              if (sndT[s] <= 0) {
+                sndT[s] = isMe ? 0.15 : 0.28;
+                sfx.fart(0.2 + charge * 0.15, isMe ? 0.55 : 0.18);
+              }
+            } else {
+              puffT[s] = 0;
+              sndT[s] = 0;
+            }
             // mặt quay ra NGƯỢC hướng xì (đít hướng về phía xì)
             const worldYaw = Math.atan2(-Math.cos(aimA), Math.sin(aimA));
             ch.setYaw(worldYaw - core.pa);
-            const sinceFire = time - charT[s].fireAt;
+            const sinceFire = charge > 0 ? 0 : time - charT[s].fireAt;
             const sinceHit = time - charT[s].hitAt;
-            const pose = fin ? 'cheer' : sinking ? 'sad' : sinceHit < 0.5 ? 'hit' : sinceFire < 0.28 ? 'punch' : charge > 0.05 ? 'pull' : 'idle';
+            const pose = fin ? 'cheer' : sinking ? 'sad' : sinceHit < 0.5 ? 'hit' : charge > 0.05 ? 'pull' : sinceFire < 0.2 ? 'punch' : 'idle';
             ch.update(dt, { speed: 0, dead: false, time, pose });
             const sq = charge > 0.05 ? charge : 0;
             ch.root.scale.set(0.95 + sq * 0.07, 0.95 - sq * 0.06, 0.95 + sq * 0.07);

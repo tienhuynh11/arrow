@@ -15,7 +15,12 @@ export const DT = 1 / TICK_HZ;
 export const MAX_BACK = 14;
 
 /* ---------------- trạng thái bè ---------------- */
-export const NS = 16;
+/** 16 phần tử cho bè + 3 phần tử mỗi chỗ ngồi (giữ, hướng xì mrad, khí) */
+export const NS = 28;
+export const S_SEAT0 = 16;
+export const sHold = (j: number) => S_SEAT0 + 3 * j;
+export const sAim = (j: number) => S_SEAT0 + 3 * j + 1;
+export const sGas = (j: number) => S_SEAT0 + 3 * j + 2;
 export const S_X = 0;
 export const S_Y = 1;
 export const S_A = 2;
@@ -43,8 +48,8 @@ export const S_HITV = 14;
 export const S_HITS = 15;
 
 /* ---------------- hằng số vật lý ---------------- */
-export const DV_MAX = 2.7; // Δv khi xì hết lực (m/s)
-export const TQ = 0.62; // hệ số mô-men xoắn: Δω = TQ * (r × Δv)
+export const THRUST = 2.6; // gia tốc (m/s²) mỗi người khi đang GIỮ xì, khí còn đầy
+export const TQ = 0.75; // hệ số mô-men xoắn: Δω = TQ * (r × Δv) mỗi tick
 export const FLOW_DRAG = 0.85; // kéo của nước (1/s) - hướng về vận tốc dòng chảy
 export const ANG_DRAG = 1.7; // ma sát quay (1/s)
 export const RESTITUTION = 0.4;
@@ -69,18 +74,11 @@ export const CIRC_X = [0.95, 0.95, -0.95, -0.95];
 export const CIRC_Y = [-0.5, 0.5, -0.5, 0.5];
 export const CIRC_R = 0.78;
 
-/* ---------------- khí (gas) ---------------- */
-export const GAS_REGEN = 0.22; // /s
-export const GAS_BASE = 0.1;
-export const GAS_COEF = 0.5;
-export const P_MIN = 8; // lực tối thiểu (0..100) để tính là một cú xì
-export const MIN_GAP = 6; // tick giữa hai cú xì của một người
-export const CHARGE_TIME = 0.8; // s để tích đầy lực
-
-export const gasCost = (pi: number) => GAS_BASE + (GAS_COEF * pi) / 100;
-/** lực lớn nhất (0..100, nguyên) mà lượng khí g cho phép */
-export const gasLimitP = (g: number) => Math.max(0, Math.min(100, Math.floor(((g - GAS_BASE) / GAS_COEF) * 100 + 1e-9)));
-export const gasRegen = (g: number, ticks: number) => Math.min(1, g + (GAS_REGEN * Math.max(0, ticks)) / TICK_HZ);
+/* ---------------- khí (gas): nằm trong trạng thái mô phỏng nên xác định ---------------- */
+export const GAS_DRAIN = 0.28; // /s khi đang giữ xì
+export const GAS_REGEN = 0.25; // /s khi buông
+export const GAS_FADE = 0.3; // dưới mức này lực xì yếu dần
+export const MIN_GAP_MS = 40; // giữa hai sự kiện giữ/thả/đổi hướng của một người (server)
 
 /** chia đội: 2-4 người/bè, không có bè 1 người (khi n ≥ 2) */
 export function teamSizes(n: number): number[] {
@@ -129,6 +127,11 @@ export interface Course {
   ob: Float64Array;
   /** quãng đường đặt chướng ngại (để lọc nhanh) */
   obS: Float64Array;
+  /** 1 = chướng ngại có GAI (chạm là mất độ bền) */
+  obSp: Uint8Array;
+  /** gai ở bờ trái / phải tại điểm i */
+  spL: Uint8Array;
+  spR: Uint8Array;
   nWh: number;
   /** x, y, R, độ mạnh (âm = ngược chiều kim đồng hồ) */
   wh: Float64Array;
@@ -197,13 +200,13 @@ export function genCourse(seed: number): Course {
     piece(8, 0, 4.8, 1.6);
   });
   zone('narrow', () => {
-    piece(12, 0, 3.1, 2.1);
-    piece(22, deg(32) * -s, 3.1, 2.2);
-    piece(22, deg(32) * s, 3.1, 2.2);
+    piece(12, 0, 3.7, 2.1);
+    piece(22, deg(32) * -s, 3.7, 2.2);
+    piece(22, deg(32) * s, 3.7, 2.2);
     piece(6, 0, 4.5, 1.8);
   });
   const rockS0 = (xs.length - 1) * DS;
-  zone('rocks', () => piece(63, deg(j(-14, 8)) * s, 6.2, 1.5));
+  zone('rocks', () => piece(72, deg(j(-14, 8)) * s, 6.9, 1.5));
   const movS0 = (xs.length - 1) * DS;
   zone('moving', () => {
     piece(48, deg(12) * s, 6.5, 1.5);
@@ -233,6 +236,9 @@ export function genCourse(seed: number): Course {
     obK: new Uint8Array(48),
     ob: new Float64Array(48 * OB_STRIDE),
     obS: new Float64Array(48),
+    obSp: new Uint8Array(48),
+    spL: new Uint8Array(n),
+    spR: new Uint8Array(n),
     nWh: 0,
     wh: new Float64Array(4 * 4),
     cpS: new Float64Array(4),
@@ -268,8 +274,9 @@ export function genCourse(seed: number): Course {
     const i = at(sPos);
     return [c.px[i] - c.ty[i] * lat, c.py[i] + c.tx[i] * lat];
   };
-  const addOb = (kind: number, sPos: number, f: number[]) => {
+  const addOb = (kind: number, sPos: number, f: number[], spiky = kind !== OB_ROCK) => {
     const i = c.nOb++;
+    c.obSp[i] = spiky ? 1 : 0;
     c.obK[i] = kind;
     c.obS[i] = sPos;
     for (let q = 0; q < f.length; q++) c.ob[i * OB_STRIDE + q] = f[q];
@@ -278,14 +285,14 @@ export function genCourse(seed: number): Course {
   // chướng ngại tĩnh: đá
   {
     const zr = zones.find((z) => z.name === 'rocks')!;
-    const cnt = 8;
+    const cnt = 7;
     for (let i = 0; i < cnt; i++) {
       const sPos = rockS0 + 6 + (i * (zr.s1 - zr.s0 - 12)) / (cnt - 1);
       const hwHere = c.hw[at(sPos)];
       const side = i % 2 ? 1 : -1;
       const lat = side * (0.15 + rng() * 0.5) * hwHere;
       const [x, y] = place(sPos, lat);
-      addOb(OB_ROCK, sPos, [x, y, 1 + rng() * 0.5]);
+      addOb(OB_ROCK, sPos, [x, y, 0.9 + rng() * 0.4], i % 2 === 0); // chẵn: MÌN GAI, lẻ: đá trơn
     }
   }
   // chướng ngại động
@@ -293,7 +300,7 @@ export function genCourse(seed: number): Course {
     const sl = (sPos: number, P: number, ph: number, A: number) => {
       const i = at(sPos);
       const [x, y] = place(sPos, 0);
-      addOb(OB_SLIDER, sPos, [x, y, -c.ty[i], c.tx[i], c.tx[i], c.ty[i], 1.5, A, P, ph, 0.5]);
+      addOb(OB_SLIDER, sPos, [x, y, -c.ty[i], c.tx[i], c.tx[i], c.ty[i], 1.5, A, P, ph, 0.7]);
     };
     const hw1 = c.hw[at(movS0 + 12)];
     sl(movS0 + 12, 480, 0, hw1 - 1.7);
@@ -301,7 +308,7 @@ export function genCourse(seed: number): Course {
     {
       const sPos = movS0 + 32;
       const [x, y] = place(sPos, 0);
-      addOb(OB_ARM, sPos, [x, y, c.hw[at(sPos)] * 0.72, (0.011 * (rng() < 0.5 ? 1 : -1)), rng() * TAU, 0.42]);
+      addOb(OB_ARM, sPos, [x, y, c.hw[at(sPos)] * 0.72, (0.011 * (rng() < 0.5 ? 1 : -1)), rng() * TAU, 0.7]);
     }
     // hai cổng đóng mở xen kẽ
     const gate = (sPos: number, side: number, ph: number) => {
@@ -309,7 +316,7 @@ export function genCourse(seed: number): Course {
       const hwH = c.hw[i];
       const [x, y] = place(sPos, side * hwH);
       // dir = chỉ ngang qua sông, từ bờ vào
-      addOb(OB_GATE, sPos, [x, y, c.ty[i] * side, -c.tx[i] * side, hwH * 1.35, 280, 0.5, ph, 0.5]);
+      addOb(OB_GATE, sPos, [x, y, c.ty[i] * side, -c.tx[i] * side, hwH * 1.35, 280, 0.5, ph, 0.7]);
     };
     gate(movS0 + 52, 1, 0);
     gate(movS0 + 60, -1, 140);
@@ -324,7 +331,36 @@ export function genCourse(seed: number): Course {
     c.nWh = 2;
     c.wh.set([w1[0], w1[1], 7.5, 2.4 * dir, w2[0], w2[1], 7.5, -2.4 * dir]);
     const [rx, ry] = place(whS0 + 25, 0);
-    addOb(OB_ROCK, whS0 + 25, [rx, ry, 1.3]);
+    addOb(OB_ROCK, whS0 + 25, [rx, ry, 1.3], true);
+  }
+  // gai ở bờ
+  {
+    const zn = (name: string) => zones.find((z) => z.name === name)!;
+    const mark = (z: Zone, pad: number, f: (i: number) => void) => {
+      for (let i = Math.max(1, Math.round((z.s0 + pad) / DS)); i < Math.min(n - 1, Math.round((z.s1 - pad) / DS)); i++) f(i);
+    };
+    // khúc cua gắt: gai ở bờ NGOÀI của mỗi khúc cua
+    mark(zn('turns'), 3, (i) => {
+      const cr = c.tx[i - 1] * c.ty[i] - c.ty[i - 1] * c.tx[i];
+      if (cr > 0.012) c.spR[i] = 1;
+      else if (cr < -0.012) c.spL[i] = 1;
+    });
+    // lối hẹp: gai hai bên
+    mark(zn('narrow'), 6, (i) => {
+      c.spL[i] = 1;
+      c.spR[i] = 1;
+    });
+    // vùng đá: gai xen kẽ từng đoạn 15m
+    mark(zn('rocks'), 4, (i) => {
+      const blk = Math.floor((i * DS) / 15);
+      if (blk % 2) c.spL[i] = 1;
+      else c.spR[i] = 1;
+    });
+    // xoáy nước kéo bè vào bờ gai
+    mark(zn('whirl'), 6, (i) => {
+      c.spL[i] = 1;
+      c.spR[i] = 1;
+    });
   }
   // checkpoint ở 0%, 25%, 50%, 75% đường đua
   for (let k = 0; k < 4; k++) {
@@ -445,6 +481,11 @@ export function initState(c: Course, S: Float64Array): void {
   S[S_FIN] = 0;
   S[S_HITV] = 0;
   S[S_HITS] = 0;
+  for (let j = 0; j < 4; j++) {
+    S[sHold(j)] = 0;
+    S[sAim(j)] = Math.round(wrapPi(S[S_A] + Math.PI) * 1000);
+    S[sGas(j)] = 1;
+  }
 }
 
 function setAtCheckpoint(c: Course, S: Float64Array, k: number): void {
@@ -457,21 +498,44 @@ function setAtCheckpoint(c: Course, S: Float64Array, k: number): void {
   S[S_S] = c.sa[i];
 }
 
-/** áp một cú xì: hướng xì ai/1000 rad (thế giới), lực pi/100; bè nhận xung NGƯỢC hướng, ngay tại chỗ ngồi */
-export function applyFart(S: Float64Array, slot: number, ai: number, pi: number): void {
-  if (S[S_SINK] > 0) return;
-  const a = ai / 1000;
-  const p = pi / 100;
-  const dvx = -Math.cos(a) * DV_MAX * p;
-  const dvy = -Math.sin(a) * DV_MAX * p;
-  const ang = S[S_A];
-  const cs = Math.cos(ang);
-  const sn = Math.sin(ang);
-  const rx = cs * SEAT_X[slot] - sn * SEAT_Y[slot];
-  const ry = sn * SEAT_X[slot] + cs * SEAT_Y[slot];
-  S[S_VX] += dvx;
-  S[S_VY] += dvy;
-  S[S_W] += (rx * dvy - ry * dvx) * TQ;
+/** sự kiện của một chỗ ngồi: pi > 0 = GIỮ xì theo hướng ai/1000 rad (thế giới); pi = 0 = thả */
+export function applyHold(S: Float64Array, seat: number, ai: number, pi: number): void {
+  S[sHold(seat)] = pi > 0 ? 1 : 0;
+  S[sAim(seat)] = ai;
+}
+
+/**
+ * Mỗi tick: người đang giữ đẩy bè NGƯỢC hướng xì, ngay tại chỗ ngồi (Δv + mô-men xoắn) và hao khí;
+ * hết khí thì lực yếu dần rồi tắt. Buông thì khí hồi.
+ */
+export function thrustStep(S: Float64Array, slots: ArrayLike<number>, n: number): void {
+  const sink = S[S_SINK] > 0;
+  const cs = Math.cos(S[S_A]);
+  const sn = Math.sin(S[S_A]);
+  for (let j = 0; j < n; j++) {
+    const gi = sGas(j);
+    let g = S[gi];
+    if (S[sHold(j)] > 0 && !sink) {
+      if (g > 0) {
+        const f = g >= GAS_FADE ? 1 : g / GAS_FADE;
+        const a = S[sAim(j)] / 1000;
+        const k = THRUST * DT * f;
+        const dvx = -Math.cos(a) * k;
+        const dvy = -Math.sin(a) * k;
+        const slot = slots[j];
+        const rx = cs * SEAT_X[slot] - sn * SEAT_Y[slot];
+        const ry = sn * SEAT_X[slot] + cs * SEAT_Y[slot];
+        S[S_VX] += dvx;
+        S[S_VY] += dvy;
+        S[S_W] += (rx * dvy - ry * dvx) * TQ;
+        g -= GAS_DRAIN * DT;
+        S[gi] = g < 0 ? 0 : g;
+      }
+    } else if (g < 1) {
+      g += GAS_REGEN * DT;
+      S[gi] = g > 1 ? 1 : g;
+    }
+  }
 }
 
 /** vị trí thế giới của chỗ ngồi (ghi vào out[0..1]) */
@@ -483,28 +547,41 @@ export function seatWorld(S: Float64Array, slot: number, out: Float64Array): voi
 }
 
 /* ---------------- va chạm ---------------- */
-function contact(S: Float64Array, cx: number, cy: number, nx: number, ny: number, vox: number, voy: number): void {
+export const SPIKE_DMG = 12;
+export const SPIKE_INV = 30;
+export const SPIKE_DEPTH = 0.8; // gai nhô vào lòng sông
+
+function contact(S: Float64Array, cx: number, cy: number, nx: number, ny: number, vox: number, voy: number, spike: boolean): void {
   const rx = cx - S[S_X];
   const ry = cy - S[S_Y];
   const vpx = S[S_VX] - S[S_W] * ry;
   const vpy = S[S_VY] + S[S_W] * rx;
   const rel = (vpx - vox) * nx + (vpy - voy) * ny;
-  if (rel >= 0) return;
-  const rn = rx * ny - ry * nx;
-  const j = (-(1 + RESTITUTION) * rel) / (1 + (rn * rn) / INERTIA);
-  S[S_VX] += j * nx;
-  S[S_VY] += j * ny;
-  S[S_W] += (rn * j) / INERTIA;
-  const hit = -rel;
-  if (hit > HIT_V && S[S_INV] <= 0 && S[S_FIN] === 0 && S[S_SINK] <= 0) {
-    S[S_HP] -= (hit - HIT_V) * DMG_K + DMG_B;
+  let hit = 0;
+  if (rel < 0) {
+    const rn = rx * ny - ry * nx;
+    const j = (-(1 + RESTITUTION) * rel) / (1 + (rn * rn) / INERTIA);
+    S[S_VX] += j * nx;
+    S[S_VY] += j * ny;
+    S[S_W] += (rn * j) / INERTIA;
+    hit = -rel;
+  }
+  if (S[S_INV] > 0 || S[S_FIN] !== 0 || S[S_SINK] > 0) return;
+  let dmg = 0;
+  if (spike) {
+    // chạm gai là mất độ bền, kể cả cọ nhẹ
+    dmg = SPIKE_DMG + hit * 2;
+    S[S_INV] = SPIKE_INV;
+  } else if (hit > HIT_V) {
+    dmg = (hit - HIT_V) * DMG_K + DMG_B;
     S[S_INV] = HIT_INV;
-    S[S_HITV] = hit;
-    S[S_HITS] += 1;
-    if (S[S_HP] <= 0) {
-      S[S_HP] = 0;
-      S[S_SINK] = SINK_TICKS;
-    }
+  } else return;
+  S[S_HP] -= dmg;
+  S[S_HITV] = hit + (spike ? 3 : 0);
+  S[S_HITS] += 1;
+  if (S[S_HP] <= 0) {
+    S[S_HP] = 0;
+    S[S_SINK] = SINK_TICKS;
   }
 }
 
@@ -576,7 +653,8 @@ export function stepRaft(c: Course, S: Float64Array, tick: number): void {
     locate(c, cx, cy, S[S_SEG] | 0);
     const i = lo_i;
     const hwH = c.hw[i] + (c.hw[i + 1] - c.hw[i]) * lo_u;
-    const over = Math.abs(lo_lat) + CIRC_R - hwH;
+    const spk = (lo_lat >= 0 ? c.spL[i] | c.spL[i + 1] : c.spR[i] | c.spR[i + 1]) === 1;
+    const over = Math.abs(lo_lat) + CIRC_R - hwH + (spk ? SPIKE_DEPTH : 0);
     if (over > 0) {
       // pháp tuyến hướng vào lòng sông
       const sgl = lo_lat >= 0 ? 1 : -1;
@@ -584,7 +662,7 @@ export function stepRaft(c: Course, S: Float64Array, tick: number): void {
       const ny = -c.tx[i] * sgl;
       S[S_X] += nx * over;
       S[S_Y] += ny * over;
-      contact(S, cx - nx * CIRC_R, cy - ny * CIRC_R, nx, ny, 0, 0);
+      contact(S, cx - nx * CIRC_R, cy - ny * CIRC_R, nx, ny, 0, 0, spk);
     }
   }
   // chướng ngại
@@ -622,7 +700,7 @@ export function stepRaft(c: Course, S: Float64Array, tick: number): void {
       const vay = (ev1[1] - ev0[1]) * TICK_HZ;
       const vbx = (ev1[2] - ev0[2]) * TICK_HZ;
       const vby = (ev1[3] - ev0[3]) * TICK_HZ;
-      contact(S, qx + nx * ev0[4], qy + ny * ev0[4], nx, ny, vax + (vbx - vax) * u, vay + (vby - vay) * u);
+      contact(S, qx + nx * ev0[4], qy + ny * ev0[4], nx, ny, vax + (vbx - vax) * u, vay + (vby - vay) * u, c.obSp[i] === 1);
     }
   }
 
@@ -681,8 +759,9 @@ export class RaftSim {
     for (let i = 0; i < this.ne; i++) {
       const t = this.eT[i];
       if (t > cur) break;
-      if (t === cur) applyFart(S, this.slots[this.eSeat[i]], this.eA[i], this.eP[i]);
+      if (t === cur) applyHold(S, this.eSeat[i], this.eA[i], this.eP[i]);
     }
+    thrustStep(S, this.slots, this.slots.length);
     stepRaft(this.c, S, cur);
     this.cur = cur + 1;
   }
@@ -817,14 +896,16 @@ export class RaftSim {
     if (tick < this.ringLo || tick < this.cur - this.R) return false;
     const off = (tick % this.R) * NS;
     let same = true;
-    for (let j = 0; j < NS; j++) {
+    for (let j = 0; j < NS && same; j++) {
       const d = Math.abs(this.ring[off + j] - this.base[j]);
-      const tol = j <= S_A ? 4e-3 : j <= S_W ? 8e-3 : 0.5;
       if (j === S_PROG || j === S_S || j === S_HITV) continue;
-      if (j === S_HP || j === S_INV) {
+      if (j >= S_SEAT0) {
+        // giữ/thả + hướng phải khớp; khí cho sai số nhỏ
+        const kind = (j - S_SEAT0) % 3;
+        if (kind === 2 ? d > 0.02 : d > 0.5) same = false;
+      } else if (j === S_HP || j === S_INV) {
         if (d > 0.6) same = false;
-      } else if (d > tol) same = false;
-      if (!same) break;
+      } else if (d > (j <= S_A ? 4e-3 : j <= S_W ? 8e-3 : 0.5)) same = false;
     }
     if (same) return false;
     for (let j = 0; j < NS; j++) this.ring[off + j] = this.base[j];

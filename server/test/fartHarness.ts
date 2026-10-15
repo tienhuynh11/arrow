@@ -2,7 +2,7 @@
 import { fartGame } from '../src/games/fart.js';
 import type { GameContext } from '../src/games/types.js';
 import { FartCore } from '../../shared/raftClient.js';
-import { botAim } from './fartBot.js';
+import { HoldBot } from './fartBot.js';
 
 export interface NetProfile {
   name: string;
@@ -175,21 +175,17 @@ export function makeHarness(playerIds: string[], profile: NetProfile, opts: { cl
   return H;
 }
 
-/** bot: mỗi người xì định kỳ theo hướng botAim, dựa trên mô phỏng của chính client */
+/** bot GIỮ/BUÔNG: HoldBot quyết định, core áp dụng (đúng đường đi của người chơi thật) */
 export function botDriver(seed = 1) {
-  let s = seed >>> 0;
-  const rnd = () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-  const next: Record<string, number> = {};
-  return (id: string, core: FartCore) => {
+  const bots: Record<string, HoldBot> = {};
+  let k = 0;
+  return (id: string, core: FartCore, mono: number) => {
     if (core.tick < 0) return;
-    if (next[id] === undefined) next[id] = 10 + Math.floor(rnd() * 30);
-    if (core.tick < next[id]) return;
-    const a = botAim(core.c, core.sim.S, core.tick);
-    const pw = 0.45 + rnd() * 0.3;
-    core.fire(pw, a);
-    next[id] = core.tick + 20 + Math.floor(rnd() * 14);
+    const b = (bots[id] ??= new HoldBot(seed * 97 + k++));
+    const e = b.step(core.c, core.sim.S, core.tick);
+    if (!e) return;
+    core.setAimWorld(e.a);
+    if (e.down && !core.holding) core.press(mono);
+    else if (!e.down && core.holding) core.release();
   };
 }
