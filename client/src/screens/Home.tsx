@@ -36,7 +36,7 @@ export default function Home() {
         <h1 className="logo">
           ARROW<span>PARTY</span>
         </h1>
-        <p className="tagline">Tối đa 16 người · 18 minigame · 1 nhà vô địch</p>
+        <p className="tagline">Tối đa 16 người · 22 minigame · 1 nhà vô địch</p>
 
         <label className="field">
           <span>ENTER YOUR NAME</span>

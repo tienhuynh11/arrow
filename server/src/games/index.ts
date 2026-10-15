@@ -26,6 +26,10 @@ import { quizGame } from './quizGame.js';
 import { wallRushGame } from './wallRush.js';
 import { tanksGame } from './tankTrouble.js';
 import { fartGame } from './fart.js';
+import { disasterGame } from './disaster.js';
+import { artShowGame } from './artShow.js';
+import { treasureGame } from './treasure.js';
+import { fishingGame } from './fishing.js';
 
 /** Add a new minigame here and the match loop picks it up automatically. */
 export const GAMES: GameDefinition[] = [
@@ -56,6 +60,10 @@ export const GAMES: GameDefinition[] = [
   wallRushGame,
   fartGame,
   tanksGame,
+  disasterGame,
+  artShowGame,
+  treasureGame,
+  fishingGame,
 ];
 
 export const gameById = (id: string) => GAMES.find((g) => g.id === id);

@@ -69,7 +69,70 @@ export const sfx = {
   },
   tankLaser: () => blip(1700, 260, 'sawtooth', 0.035, 180),
   tankShield: () => blip(520, 200, 'sine', 0.05, 1040),
+  /* cướp kho báu */
+  trPick: () => blip(1250 + Math.random() * 200, 70, 'triangle', 0.04, 1900),
+  trDeliver: () => {
+    [784, 988, 1318].forEach((f, i) => setTimeout(() => blip(f, 130, 'triangle', 0.055), i * 70));
+  },
+  trDeliverOther: () => blip(880, 90, 'triangle', 0.02, 1320),
+  trSteal: () => {
+    blip(260, 150, 'sawtooth', 0.06, 90);
+    setTimeout(() => blip(1400, 90, 'square', 0.03, 700), 40);
+  },
+  trSwing: () => blip(520, 70, 'triangle', 0.03, 260),
+  trSwingOther: () => blip(420, 55, 'triangle', 0.012, 240),
+  trShove: () => blip(160, 130, 'square', 0.05, 80),
+  trWave: () => {
+    [660, 880, 1100, 1320].forEach((f, i) => setTimeout(() => blip(f, 160, 'sine', 0.045), i * 90));
+  },
+  trWhistle: () => blip(1900, 380, 'sine', 0.05, 1500),
+  /* survival hỗn loạn */
+  dzAlarm: () => {
+    blip(880, 170, 'square', 0.05, 660);
+    setTimeout(() => blip(660, 170, 'square', 0.05, 880), 190);
+    setTimeout(() => blip(880, 170, 'square', 0.05, 660), 380);
+  },
+  dzBoom: () => {
+    blip(120, 380, 'sawtooth', 0.06, 40);
+    blip(70, 420, 'square', 0.035, 28);
+  },
+  dzQuake: () => {
+    blip(55, 360, 'sawtooth', 0.07, 36);
+    setTimeout(() => blip(48, 300, 'square', 0.04, 30), 90);
+  },
+  dzJump: () => blip(420, 90, 'triangle', 0.03, 760),
   overtake: () => blip(660, 200, 'triangle', 0.06, 1180),
+  /* câu cá */
+  fishCast: () => {
+    blip(520, 120, 'sine', 0.04, 220);
+    setTimeout(() => blip(180, 140, 'triangle', 0.03, 90), 140);
+  },
+  fishNib: () => blip(880, 50, 'sine', 0.03),
+  fishBite: () => {
+    blip(300, 120, 'square', 0.06, 760);
+    setTimeout(() => blip(760, 140, 'square', 0.05, 1100), 90);
+  },
+  fishHook: () => blip(900, 80, 'sawtooth', 0.05, 400),
+  /** tier 0 = thường, 1 = hiếm, 2 = huyền thoại */
+  fishLand: (tier = 0) => {
+    const notes = tier === 2 ? [523, 659, 784, 1046, 1318] : tier === 1 ? [523, 659, 880] : [600, 800];
+    notes.forEach((f, i) => setTimeout(() => blip(f, 150, 'triangle', 0.055), i * 90));
+  },
+  fishTrash: () => {
+    blip(220, 160, 'sawtooth', 0.04, 120);
+    setTimeout(() => blip(150, 200, 'square', 0.035, 90), 130);
+  },
+  fishEscape: () => blip(500, 260, 'triangle', 0.05, 120),
+  fishStealTry: () => blip(700, 70, 'sawtooth', 0.04, 1300),
+  fishSteal: () => {
+    blip(880, 90, 'square', 0.055, 1320);
+    setTimeout(() => blip(1320, 120, 'square', 0.05, 1760), 90);
+  },
+  fishStealFail: () => {
+    blip(260, 220, 'sawtooth', 0.05, 90);
+    setTimeout(() => blip(120, 260, 'square', 0.04, 60), 120);
+  },
+  fishRobbed: () => blip(420, 300, 'sawtooth', 0.06, 110),
   winner: () => {
     [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => blip(f, 220, 'triangle', 0.06), i * 130));
   },

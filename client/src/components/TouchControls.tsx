@@ -9,7 +9,7 @@ const CODE: Record<string, string> = { '←': 'ArrowLeft', '→': 'ArrowRight', 
 const LABEL: Record<string, string> = { ArrowLeft: '◀', ArrowRight: '▶', ArrowUp: '▲', ArrowDown: '▼', Space: '' };
 
 /** game chạy tự do mọi hướng: dùng cần điều khiển thay cho 4 nút */
-const FREE_MOVE = new Set(['bomb', 'tiptoe', 'memory', 'blockparty', 'mountain', 'lava', 'hex', 'door', 'codehunt', 'blindshot', 'bombmaze', 'chairs', 'actnatural', 'rooftop', 'tanks']);
+const FREE_MOVE = new Set(['bomb', 'tiptoe', 'memory', 'blockparty', 'mountain', 'lava', 'hex', 'door', 'codehunt', 'blindshot', 'bombmaze', 'chairs', 'actnatural', 'rooftop', 'tanks', 'disaster', 'treasure']);
 
 export const isTouchDevice = () =>
   typeof window !== 'undefined' &&
@@ -120,9 +120,23 @@ export default function TouchControls({ gameId, controls }: { gameId: string; co
   const cross = !free && arrows.length === 4;
   // game chỉ bấm SPACE: nút to ở giữa phía dưới cho dễ đập
   const spaceOnly = arrows.length === 0 && hasSpace;
-  const actionLabel = gameId === 'math' ? 'CHỐT' : gameId === 'tug' ? 'KÉO!' : gameId === 'button' ? 'BẤM!' : gameId === 'reaction' ? 'BẤM!' : gameId === 'rhythm' ? 'NỐT ●' : gameId === 'bombmaze' ? '💣 BOM' : gameId === 'tiptoe' ? 'ĐÁ!' : gameId === 'rooftop' ? 'NHẢY / NHẤC' : gameId === 'tanks' ? '💥 BẮN' : 'NHẢY';
+  const actionLabel = gameId === 'math' ? 'CHỐT' : gameId === 'tug' ? 'KÉO!' : gameId === 'button' ? 'BẤM!' : gameId === 'reaction' ? 'BẤM!' : gameId === 'rhythm' ? 'NỐT ●' : gameId === 'bombmaze' ? '💣 BOM' : gameId === 'tiptoe' ? 'ĐÁ!' : gameId === 'rooftop' ? 'NHẢY / NHẤC' : gameId === 'tanks' ? '💥 BẮN' : gameId === 'treasure' ? '🤜 CƯỚP' : 'NHẢY';
 
+  if (gameId === 'artshow') return null; // vẽ bằng ngón tay trên canvas, không cần nút ảo
   if (gameId === 'fart') return null; // xì hơi có bộ điều khiển cảm ứng riêng
+  if (gameId === 'fishing') {
+    // câu cá: nút to bên phải = quăng / giật cần / GIỮ để kéo; nút bên trái = GIẬT cá người khác
+    return (
+      <div className="tc" aria-hidden="true">
+        <div className="tc-left">
+          <KeyButton code="KeyF" label="🪝 GIẬT" big />
+        </div>
+        <div className="tc-right">
+          <KeyButton code="Space" label="🎣 QUĂNG / KÉO" big jump />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={`tc ${spaceOnly ? 'solo' : ''}`} aria-hidden="true">
       {!spaceOnly && (

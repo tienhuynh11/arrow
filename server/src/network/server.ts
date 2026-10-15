@@ -38,7 +38,7 @@ export function startServer() {
     res.end();
   });
 
-  const wss = new WebSocketServer({ server: http });
+  const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
 
   wss.on('connection', (ws) => {
     const conn: Connection = {

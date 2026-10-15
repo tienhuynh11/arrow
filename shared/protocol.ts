@@ -298,6 +298,19 @@ export type GameInput =
   // đấu vật trên nóc nhà: dx,dy = hướng đi (hệ toạ độ xe, đã tính theo camera), yaw = hướng camera/ngắm; jump/punch/skill là xung 1 lần
   | { type: 'brawl'; dx: number; dy: number; yaw: number; jump?: boolean; punch?: boolean; skill1?: boolean; skill2?: boolean }
   // xe tăng đạn nảy: t = tick client (floor((giờ server − startAt)/STEP)), q = số thứ tự gói, turn/move ∈ −1,0,1, f = tổng số lần bấm bắn (đếm tích luỹ, chịu được mất/lặp gói), d = độ trễ nội suy (tick) mà người chơi đang thấy xe khác, dùng cho bù trễ
-  | { type: 'tank'; t: number; q: number; turn: number; move: number; f: number; d?: number };
+  | { type: 'tank'; t: number; q: number; turn: number; move: number; f: number; d?: number }
+  // câu cá: quăng cần / giật cần (at = giờ server ước lượng lúc bấm; trước khi cá cắn = kéo cần về) / giữ-nhả lúc kéo (h, k = tick kéo) / giật cá của người khác (to = người cụ thể, bỏ trống = tự chọn)
+  | { type: 'fcast' }
+  | { type: 'fhook'; at: number }
+  | { type: 'fhold'; h: 0 | 1; k: number }
+  | { type: 'fsteal'; to?: string }
+  // cướp kho báu: t = tick client, q = số thứ tự gói, dx/dy ∈ −1,0,1 hướng chạy, a = tổng số lần bấm cướp/đẩy (đếm tích luỹ), d = độ trễ nội suy (tick) để bù trễ
+  | { type: 'trs'; t: number; q: number; dx: number; dy: number; a: number; d?: number }
+  // đại hội họa sĩ: n = số nét giữ nguyên từ đầu tranh, s = các nét mới thay phần từ n trở đi ([màu, dày, [x,y,...]]), f = bản nộp cuối; avote: k = số tranh (ẩn danh), c = m phiếu chính / h hài nhất / t thảm họa, k = −1 để bỏ phiếu; async: xin gửi lại trạng thái ván (vào lại giữa chừng)
+  | { type: 'adraw'; n: number; s: [number, number, number[]][]; f?: number }
+  | { type: 'avote'; k: number; c: 'm' | 'h' | 't' }
+  | { type: 'async' }
+  // SURVIVAL HỖN LOẠN: t = tick client mà hướng giữ (dx,dy ∈ −1,0,1) có hiệu lực từ đó, q = số thứ tự gói, j = 1 nếu nhảy ở tick t
+  | { type: 'dz'; t: number; q: number; dx: number; dy: number; j?: number };
 
 export type Judgement = 'PERFECT' | 'GREAT' | 'GOOD' | 'MISS' | 'TRAP';
