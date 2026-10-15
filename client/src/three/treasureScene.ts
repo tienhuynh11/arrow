@@ -44,7 +44,7 @@ export interface TreasureSceneOptions {
 /** 1 đơn vị thế giới = S đơn vị 3D */
 const S = 0.04;
 const PITCH = (62 * Math.PI) / 180;
-const PAWN_SCALE = 1.25;
+const PAWN_SCALE = 1.9;
 
 export function createTreasureScene(o: TreasureSceneOptions) {
   const { W, H } = o;
@@ -148,43 +148,27 @@ export function createTreasureScene(o: TreasureSceneOptions) {
 
       /* ---------------- người chơi ---------------- */
       interface Pawn {
-        g: Group;
-        body: Mesh;
-        head: Mesh;
-        bodyMat: MeshLambertMaterial;
+        c: ReturnType<typeof k.kit.create>;
         shield: Mesh;
         yaw: number;
         px: number;
         pz: number;
         speed: number;
-        phase: number;
         swing: number;
       }
-      const shadowGeo = new CircleGeometry(PR * S * 1.15, 16);
-      const shadowMat = new MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.25, depthWrite: false });
       const pawns: Pawn[] = o.players.map((p, i) => {
-        const g = new Group();
-        const bodyMat = new MeshLambertMaterial({ color: p.color });
-        const body = new Mesh(new CylinderGeometry(PR * S * 0.78, PR * S * 0.95, 0.75, 14), bodyMat);
-        body.position.y = 0.4;
-        const head = new Mesh(new SphereGeometry(PR * S * 0.85, 14, 10), new MeshLambertMaterial({ color: '#ffe0bd' }));
-        head.position.y = 1.0;
-        const nose = new Mesh(new BoxGeometry(0.18, 0.1, 0.18), new MeshLambertMaterial({ color: '#2b2b3a' }));
-        nose.position.set(0.3, 1.05, 0);
-        const hat = new Mesh(new CylinderGeometry(PR * S * 0.55, PR * S * 0.85, 0.18, 12), new MeshLambertMaterial({ color: '#2b2b3a' }));
-        hat.position.y = 1.32;
-        const sh = new Mesh(shadowGeo, shadowMat);
-        sh.rotation.x = -Math.PI / 2;
-        sh.position.y = 0.07;
+        const c = k.kit.create(p.color, i === o.meSeat);
+        c.setShadows(!k.low);
+        c.root.scale.setScalar(PAWN_SCALE);
+        scene.add(c.root);
         const shield = new Mesh(new SphereGeometry(0.75, 16, 12), new MeshBasicMaterial({ color: '#7fe9ff', transparent: true, opacity: 0.3, blending: AdditiveBlending, depthWrite: false }));
         shield.position.y = 0.7;
         shield.visible = false;
-        g.add(body, head, nose, hat, shield);
-        scene.add(g, sh);
-        // bóng đổ riêng bám theo g (đặt ở scene để không xoay theo hướng)
-        (g as Group & { blob?: Mesh }).blob = sh;
-        void i;
-        return { g, body, head, bodyMat, shield, yaw: 0, px: 0, pz: 0, speed: 0, phase: i * 1.7, swing: 0 };
+        c.root.add(shield);
+        return { c, shield, yaw: 0, px: 0, pz: 0, speed: 0, swing: 0 };
+      });
+      k.onTier((tier) => {
+        for (const p of pawns) p.c.setShadows(tier !== 'low');
       });
 
       /* ---------------- kho báu (InstancedMesh) ---------------- */
@@ -302,35 +286,29 @@ export function createTreasureScene(o: TreasureSceneOptions) {
             pw.pz = z;
             const target = faceRad(cl.rface[i]);
             pw.yaw += radDiff(pw.yaw, target) * Math.min(1, dt * 14);
-            pw.phase += dt * (6 + pw.speed * 8);
             const load = Math.min(MAXC, w.load[i]);
-            const bob = Math.abs(Math.sin(pw.phase)) * 0.14 * pw.speed;
-            pw.g.position.set(x, bob, z);
-            pw.g.rotation.y = -pw.yaw;
-            // dốc người về phía trước khi chạy, nặng thì lom khom
-            pw.g.rotation.z = -0.12 * pw.speed - load * 0.015;
-            const st = 1 + Math.sin(pw.phase * 2) * 0.03 * pw.speed;
-            pw.g.scale.set(PAWN_SCALE, st * PAWN_SCALE, PAWN_SCALE);
-            if (pw.swing > 0) {
-              pw.swing -= dt;
-              const t = Math.max(0, pw.swing) / 0.28;
-              pw.g.rotation.x = Math.sin(t * Math.PI) * 0.35;
-            } else pw.g.rotation.x = 0;
-            const blob = (pw.g as Group & { blob?: Mesh }).blob;
-            if (blob) blob.position.set(x, 0.07, z);
-            // miễn nhiễm: nhấp nháy khiên
+            pw.c.root.position.set(x, 0, z);
+            pw.c.setYaw(Math.PI / 2 - pw.yaw);
+            if (pw.swing > 0) pw.swing -= dt;
             const imm = !!cl.immune[i];
+            pw.c.update(dt, {
+              speed: pw.speed * Math.max(0.35, 1 - load * 0.05),
+              dead: false,
+              time,
+              pose: pw.swing > 0 ? 'punch' : 'run',
+              safe: imm,
+            });
             pw.shield.visible = imm;
             if (imm) pw.shield.scale.setScalar(1 + Math.sin(time * 12) * 0.06);
-            pw.bodyMat.emissive.set(imm && Math.sin(time * 16) > 0 ? '#445566' : '#000000');
+            const bob = 0;
             // đống kho báu mang trên lưng/đầu
             for (let c = 0; c < load; c++) {
               const wob = Math.sin(time * 5 + c) * 0.025 * (1 + pw.speed);
-              m4.compose(v3.set(x + wob, bob + 1.75 + c * 0.11, z), q.identity(), v3s.set(1.15, 1.15, 1.15));
+              m4.compose(v3.set(x + wob, bob + 2.55 + c * 0.11, z), q.identity(), v3s.set(1.15, 1.15, 1.15));
               carried.setMatrixAt(cn++, m4);
             }
             const lab = o.labels.get(o.players[i].id);
-            k.label(lab, x, 2.2 + load * 0.11, z);
+            k.label(lab, x, 3.0 + load * 0.11, z);
           }
           carried.count = cn;
           carried.instanceMatrix.needsUpdate = true;
