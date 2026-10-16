@@ -15,7 +15,9 @@ export class Input {
   locked = false;
   enabled = false;
   /** callback hành động giao diện */
-  onAction: (a: 'shop' | 'scoresOn' | 'scoresOff' | 'pause') => void = () => {};
+  onAction: (a: 'shop' | 'scoresOn' | 'scoresOff' | 'pause' | 'touchpad') => void = () => {};
+  /** đổi chế độ điều khiển (chuột ↔ cảm ứng) — giao diện bật/tắt nút ảo theo */
+  onMode: (touch: boolean) => void = () => {};
   /** cảm ứng */
   touch = false;
   private stickId = -1;
@@ -36,7 +38,15 @@ export class Input {
 
   constructor(canvas: HTMLElement) {
     this.canvas = canvas;
-    this.touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+    // Chọn chế độ theo THIẾT BỊ ĐANG DÙNG, không theo "máy có cảm ứng hay không":
+    // laptop Windows màn cảm ứng có 'ontouchstart' nhưng người chơi vẫn dùng chuột/touchpad.
+    // Bắt đầu bằng chuột nếu có bất kỳ con trỏ chính xác nào; chạm màn hình thì chuyển sang cảm ứng, rê chuột thì quay lại.
+    this.touch = matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+    window.addEventListener('pointerdown', (e) => this.setMode(e.pointerType === 'touch'), true);
+    window.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'mouse' && (e.movementX !== 0 || e.movementY !== 0)) this.setMode(false);
+    }, true);
+    window.addEventListener('touchstart', () => this.setMode(true), { capture: true, passive: true });
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     window.addEventListener('blur', () => {
@@ -54,6 +64,7 @@ export class Input {
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.locked || !this.enabled) return;
+      this.noteMouse(performance.now());
       this.look(e.movementX, e.movementY, settings.sens * 0.0022 * (this.ads ? settings.adsSens : 1));
     });
     canvas.addEventListener('mousedown', (e) => {
@@ -75,6 +86,56 @@ export class Input {
       else this.keyCode(`Mouse${e.button}`, false);
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  private setMode(touch: boolean) {
+    if (touch === this.touch) return;
+    this.touch = touch;
+    if (touch) this.unlock();
+    this.onMode(touch);
+    // vừa chuyển từ cảm ứng sang chuột bằng một cú bấm (cử chỉ người dùng) → xin khoá chuột luôn
+    if (!touch && this.enabled) this.lock();
+  }
+
+  /* ---------- phát hiện touchpad bị Windows khoá khi gõ phím ---------- */
+  private lastMouse = 0;
+  private holdSince = 0;
+  private mouseBeforeHold = 0;
+  private mouseInHold = false;
+  private pendingCheck = 0;
+  private strikes = 0;
+  private hinted = false;
+  private noteMouse(now: number) {
+    if (this.holdSince) this.mouseInHold = true;
+    if (this.pendingCheck && now - this.pendingCheck < 700) {
+      // chuột "sống lại" ngay khi nhả phím → rất có thể touchpad bị khoá lúc gõ
+      this.strikes++;
+      if (this.strikes >= 2 && !this.hinted) {
+        this.hinted = true;
+        this.onAction('touchpad');
+      }
+    }
+    this.pendingCheck = 0;
+    this.lastMouse = now;
+  }
+
+  /** gọi mỗi khung hình: xoay camera bằng phím + theo dõi touchpad */
+  tick(dt: number, now: number) {
+    if (!this.enabled) return;
+    const k = ((settings.keyTurn * Math.PI) / 180) * dt;
+    if (this.bound('turnLeft')) this.look(-k / 0.0022 / Math.max(0.05, settings.sens), 0, settings.sens * 0.0022);
+    if (this.bound('turnRight')) this.look(k / 0.0022 / Math.max(0.05, settings.sens), 0, settings.sens * 0.0022);
+    if (this.bound('lookUp')) this.pitch = Math.min(1.2, this.pitch + k * 0.6);
+    if (this.bound('lookDown')) this.pitch = Math.max(-1.2, this.pitch - k * 0.6);
+    const held = this.bound('forward') || this.bound('back') || this.bound('left') || this.bound('right');
+    if (held && !this.holdSince) {
+      this.holdSince = now;
+      this.mouseInHold = false;
+      this.mouseBeforeHold = this.lastMouse;
+    } else if (!held && this.holdSince) {
+      if (this.locked && now - this.holdSince > 900 && !this.mouseInHold && this.mouseBeforeHold && this.holdSince - this.mouseBeforeHold < 1500) this.pendingCheck = now;
+      this.holdSince = 0;
+    }
   }
 
   lock() {
@@ -127,7 +188,7 @@ export class Input {
     const tgt = e.target as HTMLElement | null;
     if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA')) return;
     if (!this.enabled) return;
-    if (e.code === settings.keys.scores || e.code === 'Tab' || e.code === 'Space') e.preventDefault();
+    if (e.code === settings.keys.scores || e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
     if (e.repeat) return;
     this.keyCode(e.code, down);
   }
@@ -160,10 +221,10 @@ export class Input {
     let mz = 0;
     let btn = 0;
     if (this.enabled) {
-      if (this.bound('forward') || this.keys.has('ArrowUp')) mz += 127;
-      if (this.bound('back') || this.keys.has('ArrowDown')) mz -= 127;
-      if (this.bound('right') || this.keys.has('ArrowRight')) mx += 127;
-      if (this.bound('left') || this.keys.has('ArrowLeft')) mx -= 127;
+      if (this.bound('forward')) mz += 127;
+      if (this.bound('back')) mz -= 127;
+      if (this.bound('right')) mx += 127;
+      if (this.bound('left')) mx -= 127;
       if (this.stickId >= 0) {
         mx = Math.round(this.stickX * 127);
         mz = Math.round(-this.stickY * 127);

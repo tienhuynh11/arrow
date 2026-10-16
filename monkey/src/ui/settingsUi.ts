@@ -41,7 +41,7 @@ export function openSettings(onClose: () => void) {
     waitKey = null;
   }
 
-  const slider = (label: string, hint: string, key: 'sens' | 'adsSens' | 'fov' | 'camDist' | 'master' | 'sfx' | 'ambient' | 'shake' | 'touchSens' | 'touchScale', min: number, max: number, stepv: number, fmtv: (v: number) => string) => {
+  const slider = (label: string, hint: string, key: 'sens' | 'adsSens' | 'fov' | 'camDist' | 'master' | 'sfx' | 'ambient' | 'shake' | 'touchSens' | 'touchScale' | 'keyTurn', min: number, max: number, stepv: number, fmtv: (v: number) => string) => {
     const val = h('span', { class: 'val' }, fmtv(settings[key]));
     const inp = h('input', { type: 'range', min: String(min), max: String(max), step: String(stepv) }) as HTMLInputElement;
     inp.value = String(settings[key]);
@@ -88,6 +88,8 @@ export function openSettings(onClose: () => void) {
         slider('Khoảng cách camera', 'Camera đứng sau vai bao xa', 'camDist', 2.2, 6, 0.1, (v) => `${v.toFixed(1)}m`),
         slider('Rung màn hình', 'Khi bắn / nổ / bị đánh', 'shake', 0, 1.5, 0.05, (v) => `${Math.round(v * 100)}%`),
         crossColor(),
+        slider('Tốc độ xoay bằng phím ← →', 'Dự phòng khi không dùng được chuột/touchpad', 'keyTurn', 40, 360, 5, (v) => `${v}°/s`),
+        h('div', { class: 'sensprev', style: 'margin-top:10px;line-height:1.5' }, '💡 Laptop dùng touchpad: nếu đang giữ W A S D mà không xoay được camera thì Windows đang khoá touchpad khi gõ phím. Vào Cài đặt Windows → Bluetooth & thiết bị → Touchpad → Độ nhạy touchpad → "Nhạy nhất", hoặc dùng chuột rời, hoặc xoay bằng phím mũi tên.'),
       );
     } else if (tab === 'audio') {
       body.append(

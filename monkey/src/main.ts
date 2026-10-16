@@ -4,20 +4,23 @@ import './styles.css';
 import { GameModel } from '@shared/monkey/client';
 import { CLASSES, MK_CHAY, MK_DOT, MK_NAU, MK_NEM, MK_NO, MK_TRANG, ULT_KILLS, WEAPONS } from '@shared/monkey/content';
 import { CODE_LEN, GAME_TITLE, MAX_PLAYERS, NAME_MAX } from '@shared/monkey/config';
-import { ST_MOVE, ST_WIND, type BoardEntry, type LobbyPlayer, type SMsg } from '@shared/monkey/proto';
+import { ST_MOVE, ST_THROW, ST_WIND, type BoardEntry, type LobbyPlayer, type SMsg } from '@shared/monkey/proto';
 import * as A from './audio';
 import { Game } from './game';
 import { Input } from './input';
 import { net } from './net';
 import { Fx } from './render/fx';
+import { Avatar } from './render/avatars';
 import { MonkeyRenderer } from './render/monkeys';
-import { Stage, resolveQuality } from './render/scene';
+import { Stage, blobTex as blobTexture, resolveQuality } from './render/scene';
 import { keyLabel, onSettings, sessionGet, sessionSet, settings, store } from './settings';
 import { CLASS_ICON, clear, clsColor, clsIcon, fmt, h, timeStr, toast } from './ui/dom';
 import { openSettings } from './ui/settingsUi';
 import { openShop } from './ui/shop';
 
 const app = document.getElementById('app')!;
+/** Windows có "tắt touchpad khi đang gõ phím": giữ WASD là touchpad bị khoá → không xoay được camera */
+export const TOUCHPAD_TIP = 'Có vẻ <b>Windows đang khoá touchpad khi bạn giữ phím</b> nên không xoay được camera lúc chạy. Sửa: Cài đặt Windows → Bluetooth &amp; thiết bị → Touchpad → <b>Độ nhạy touchpad: Nhạy nhất</b> (hoặc dùng chuột rời). Tạm thời có thể xoay bằng phím <span class="k">←</span> <span class="k">→</span>.';
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
 
 /* ======================= 3D DÙNG CHUNG ======================= */
@@ -261,6 +264,8 @@ function showHelp() {
     li('Kỹ năng 1 · Kỹ năng 2 · Tuyệt chiêu', `${keyLabel(k.skillG)} · ${keyLabel(k.skillX)} · ${keyLabel(k.ult)}`),
     li('Nâng súng · Nâng máu · Cửa hàng', `${keyLabel(k.buyWeapon)} · ${keyLabel(k.buyHp)} · ${keyLabel(k.shop)}`),
     li('Bảng điểm · Tạm dừng', `${keyLabel(k.scores)} (giữ) · Esc`),
+    li('Xoay camera bằng phím (dự phòng)', `${keyLabel(k.turnLeft)} ${keyLabel(k.turnRight)} ${keyLabel(k.lookUp)} ${keyLabel(k.lookDown)}`),
+    h('p', { style: 'color:var(--dim);font-size:13px' }, 'Dùng touchpad trên laptop mà chạy (giữ W A S D) thì không xoay được camera? Đó là Windows tự khoá touchpad khi gõ phím: vào Cài đặt Windows → Bluetooth & thiết bị → Touchpad → Độ nhạy touchpad → "Nhạy nhất", hoặc dùng chuột rời, hoặc xoay bằng phím mũi tên.'),
     h('p', { style: 'color:var(--dim);font-size:13px' }, `Tuyệt chiêu sạc đầy sau ${ULT_KILLS} con khỉ. Súng có 5 bậc: ${WEAPONS.map((w) => w.short).join(' → ')}.`)));
   app.append(root);
   modal(close);
@@ -318,14 +323,25 @@ function startGame(players: { idx: number; name: string; cls: number }[]) {
   screen = 'game';
   document.body.classList.add('ingame');
   game = new Game({ stage, monkeys, fx }, input, players, meIdx);
-  if (input.touch) buildTouch();
-  else {
-    game.hud.setClickPrompt(true);
-    input.lock();
-  }
+  buildTouch();
+  applyMode(input.touch);
+  if (!input.touch) input.lock();
 }
 
+/** đổi giữa chuột và cảm ứng ngay trong trận (laptop màn cảm ứng dùng được cả hai) */
+function applyMode(touch: boolean) {
+  document.body.classList.toggle('touchmode', touch);
+  touchUi?.classList.toggle('hidden', !touch);
+  if (game && screen === 'game') game.hud.setClickPrompt(!touch && !document.pointerLockElement && !pauseEl && !shopOpen);
+}
+input.onMode = (t) => applyMode(t);
+document.body.classList.toggle('touchmode', input.touch);
+
 input.onAction = (a) => {
+  if (a === 'touchpad') {
+    game?.hud.showHint(TOUCHPAD_TIP, 15000);
+    return;
+  }
   if (!game || screen !== 'game') return;
   if (a === 'shop') toggleShop();
   else if (a === 'scoresOn') game.hud.showScores(true, game.model);
@@ -516,11 +532,82 @@ function demoFrame(now: number) {
   stage.render();
 }
 
+/* ======================= TRƯNG BÀY (?showcase — chỉ để xem/chụp nhân vật) ======================= */
+const SHOW = new URLSearchParams(location.search).get('showcase');
+let showcaseFrame: ((now: number) => void) | null = null;
+if (SHOW !== null) {
+  app.style.display = 'none';
+  statusEl.style.display = 'none';
+  const blob = blobTexture();
+  const avs = [0, 1, 2, 3].map((c) => {
+    const a = new Avatar(c, blob, c);
+    a.setTier([1, 3, 0, 2][c]);
+    stage.scene.add(a.root, a.blob);
+    return a;
+  });
+  const show = new GameModel(0, 0, 0, 0);
+  (window as any).__show = avs;
+  const types = [MK_NAU, MK_CHAY, MK_NEM, MK_NO, MK_TRANG, MK_DOT, 7, 6];
+  const states = [ST_MOVE, ST_MOVE, ST_THROW, 5, ST_MOVE, ST_WIND, ST_MOVE, 7];
+  let last = performance.now();
+  showcaseFrame = (now: number) => {
+    const t = now / 1000;
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    const mode = SHOW || 'all';
+    avs.forEach((a, i) => {
+      const x = -3 + i * 2;
+      const z = 6.5;
+      // mỗi người một tư thế: chạy ngang, chạy lùi, nạp đạn, ngắm bắn
+      const run = mode === 'run';
+      const px = run ? x + Math.sin(t * 1.2 + i) * 0.8 : x;
+      a.update({
+        x: px, y: i === 3 && !run ? Math.max(0, Math.sin(t * 3)) * 0.6 : 0, z, yaw: Math.PI + Math.sin(t * 0.5 + i) * 0.5, pitch: -0.1,
+        dt, t, down: mode === 'down' && i === 0 ? 1 : 0, ads: i === 2, sprint: false, brace: i === 3 && mode === 'skill',
+        rage: false, reviving: mode === 'down' && i === 1, reload: i === 1 && mode !== 'down' ? (t * 0.5) % 1 : -1,
+      });
+      if (mode === 'skill' && Math.floor(t * 10) % 25 === 0) a.skill((['throw', 'build', 'ult', 'stomp'] as const)[i]);
+      if (Math.floor(t * 10) % 13 === 0) a.kick();
+    });
+    types.forEach((type, i) => {
+      show.rmVisible[i] = 1;
+      show.mType[i] = type;
+      show.mHp[i] = 255;
+      const moving = states[i] === ST_MOVE;
+      show.mSt[i] = moving ? ST_MOVE : (states[i] + 0) | 0;
+      show.rmX[i] = (i < 6 ? -6.2 + i * 2.5 : i === 6 ? -2.5 : 3) * (i < 6 ? 1 : 1);
+      show.rmZ[i] = (i < 6 ? 10 : 12.3) + (moving ? Math.sin(t * 1.5 + i) * 0.4 : 0);
+      show.rmYaw[i] = Math.PI + (moving ? 0.6 : 0);
+      show.rmSpeed[i] = moving ? (type === MK_CHAY ? 6 : type === MK_DOT ? 2.6 : 3.4) : 0;
+    });
+    const cam = stage.camera;
+    cam.fov = 45;
+    cam.updateProjectionMatrix();
+    const close = mode === 'close';
+    if (mode === 'side') {
+      cam.position.set(-6.5, 1.1, 6.5);
+      cam.lookAt(0, 0.9, 6.5);
+    } else if (mode === 'front') {
+      cam.position.set(0, 1.25, 3.2);
+      cam.lookAt(0, 0.95, 6.5);
+    } else {
+      cam.position.set(0, close ? 1.9 : 2.8, close ? 3.6 : 0.5);
+      cam.lookAt(0, close ? 1.1 : 1.2, close ? 7 : 9);
+    }
+    stage.followShadow(0, 2);
+    monkeys.update(show, t, dt, cam.position, cam.quaternion);
+    fx.update(null, dt, t);
+    stage.update(t, dt);
+    stage.render();
+  };
+}
+
 /* ======================= VÒNG LẶP ======================= */
 function loop(now: number) {
   requestAnimationFrame(loop);
   try {
     if (game && (screen === 'game' || screen === 'over')) game.frame(now);
+    else if (showcaseFrame) showcaseFrame(now);
     else demoFrame(now);
   } catch (e) {
     console.error(e);
@@ -531,3 +618,6 @@ requestAnimationFrame(loop);
 renderHome();
 document.title = GAME_TITLE;
 void lastOver;
+
+// móc kiểm thử (headless/console): đọc trạng thái input + trận, không ảnh hưởng gameplay
+(window as any).__monkey = { input, get game() { return game; } };

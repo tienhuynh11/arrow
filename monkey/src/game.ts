@@ -8,7 +8,7 @@ import {
   FX_BUILD, FX_EXPLODE, FX_HEAL, FX_PICK, FX_PLAYERHIT, FX_REPAIR, FX_ROAR, FX_SHOCK, FX_SLAM, FX_SPLAT, FX_STOMP,
   PF_ADS, PF_BRACE, PF_DOWN_MASK, PF_REVIVING, PF_SPRINT, SnapData, decodeSnap, type SMsg,
 } from '@shared/monkey/proto';
-import { EYE_Y, P_G, P_Q, P_X, SHOULDER, type Cmd } from '@shared/monkey/sim';
+import { B_USE, EYE_Y, P_G, P_Q, P_X, SHOULDER, type Cmd } from '@shared/monkey/sim';
 import * as A from './audio';
 import { Input } from './input';
 import { net } from './net';
@@ -68,7 +68,7 @@ export class Game {
     this.hud.setPlayers(players, me);
     document.getElementById('app')!.prepend(this.hud.root);
     for (const p of players) {
-      const a = new Avatar(p.cls, this.blobT);
+      const a = new Avatar(p.cls, this.blobT, p.idx);
       a.setTier(0);
       this.avatars.set(p.idx, a);
       s3.stage.scene.add(a.root, a.blob);
@@ -133,11 +133,16 @@ export class Game {
       case 'ult': {
         const cls = CLASSES[this.players.find((p) => p.idx === m.i)?.cls ?? 0];
         hud.feed(`${cls.q.icon} ${name(m.i)}: ${cls.q.name}!`, 'gold');
+        this.avatars.get(m.i ?? -1)?.skill('ult');
         A.sfxUlt();
         break;
       }
-      case 'skill':
+      case 'skill': {
+        const av = this.avatars.get(m.i ?? -1);
+        const id = CLASSES[this.players.find((p) => p.idx === m.i)?.cls ?? 0].id;
+        if (av) av.skill(m.s === 'g' ? (id === 'dausi' ? 'stomp' : id === 'kysu' ? 'build' : 'throw') : id === 'dausi' ? 'brace' : 'build');
         break;
+      }
       case 'buy':
         if (m.i === this.me) {
           A.sfxBuy();
@@ -174,6 +179,7 @@ export class Game {
     // hỗ trợ ngắm cảm ứng: mục tiêu gần tâm
     if (input.touch) input.assist(this.assistTarget(), dt);
 
+    input.tick(dt, now);
     input.read(this.inp);
     m.rttMs = net.rtt || 100;
     // giật súng: cộng vào pitch thật (ảnh hưởng ngắm, người chơi phải ghìm)
@@ -234,10 +240,20 @@ export class Game {
       if (inf) a.setTier(inf.tier);
       if (p.idx === this.me) {
         const sp2 = Math.hypot(m.pred.vx, m.pred.vz);
-        a.update(m.rx, m.ry, m.rz, yaw, pitch, sp2, dt, now / 1000, down, ads, !!inf && (inf.flags & PF_SPRINT) !== 0 && sp2 > 6.5, !!inf && (inf.flags & PF_BRACE) !== 0, !!inf && inf.shield > 0, !!inf && (inf.flags & PF_REVIVING) !== 0);
+        const rl = m.pred.reloadT > 0 ? 1 - m.pred.reloadT / WEAPONS[m.pred.tier].reload : -1;
+        a.update({
+          x: m.rx, y: m.ry, z: m.rz, yaw, pitch, dt, t: now / 1000, down, ads,
+          sprint: sp2 > 7, brace: m.pred.braceT > 0, rage: !!inf && inf.shield > 0,
+          reviving: (this.inp.btn & B_USE) !== 0 && !!inf && (inf.flags & PF_REVIVING) !== 0, reload: rl,
+        });
         a.setVisible(dist > 1.1);
       } else if (inf) {
-        a.update(m.oX[p.idx], m.oY[p.idx], m.oZ[p.idx], m.oYaw[p.idx], m.oPitch[p.idx], m.oSpeed[p.idx], dt, now / 1000, inf.flags & PF_DOWN_MASK, (inf.flags & PF_ADS) !== 0, (inf.flags & PF_SPRINT) !== 0, (inf.flags & PF_BRACE) !== 0, inf.shield > 0, (inf.flags & PF_REVIVING) !== 0);
+        a.update({
+          x: m.oX[p.idx], y: m.oY[p.idx], z: m.oZ[p.idx], yaw: m.oYaw[p.idx], pitch: m.oPitch[p.idx], dt, t: now / 1000,
+          down: inf.flags & PF_DOWN_MASK, ads: (inf.flags & PF_ADS) !== 0, sprint: (inf.flags & PF_SPRINT) !== 0,
+          brace: (inf.flags & PF_BRACE) !== 0, rage: inf.shield > 0, reviving: (inf.flags & PF_REVIVING) !== 0,
+          reload: inf.reloadT > 0 ? 1 - inf.reloadT / WEAPONS[inf.tier].reload : -1,
+        });
       }
     }
 
@@ -439,6 +455,7 @@ export class Game {
         const victim = a;
         const dmg = b & 1023;
         const src = b >> 10;
+        this.avatars.get(victim)?.hit(x, z);
         if (victim === this.me) {
           this.hud.hurtFrom(x, z, dmg >= 20);
           A.sfxHurt(dmg >= 20);

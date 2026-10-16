@@ -18,6 +18,10 @@ export const ACTIONS = [
   ['buyHp', 'Nâng máu'],
   ['shop', 'Mở cửa hàng'],
   ['scores', 'Bảng điểm (giữ)'],
+  ['turnLeft', 'Xoay camera trái (khi không dùng được chuột)'],
+  ['turnRight', 'Xoay camera phải'],
+  ['lookUp', 'Ngước lên'],
+  ['lookDown', 'Nhìn xuống'],
 ] as const;
 export type Action = (typeof ACTIONS)[number][0];
 
@@ -39,6 +43,8 @@ export interface Settings {
   touchSens: number;
   aimAssist: boolean;
   touchScale: number;
+  /** tốc độ xoay camera bằng phím (độ/giây) */
+  keyTurn: number;
   keys: Record<Action, string>;
 }
 
@@ -58,6 +64,10 @@ export const DEFAULT_KEYS: Record<Action, string> = {
   buyHp: 'KeyC',
   shop: 'KeyB',
   scores: 'Tab',
+  turnLeft: 'ArrowLeft',
+  turnRight: 'ArrowRight',
+  lookUp: 'ArrowUp',
+  lookDown: 'ArrowDown',
 };
 
 export const DEFAULTS: Settings = {
@@ -78,6 +88,7 @@ export const DEFAULTS: Settings = {
   touchSens: 1,
   aimAssist: true,
   touchScale: 1,
+  keyTurn: 150,
   keys: { ...DEFAULT_KEYS },
 };
 
@@ -112,6 +123,7 @@ function load(): Settings {
   s.shake = clampN(s.shake, 0, 1.5);
   s.touchSens = clampN(s.touchSens, 0.2, 3);
   s.touchScale = clampN(s.touchScale, 0.7, 1.4);
+  s.keyTurn = clampN(s.keyTurn, 40, 360);
   if (!['auto', 'high', 'medium', 'low'].includes(s.quality)) s.quality = 'auto';
   return s;
 }

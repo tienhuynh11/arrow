@@ -310,17 +310,15 @@ body.ingame .status { display: none; }
   .wave .t { font-size: 20px; }
   .scores { min-width: 0; width: 92vw; }
 }
-@media (pointer: coarse) {
-  .skills { display: none; }
-  /* cảm ứng: dời HUD súng xuống giữa đáy để nhường hai cụm nút bên phải/trái */
-  .gun { top: auto !important; right: auto !important; left: 50%; bottom: 6px !important; transform: translateX(-50%) scale(.72) !important; transform-origin: bottom center !important; text-align: center; }
-  .gun .rl { margin: 6px auto 0; }
-  .gun .up { display: none; }
-  .radar { width: 92px !important; height: 92px !important; }
-  .net { top: 108px !important; }
-  .fps { top: 122px; }
-  .feed { top: 150px !important; }
-}
+body.touchmode .skills { display: none; }
+/* cảm ứng: dời HUD súng xuống giữa đáy để nhường hai cụm nút bên phải/trái */
+body.touchmode .gun { top: auto !important; right: auto !important; left: 50%; bottom: 6px !important; transform: translateX(-50%) scale(.72) !important; transform-origin: bottom center !important; text-align: center; }
+body.touchmode .gun .rl { margin: 6px auto 0; }
+body.touchmode .gun .up { display: none; }
+body.touchmode .radar { width: 92px !important; height: 92px !important; }
+body.touchmode .net { top: 108px !important; }
+body.touchmode .fps { top: 122px; }
+body.touchmode .feed { top: 150px !important; }
 @media (max-width: 860px) {
   .status { top: 6px; bottom: auto; right: 10px; left: auto; }
 }
