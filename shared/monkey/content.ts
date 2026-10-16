@@ -336,18 +336,26 @@ export interface WaveSpec {
   weights: number[];
 }
 
-const PLAYER_MUL = [1, 1.65, 2.2, 2.7];
+/** tổng số khỉ của đợt theo số người (1..MAX_PLAYERS); quá 4 người tăng chậm lại */
+const PLAYER_MUL = [1, 1.65, 2.2, 2.7, 3.15, 3.55, 3.9, 4.2, 4.5, 4.75];
+/** trần khỉ còn sống cùng lúc (CPU server: AI + snapshot), < MAX_MONKEYS để còn slot đệm */
+export const MAX_ALIVE = 150;
+
+/** hệ số đám đông (số khỉ cùng lúc): tuyến tính tới 4 người, sau đó tăng chậm (10 người = 3.25) */
+function crowdMul(p: number) {
+  return p <= 4 ? 0.65 + 0.35 * p : 2.05 + 0.2 * (p - 4);
+}
 
 export function waveSpec(n: number, players: number): WaveSpec {
-  const p = Math.max(1, Math.min(4, players));
+  const p = Math.max(1, Math.min(PLAYER_MUL.length, players));
   const boss = n % 5 === 0;
   let total = Math.round((6 + n * 4 + n * n * 0.3) * PLAYER_MUL[p - 1]);
   if (boss) total = Math.round(total * 0.6);
-  const maxAlive = Math.min(150, Math.round((10 + n * 2.6) * (0.65 + 0.35 * p)));
+  const maxAlive = Math.min(MAX_ALIVE, Math.round((10 + n * 2.6) * crowdMul(p)));
   const every = Math.max(0.1, (1.5 - n * 0.06) / Math.sqrt(p));
   const k = n - 1;
-  // đông người thì khỉ trâu hơn một chút; về cuối tăng nhanh (bậc 2)
-  const hpMul = (1 + 0.1 * k + 0.008 * k * k) * (1 + 0.12 * (p - 1));
+  // đông người thì khỉ trâu hơn một chút (+12%/người tới 4 người, sau đó +8%/người); về cuối tăng nhanh (bậc 2)
+  const hpMul = (1 + 0.1 * k + 0.008 * k * k) * (1 + 0.12 * Math.min(3, p - 1) + 0.08 * Math.max(0, p - 4));
   // chơi một mình: khỉ đánh nhẹ hơn 15% (không ai đỡ dậy)
   const dmgMul = (1 + 0.045 * k) * (p === 1 ? 0.85 : 1);
   const spdMul = Math.min(1.28, 1 + 0.014 * k);
@@ -363,17 +371,23 @@ export function waveSpec(n: number, players: number): WaveSpec {
 
 /** máu boss theo số người + đợt */
 export function bossHp(n: number, players: number) {
+  players = Math.max(1, Math.min(PLAYER_MUL.length, players));
   // boss đầu tiên (đợt 5) nhẹ hơn để người mới làm quen
   return Math.round(MONKEYS[MK_VUA].hp * (players === 1 ? 0.75 : 1 + 0.6 * (players - 1)) * (1 + 0.45 * (n / 5 - 1)) * (n <= 5 ? 0.7 : 1));
 }
 
 /** nghỉ giữa 2 đợt (giây). Cả đội bấm SẴN SÀNG thì rút còn 3 giây */
-export const BREAK_SECS = 14;
+export const BREAK_SECS = 30;
 export const FIRST_BREAK_SECS = 8;
 
 /* ======================= KINH TẾ ======================= */
 /** đồng đội (không phải người hạ) nhận phần chia */
 export const TEAM_SHARE = 0.3;
+/** phần chia cho MỖI đồng đội theo số người trong phòng: ≤4 người giữ 30%;
+ *  đông hơn thì giảm theo căn (10 người ≈ 17%) để xu không lạm phát khi mỗi người hạ ít khỉ hơn */
+export function teamShare(players: number) {
+  return players <= 4 ? TEAM_SHARE : TEAM_SHARE * Math.sqrt(3 / (players - 1));
+}
 export function waveBonus(n: number) {
   return 40 + 10 * n;
 }

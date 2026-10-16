@@ -213,6 +213,9 @@ function handle(s: Session, m: CMsg, send: (m: SMsg) => void) {
     case 'pause':
       room.setPaused(!!m.p);
       return;
+    case 'chat':
+      room.chat(p, m.m);
+      return;
   }
 }
 

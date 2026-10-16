@@ -23,7 +23,10 @@ import { ST_FUSE, ST_POUNCE, ST_THROW, ST_WIND, ST_DROP } from '@shared/monkey/p
 
 const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
-const SHOT_COLORS = [0xfff2a8, 0xa8ffcb, 0xffd0a0, 0xffb0b0];
+/** khoảng cách (bình phương) còn vẽ chi tiết nhỏ của nhân vật đồng đội */
+const AVATAR_DETAIL_D2 = 25 * 25;
+/** màu vệt đạn theo idx người chơi (10 màu nhạt, đủ MAX_PLAYERS) */
+const SHOT_COLORS = [0xfff2a8, 0xa8ffcb, 0xffd0a0, 0xffb0b0, 0xa8d8ff, 0xe0b8ff, 0xb0fff0, 0xffc0e0, 0xffffff, 0xc8c8ff];
 
 export interface Shared3D {
   stage: Stage;
@@ -257,6 +260,9 @@ export class Game {
         });
         a.setVisible(dist > 1.1);
       } else if (inf) {
+        // xa > 25 m: ẩn chi tiết nhỏ (mắt, kính, nút…) — rẻ, đỡ draw call khi 10 người
+        const ddx = m.oX[p.idx] - cam.position.x, ddz = m.oZ[p.idx] - cam.position.z;
+        a.setDetail(ddx * ddx + ddz * ddz < AVATAR_DETAIL_D2);
         a.update({
           x: m.oX[p.idx], y: m.oY[p.idx], z: m.oZ[p.idx], yaw: m.oYaw[p.idx], pitch: m.oPitch[p.idx], dt, t: now / 1000,
           down: inf.flags & PF_DOWN_MASK, ads: (inf.flags & PF_ADS) !== 0, sprint: (inf.flags & PF_SPRINT) !== 0,
@@ -336,7 +342,7 @@ export class Game {
             const d = Math.hypot(dx, dy, dz) || 1;
             fx.ownShells.push({ x: tmpV.x, y: tmpV.y, z: tmpV.z, dx: dx / d, dy: dy / d, dz: dz / d, dist: d, t: 0, boom: true });
           } else {
-            fx.tracer(tmpV.x, tmpV.y, tmpV.z, e.x, e.y, e.z, SHOT_COLORS[this.me], 0.06);
+            fx.tracer(tmpV.x, tmpV.y, tmpV.z, e.x, e.y, e.z, SHOT_COLORS[this.me % SHOT_COLORS.length], 0.06);
           }
           if (e.a >= 0) {
             fx.fur(e.x, e.y, e.z, MONKEYS[m.mType[e.a]].color, 4);
@@ -394,7 +400,7 @@ export class Game {
           tmpV2.set(tmpV.x + Math.sin(yaw) * Math.cos(pt) * d, tmpV.y + Math.sin(pt) * d, tmpV.z + Math.cos(yaw) * Math.cos(pt) * d);
           const inf = shooter < 100 ? m.info[shooter] : null;
           const w = inf ? weaponOf(inf.cls, inf.tier) : null;
-          if (!w || w.splashR === 0) fx.tracer(tmpV.x, tmpV.y, tmpV.z, tmpV2.x, tmpV2.y, tmpV2.z, shooter >= 100 ? 0x9cff9c : SHOT_COLORS[shooter & 3], 0.07);
+          if (!w || w.splashR === 0) fx.tracer(tmpV.x, tmpV.y, tmpV.z, tmpV2.x, tmpV2.y, tmpV2.z, shooter >= 100 ? 0x9cff9c : SHOT_COLORS[shooter % SHOT_COLORS.length], 0.07);
           fx.muzzleFlash(tmpV, false, !!w && w.pellets > 1);
           const [vol, pan] = this.spatial(tmpV.x, tmpV.z);
           A.sfxGun(shooter >= 100 ? 'turret' : w?.sound ?? 'pistol', vol * 0.7, pan);

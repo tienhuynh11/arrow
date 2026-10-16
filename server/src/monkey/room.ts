@@ -3,7 +3,7 @@
 // Khỉ + kinh tế + đợt: vòng 20Hz; snapshot nhị phân mã hoá một lần, gửi chung cả phòng.
 
 import { randomUUID } from 'node:crypto';
-import { AI_HZ, AI_MS, LAG_COMP_TICKS, MAX_PLAYERS, TICK_HZ } from '../../../shared/monkey/config.js';
+import { AI_HZ, AI_MS, CHAT_MAX, LAG_COMP_TICKS, MAX_PLAYERS, TICK_HZ } from '../../../shared/monkey/config.js';
 import {
   BLEED_SECS,
   BREAK_SECS,
@@ -21,7 +21,7 @@ import {
   REVIVE_RANGE,
   REVIVE_SECS,
   START_CASH,
-  TEAM_SHARE,
+  teamShare,
   ULT_KILLS,
   bodyY,
   bossHp,
@@ -98,6 +98,8 @@ export class MPlayer {
   pid = randomUUID();
   token = randomUUID();
   name: string;
+  chatCredit?: number;
+  chatAt?: number;
   cls: number;
   ready = false;
   conn: MConn | null;
@@ -158,7 +160,7 @@ export class MonkeyRoom implements WorldHost {
   readonly code: string;
   readonly solo: boolean;
   phase: 'lobby' | 'play' | 'over' = 'lobby';
-  players: (MPlayer | null)[] = [null, null, null, null];
+  players: (MPlayer | null)[] = new Array<MPlayer | null>(MAX_PLAYERS).fill(null);
   host = 0;
   /** lựa chọn bản đồ trong sảnh (id hoặc 'random') */
   mapChoice: string = MAP_RANDOM;
@@ -214,7 +216,7 @@ export class MonkeyRoom implements WorldHost {
   canJoin(): string | null {
     if (this.solo) return 'Phòng chơi đơn';
     if (this.phase !== 'lobby') return 'Phòng đang chơi';
-    if (this.count >= MAX_PLAYERS) return 'Phòng đã đủ 4 người';
+    if (this.count >= MAX_PLAYERS) return `Phòng đã đủ ${MAX_PLAYERS} người`;
     return null;
   }
 
@@ -478,6 +480,20 @@ export class MonkeyRoom implements WorldHost {
     }
     this.broadcast({ t: 'ev', k: 'clear', v: this.wave, j: bonus });
     this.startBreak(BREAK_SECS);
+  }
+
+  /* ======================= CHAT ======================= */
+  /** chat: tối đa ~3 tin / 2 giây mỗi người, bỏ ký tự điều khiển, cắt CHAT_MAX */
+  chat(p: MPlayer, raw: unknown) {
+    if (typeof raw !== 'string') return;
+    const m = raw.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX);
+    if (!m) return;
+    const now = this.clock();
+    p.chatCredit = Math.min(3, (p.chatCredit ?? 3) + ((now - (p.chatAt ?? now)) / 1000) * 1.5);
+    p.chatAt = now;
+    if (p.chatCredit < 1) return;
+    p.chatCredit -= 1;
+    this.broadcast({ t: 'chat', i: p.idx, n: p.name, m });
   }
 
   setBreakReady(p: MPlayer, r: boolean) {
@@ -1044,15 +1060,15 @@ export class MonkeyRoom implements WorldHost {
     if (type === MK_VUA) {
       for (const p of this.players) if (p) { p.cash += def.reward; p.earned += def.reward; }
       this.broadcast({ t: 'ev', k: 'bossdown', i: killer });
-    } else if (killer >= 0 && killer < 4) {
-      const share = Math.round(def.reward * TEAM_SHARE);
+    } else if (killer >= 0 && killer < MAX_PLAYERS) {
+      const share = Math.round(def.reward * teamShare(this.count));
       for (const p of this.players) {
         if (!p) continue;
         if (p.idx === killer) { p.cash += def.reward; p.earned += def.reward; }
         else { p.cash += share; p.earned += share; }
       }
     }
-    const k = killer >= 0 && killer < 4 ? this.players[killer] : null;
+    const k = killer >= 0 && killer < MAX_PLAYERS ? this.players[killer] : null;
     if (k) { k.kills++; k.ultKills++; }
     // rơi vật phẩm: chuối hồi máu / túi xu
     if (w.rng() < (type === MK_DOT ? 0.35 : 0.035)) {
@@ -1213,7 +1229,7 @@ export class MonkeyRoom implements WorldHost {
     this.world?.reset();
     this.world = null;
     for (const p of this.players) if (p?.conn) p.send({ t: 'left' });
-    this.players = [null, null, null, null];
+    this.players = new Array<MPlayer | null>(MAX_PLAYERS).fill(null);
     this.onEmpty?.();
   }
 }

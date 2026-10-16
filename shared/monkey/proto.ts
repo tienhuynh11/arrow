@@ -3,6 +3,7 @@
 //  - Lệnh người chơi (60/giây) và snapshot (20/giây): NHỊ PHÂN, lượng tử hoá + nén delta theo slot.
 // Snapshot được mã hoá MỘT lần cho cả phòng (mọi người nhận chung một buffer) → server rẻ CPU.
 
+import { MAX_PLAYERS } from './config.js';
 import type { Cmd } from './sim.js';
 
 /* ============================ JSON ============================ */
@@ -34,6 +35,8 @@ export type CMsg =
   | { t: 'again' }
   /** chơi đơn: tạm dừng thật (khỉ đứng im) */
   | { t: 'pause'; p: boolean }
+  /** chat trong phòng (Enter) */
+  | { t: 'chat'; m: string }
   | { t: 'lb' };
 
 export type SMsg =
@@ -48,6 +51,7 @@ export type SMsg =
   | { t: 'lb'; solo: BoardEntry[]; team: BoardEntry[] }
   | { t: 'err'; m: string }
   | { t: 'paused'; p: boolean }
+  | { t: 'chat'; i: number; n: string; m: string }
   | { t: 'left' };
 
 /* ============================ NHỊ PHÂN ============================ */
@@ -194,7 +198,7 @@ export class SnapData {
   left = 0;
   bossHp = 0; // 0..65535 tỉ lệ máu boss, 0 = không có boss
   np = 0;
-  players: SnapPlayer[] = [newSnapPlayer(), newSnapPlayer(), newSnapPlayer(), newSnapPlayer()];
+  players: SnapPlayer[] = Array.from({ length: MAX_PLAYERS }, newSnapPlayer);
   // khỉ
   nm = 0;
   mSlot = new Uint8Array(256);
@@ -269,9 +273,11 @@ export function decodeSnap(v: DataView, s: SnapData): boolean {
   s.bossHp = v.getUint16(o, true); o += 2;
   // người chơi
   s.np = v.getUint8(o++);
+  if (s.np > MAX_PLAYERS) return false;
   for (let i = 0; i < s.np; i++) {
     const p = s.players[i];
     p.idx = v.getUint8(o++);
+    if (p.idx >= MAX_PLAYERS) return false;
     p.flags = v.getUint8(o++);
     p.cls = v.getUint8(o++);
     const t = v.getUint8(o++);

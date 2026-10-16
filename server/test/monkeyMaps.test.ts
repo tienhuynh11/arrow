@@ -8,6 +8,7 @@ import { join } from 'node:path';
 process.env.MONKEY_DATA_DIR = mkdtempSync(join(tmpdir(), 'monkey-maps-'));
 delete process.env.MONKEY_MAP;
 
+import { MAX_PLAYERS } from '../../shared/monkey/config.js';
 import { MK_NAU } from '../../shared/monkey/content.js';
 import { MAP, MAPS, MAX_ARENA, PLAYER_R, collide, setActiveMap, type MapDef } from '../../shared/monkey/map.js';
 import { newState, type Cmd } from '../../shared/monkey/sim.js';
@@ -33,11 +34,15 @@ console.log('\n[1] Dữ liệu bản đồ');
 ok(new Set(MAPS.map((m) => m.id)).size === MAPS.length && MAPS.length >= 3, `${MAPS.length} bản đồ, id không trùng`);
 for (const m of MAPS) {
   ok(m.arena >= 44 && m.arena <= MAX_ARENA, `${m.id}: nửa cạnh sân ${m.arena} m (≤ MAX_ARENA ${MAX_ARENA})`);
-  ok(m.spawns.length >= 8 && m.playerSpawns.length >= 4, `${m.id}: ${m.spawns.length} cổng khỉ, ${m.playerSpawns.length} chỗ đứng`);
+  ok(m.spawns.length >= 8 && m.playerSpawns.length >= MAX_PLAYERS, `${m.id}: ${m.spawns.length} cổng khỉ, ${m.playerSpawns.length} chỗ đứng (cần ≥ ${MAX_PLAYERS})`);
   const badS = m.spawns.filter((s) => !free(m, s.x, s.z, 0.6));
   ok(badS.length === 0, `${m.id}: cổng khỉ không nằm trong vật cản ${badS.length ? JSON.stringify(badS) : ''}`);
   const badP = m.playerSpawns.filter((s) => !free(m, s.x, s.z, PLAYER_R + 0.05));
   ok(badP.length === 0, `${m.id}: chỗ đứng người chơi trống ${badP.length ? JSON.stringify(badP) : ''}`);
+  let minGap = 1e9;
+  const ps = m.playerSpawns.slice(0, MAX_PLAYERS);
+  for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) minGap = Math.min(minGap, Math.hypot(ps[i].x - ps[j].x, ps[i].z - ps[j].z));
+  ok(minGap > PLAYER_R * 4, `${m.id}: ${MAX_PLAYERS} chỗ đứng không chồng lên nhau (gần nhất ${minGap.toFixed(2)} m)`);
   const edge = m.spawns.every((s) => Math.max(Math.abs(s.x), Math.abs(s.z)) > m.arena - 4);
   ok(edge, `${m.id}: cổng khỉ nằm sát mép sân`);
   const outside = [...m.circles, ...m.boxes].filter((o) => Math.abs(o.x) > m.arena || Math.abs(o.z) > m.arena);

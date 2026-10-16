@@ -47,8 +47,8 @@ input { font: inherit; }
 
 /* ---------- màn chính ---------- */
 .home {
-  position: fixed; inset: 0; display: grid; grid-template-columns: minmax(320px, 520px) minmax(280px, 400px); gap: 28px;
-  align-content: center; justify-content: center; padding: 24px; overflow: auto;
+  position: fixed; inset: 0; display: grid; grid-template-columns: minmax(340px, 560px) minmax(280px, 400px); gap: 24px;
+  align-content: center; align-items: start; justify-content: center; padding: 16px 24px; overflow: auto;
   background: radial-gradient(ellipse at 30% 40%, rgba(10, 20, 8, 0.15), rgba(6, 12, 5, 0.75));
 }
 .logo { font-family: var(--display); font-size: clamp(38px, 6vw, 68px); line-height: 0.95; margin: 0 0 6px; letter-spacing: 0.02em;
@@ -101,11 +101,11 @@ body.ingame .status { display: none; }
 .lobby .card { width: min(880px, 100%); }
 .code { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .code .v { font-family: var(--display); font-size: 42px; letter-spacing: 0.22em; color: var(--banana); text-shadow: 0 3px 0 #8a4b0b; }
-.slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
-.slot { border-radius: 12px; background: rgba(0,0,0,.3); padding: 12px; min-height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; border: 2px dashed rgba(255,255,255,.08); }
+.slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 14px 0; }
+.slot { border-radius: 12px; background: rgba(0,0,0,.3); padding: 8px 6px; min-height: 104px; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; border: 2px dashed rgba(255,255,255,.08); }
 .slot.filled { border-style: solid; border-color: rgba(255,255,255,.1); }
 .slot.me { border-color: var(--banana); }
-.slot .nm { font-weight: 900; }
+.slot .nm { font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot .st { font-size: 11px; font-weight: 900; letter-spacing: .1em; padding: 3px 8px; border-radius: 99px; background: rgba(255,255,255,.08); }
 .slot .st.ok { background: var(--leaf); color: #062b12; }
 .slot .st.host { background: var(--banana); color: #3a2200; }
@@ -125,6 +125,16 @@ body.ingame .status { display: none; }
 .tm.down { box-shadow: inset 0 0 0 2px var(--red); animation: pulse 1s infinite; }
 .tm.dead { opacity: 0.5; }
 .tm .tag2 { font-size: 10.5px; color: var(--red); font-weight: 900; }
+.tm { border-left: 3px solid var(--pc, transparent); }
+/* > 4 người: bảng đội gọn (10 người ≈ 300px cao) */
+.team.compact { gap: 3px; width: 200px; }
+.team.compact .tm { grid-template-columns: 20px 1fr; gap: 6px; padding: 3px 6px; border-radius: 7px; }
+.team.compact .tm .ic { width: 20px; height: 20px; font-size: 11px; }
+.team.compact .tm .nm { font-size: 11px; }
+.team.compact .tm .nm i { font-size: 10px; }
+.team.compact .bar { height: 4px; margin-top: 2px; }
+.team.compact .tm .tag2 { font-size: 9.5px; }
+.team.compact .tm .tag2:empty { display: none; }
 @keyframes pulse { 50% { background: rgba(120, 20, 20, 0.55); } }
 
 .wave { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 260px; }
@@ -238,6 +248,7 @@ body.touchmode .gun .gp { justify-content: center; }
 .scores td, .scores th { padding: 8px 10px; text-align: left; }
 .scores td.n, .scores th.n { text-align: right; }
 .scores th { font-size: 11px; color: var(--dim); letter-spacing: .1em; }
+.scores.compact td, .scores.compact th { padding: 4px 10px; font-size: 13px; }
 
 /* ---------- hộp thoại ---------- */
 .modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(4, 8, 3, .66); padding: 16px; z-index: 20; overflow: auto; }
@@ -336,10 +347,13 @@ body.touchmode .gun .gp { justify-content: center; }
 
 @media (max-width: 860px) {
   .home { grid-template-columns: 1fr; align-content: start; }
-  .slots { grid-template-columns: repeat(2, 1fr); }
+  .slots { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .slot { min-height: 0; padding: 6px; gap: 3px; }
+  .slot .ico { width: 30px !important; height: 30px !important; font-size: 15px !important; flex: none; }
   .over .cols { grid-template-columns: 1fr; }
   .over .big3 { grid-template-columns: repeat(2, 1fr); }
   .team { width: 170px; transform: scale(.85); transform-origin: top left; }
+  .team.compact { width: 160px; transform: scale(.8); }
   .radar { width: 104px; height: 104px; }
   .net { top: 120px; }
   .selfbox { width: 210px; transform: scale(.85); transform-origin: bottom left; bottom: 8px; left: 8px; }
@@ -378,3 +392,80 @@ body.touchmode .feed { top: 150px !important; }
 .maps.ro .mapc:not(.on) { opacity: 0.4; }
 .mapinfo { font-size: 12.5px; color: var(--dim); margin-bottom: 12px; min-height: 17px; }
 @media (max-width: 560px) { .maps { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- màn chính gọn trong một màn hình ---------- */
+.home .side .logo { margin-top: 4px; }
+.home .side .tag { margin: 10px 0 12px; font-size: 14px; }
+.home .lbcard { max-height: 38vh; overflow: auto; }
+.home .classes { grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 2px 0 8px; }
+.home .cls { padding: 7px 3px 6px; }
+.home .cls .ico { width: 34px; height: 34px; font-size: 18px; margin-bottom: 4px; }
+.home .cls b { font-size: 10.5px; letter-spacing: 0; white-space: nowrap; }
+.home .cls span { font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home .clsinfo { min-height: 0; font-size: 12px; padding: 8px 10px; margin-bottom: 10px; line-height: 1.4; }
+.home .field { margin-bottom: 8px; }
+.home .field input { padding: 9px 12px; font-size: 16px; }
+.home .maps { margin: 2px 0 10px; }
+.home .mapc { padding: 6px 4px 5px; }
+.home .mapc i { font-size: 18px; }
+.home .btn.big { padding: 12px 18px; font-size: 17px; }
+@media (max-height: 700px) {
+  .home .side .logo { font-size: clamp(30px, 4.6vw, 50px); }
+  .home .side .tag { font-size: 13px; }
+  .home .clsinfo { font-size: 11.5px; }
+}
+@media (max-width: 860px) {
+  .home .side { order: -1; }
+  .home .classes { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* ---------- cửa hàng gọn trong một màn hình ---------- */
+.shop .card { padding: 12px 14px; }
+.shop h3 { margin: 8px 0 6px; }
+.shop .grid { gap: 8px; }
+.shop .grid.sks { grid-template-columns: repeat(3, 1fr); }
+.shop .item { padding: 8px 9px; gap: 4px; }
+.shop .item .pic { height: 54px; }
+.shop .item .pic svg { height: 50px; max-width: 120px; }
+.shop .item .tag { margin-top: -2px; font-size: 10.5px; }
+.shop .sb { grid-template-columns: 54px 1fr 48px; font-size: 10.5px; gap: 5px; }
+.shop .stats { gap: 2px; }
+.shop .item .foot { font-size: 12px; padding-top: 2px; }
+.shop .item .foot .btn { padding: 7px 8px; font-size: 13px; }
+.shop .hcard .pic { height: 46px; }
+.shop .hcard .pic svg { height: 42px; }
+.shop .scard { flex-direction: row; align-items: center; gap: 10px; }
+.shop .scard > svg { width: 44px; height: 44px; flex: none; }
+.shop .scard .sx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.shop .scard .st2 { font-size: 11px; line-height: 1.35; }
+.shop .scard .pr2 { font-size: 11.5px; }
+@media (max-width: 760px) { .shop .grid.sks { grid-template-columns: 1fr; } }
+/* .foot cũng là class của hàng nút ở màn chính (flex) → trong thẻ cửa hàng phải là khối dọc */
+.shop .item .foot { display: block; }
+.shop .item .foot .need { margin-top: 3px; }
+.shop .sb { grid-template-columns: 62px 1fr 46px; }
+.shop .sb .l { white-space: nowrap; }
+.shop .grid.hps { grid-template-columns: repeat(5, 1fr); }
+/* thẻ máu nằm ngang: tim bên trái, chữ bên phải, nút ở dưới */
+.shop .hcard { display: grid; grid-template-columns: 46px 1fr; column-gap: 8px; row-gap: 2px; align-items: center; }
+.shop .hcard > svg { grid-row: 1 / span 2; width: 46px; height: 40px; }
+.shop .hcard .tier { top: 4px; left: 6px; font-size: 11px; }
+.shop .hcard .tag { margin-top: 0; }
+.shop .hcard .foot { grid-column: 1 / -1; }
+.shop .hcard .ti, .shop .hcard .tag { grid-column: 2; }
+.shop .wcard .ti { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shop .wcard .pic { height: 46px; }
+.shop .wcard .pic svg { height: 44px; }
+
+/* ---------- chat (Enter) ---------- */
+.chat { position: fixed; left: 16px; bottom: 132px; width: min(360px, calc(100vw - 32px)); z-index: 15; pointer-events: none; display: flex; flex-direction: column; gap: 6px; }
+.chatlog { max-height: 180px; overflow: hidden; display: flex; flex-direction: column; gap: 3px; }
+.chat.open .chatlog { overflow-y: auto; pointer-events: auto; background: rgba(0, 0, 0, .45); border-radius: 10px; padding: 6px 8px; }
+.cl { font-size: 13.5px; line-height: 1.35; padding: 2px 8px; border-radius: 7px; background: rgba(0, 0, 0, .5); text-shadow: 0 1px 2px #000; word-wrap: break-word; transition: opacity .6s; align-self: flex-start; max-width: 100%; }
+.chat.open .cl { background: none; padding: 1px 0; }
+.cl.old { opacity: 0; }
+.chat.open .cl.old { opacity: .85; }
+.cl b { font-weight: 900; }
+.chatin { pointer-events: auto; width: 100%; background: rgba(0, 0, 0, .7); border: 1px solid var(--banana); border-radius: 10px; color: var(--text); padding: 9px 12px; font-size: 14px; font-weight: 700; outline: none; }
+body:not(.ingame) .chat { bottom: 16px; }
+body.touchmode .chat { bottom: 170px; }

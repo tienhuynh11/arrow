@@ -2,7 +2,7 @@
 // đạn bay, thực thể đặt (trụ, rào, trạm hồi, pháo sáng, vật phẩm), lịch sử vị trí để bù trễ khi bắn,
 // và mã hoá delta khỉ cho snapshot. Toàn bộ dữ liệu nóng là typed array cấp phát một lần.
 
-import { AI_DT, HIST, LAG_COMP_TICKS, MAX_MONKEYS } from '../../../shared/monkey/config.js';
+import { AI_DT, HIST, LAG_COMP_TICKS, MAX_MONKEYS, MAX_PLAYERS } from '../../../shared/monkey/config.js';
 import {
   BANANA_SPEED,
   BOMB_RADIUS,
@@ -218,7 +218,7 @@ export class MonkeyWorld {
   rng: () => number;
   /** hệ số kỹ năng theo đợt */
   skillMul = 1;
-  overclockUntil = new Int32Array(4);
+  overclockUntil = new Int32Array(MAX_PLAYERS);
   /** đo đạc */
   aiMs = 0;
 
@@ -285,7 +285,7 @@ export class MonkeyWorld {
     if (!this.alive[slot] || dmg <= 0) return false;
     this.hp[slot] -= dmg;
     if (by >= 0) this.lastHitBy[slot] = by;
-    if (by >= 0 && by < 4) {
+    if (by >= 0 && by < MAX_PLAYERS) {
       // gộp số sát thương theo (khỉ, người bắn) trong tick
       let k = -1;
       for (let i = 0; i < this.hitN; i++) if (this.hitSlot[i] === slot && this.hitBy[i] === by) { k = i; break; }
@@ -322,7 +322,7 @@ export class MonkeyWorld {
 
   /** vụ nổ: khỉ trong bán kính chịu dmgMonkeys (giảm theo khoảng cách), người chơi chịu dmgPlayers */
   explode(x: number, z: number, r: number, dmgMonkeys: number, by: number, dmgPlayers: number, srcSlot = -1) {
-    this.addFx(FX_EXPLODE, x, z, Math.min(255, Math.round(r * 10)), by >= 0 && by < 4 ? by + 1 : 0);
+    this.addFx(FX_EXPLODE, x, z, Math.min(255, Math.round(r * 10)), by >= 0 && by < MAX_PLAYERS ? by + 1 : 0);
     if (dmgMonkeys > 0) {
       const r2 = r * r;
       for (let i = 0; i < MAX_MONKEYS; i++) {

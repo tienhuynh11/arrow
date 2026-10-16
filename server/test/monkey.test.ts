@@ -5,12 +5,12 @@ import { join } from 'node:path';
 process.env.MONKEY_DATA_DIR = mkdtempSync(join(tmpdir(), 'monkey-test-'));
 
 import { GameModel } from '../../shared/monkey/client.js';
-import { HIST, LAG_COMP_TICKS } from '../../shared/monkey/config.js';
-import { CLASSES, HP_TIER_COST, MAX_TIER, MK_NAU, MONKEYS, TEAM_SHARE, ULT_KILLS, reloadTicks, waveSpec, weaponOf } from '../../shared/monkey/content.js';
-import { ARENA, BOXES, CIRCLES, PLAYER_R } from '../../shared/monkey/map.js';
+import { HIST, LAG_COMP_TICKS, MAX_PLAYERS } from '../../shared/monkey/config.js';
+import { CLASSES, HP_TIER_COST, MAX_TIER, MK_NAU, MONKEYS, TEAM_SHARE, ULT_KILLS, reloadTicks, teamShare, waveSpec, weaponOf } from '../../shared/monkey/content.js';
+import { ARENA, BOXES, CIRCLES, PLAYER_R, PLAYER_SPAWNS } from '../../shared/monkey/map.js';
 import { SnapData, Writer, decodeCmds, decodeSnap, encodeCmds, BIN_SNAP } from '../../shared/monkey/proto.js';
 import { B_FIRE, B_USE, P_G, P_Q, P_V, P_X, copyState, newState, pelletDirs, step, type Cmd } from '../../shared/monkey/sim.js';
-import { MonkeyRoom, type MConn } from '../src/monkey/room.js';
+import { MonkeyRoom, type MConn, type MPlayer } from '../src/monkey/room.js';
 import { MonkeyWorld, type WorldHost } from '../src/monkey/world.js';
 import { runSim } from './monkeySim.js';
 
@@ -295,6 +295,82 @@ console.log('\n[6] Kinh tế, tuyệt chiêu, đỡ dậy');
   ok(!!over && Array.isArray(over.board), 'gửi bảng tổng kết + bảng xếp hạng');
   void copyState;
   void CLASSES;
+}
+
+/* ---------------- 6a. phòng 10 người ---------------- */
+console.log(`\n[6a] Phòng ${MAX_PLAYERS} người: nhận đủ, từ chối người thứ ${MAX_PLAYERS + 1}, chạy trận với bot`);
+{
+  ok(MAX_PLAYERS === 10, `MAX_PLAYERS = ${MAX_PLAYERS}`);
+  const room = new MonkeyRoom('TEN10', false);
+  room.manual = true;
+  let now = 1000;
+  room.clock = () => now;
+  const conn = (): MConn => ({ sent: 0, send() {}, close() {} });
+  const ps: MPlayer[] = [];
+  for (let i = 0; i < MAX_PLAYERS; i++) {
+    ok(room.canJoin() === null, `người thứ ${i + 1} vào được`);
+    ps.push(room.add(`P${i}`, i % CLASSES.length, conn()));
+  }
+  ok(ps.every((p, i) => p.idx === i) && room.count === MAX_PLAYERS, `${MAX_PLAYERS} người, idx 0..${MAX_PLAYERS - 1}`);
+  const why = room.canJoin();
+  ok(why !== null && why.includes(String(MAX_PLAYERS)), `người thứ ${MAX_PLAYERS + 1} bị từ chối: "${why}"`);
+  for (const p of ps.slice(1)) room.setReady(p, true);
+  ok(room.start(ps[0]) === null && room.phase === 'play', 'chủ phòng bắt đầu trận 10 người');
+  // mọi người đứng đúng chỗ riêng, không chồng nhau
+  let minGap = 1e9;
+  for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) minGap = Math.min(minGap, Math.hypot(ps[i].st.x - ps[j].st.x, ps[i].st.z - ps[j].st.z));
+  ok(minGap > PLAYER_R * 2, `chỗ đứng đầu trận tách nhau (gần nhất ${minGap.toFixed(2)} m)`);
+  // chạy qua giờ nghỉ đầu vào đợt 1, mọi người giữ cò quay vòng
+  let seq = 1;
+  let tickSum = 0, ticks = 0;
+  for (let t = 0; t < 60 * 20; t++) {
+    now += 1000 / 60;
+    for (const p of ps) room.onCmds(p, [mkCmd(seq, { btn: B_FIRE, yaw: (t * 300 + p.idx * 6553) & 0xffff, mx: p.idx % 2 ? 60 : -60 })], 1);
+    seq++;
+    if (t % 3 === 0) {
+      const t0 = performance.now();
+      room.step();
+      tickSum += performance.now() - t0;
+      ticks++;
+    }
+  }
+  ok(room.phase === 'play' && room.wave >= 1, `trận chạy tới đợt ${room.wave} với ${MAX_PLAYERS} người (tick TB ${(tickSum / ticks).toFixed(2)} ms)`);
+  // snapshot thật: mã hoá ↔ giải mã gồm cả người idx 9
+  const wr = new Writer();
+  (room as any).writeHeader(wr, true);
+  room.world!.encodeMonkeys(wr, true);
+  const buf = wr.bytes();
+  const sd = new SnapData();
+  const okDec = decodeSnap(new DataView(buf.buffer), sd);
+  const p9 = sd.players.slice(0, sd.np).find((p) => p.idx === MAX_PLAYERS - 1);
+  const s9 = ps[MAX_PLAYERS - 1];
+  ok(okDec && sd.np === MAX_PLAYERS && !!p9 && p9.x === Math.fround(s9.st.x) && p9.z === Math.fround(s9.st.z) && p9.cash === Math.floor(s9.cash) && p9.ack === s9.ack,
+    `snapshot ${buf.byteLength} byte: giải đủ ${sd.np} người, idx 9 khớp server (x, z, xu, ack)`);
+  const gm = new GameModel(MAX_PLAYERS - 1, s9.cls, s9.st.x, s9.st.z);
+  gm.onSnap(sd, now);
+  ok(gm.infoValid[MAX_PLAYERS - 1] === 1 && gm.infoValid[0] === 1 && gm.me_info?.idx === MAX_PLAYERS - 1, 'client idx 9 nhận snapshot: thấy mình + đồng đội');
+  // snapshot hỏng: số người vượt trần bị từ chối thay vì làm sập client
+  const bad = buf.slice();
+  bad[13] = MAX_PLAYERS + 1;
+  ok(!decodeSnap(new DataView(bad.buffer), new SnapData()), `snapshot báo > ${MAX_PLAYERS} người bị từ chối`);
+  // kinh tế + độ khó 10 người
+  const sp = waveSpec(20, MAX_PLAYERS), s4 = waveSpec(20, 4);
+  ok(waveSpec(60, MAX_PLAYERS).maxAlive <= 150 && sp.total > s4.total && sp.total < s4.total * 2, `đợt 20 · 10 người: ${sp.total} khỉ (4 người: ${s4.total}), tối đa ${sp.maxAlive} cùng lúc`);
+  ok(teamShare(2) === TEAM_SHARE && teamShare(4) === TEAM_SHARE && teamShare(10) < TEAM_SHARE && teamShare(10) > 0.1, `chia xu đồng đội: 4 người ${TEAM_SHARE}, 10 người ${teamShare(10).toFixed(3)}`);
+  const cb = ps[1].cash;
+  room.killed(0, MK_NAU, 0, 0, 0, 0);
+  ok(ps[1].cash - cb === Math.round(MONKEYS[MK_NAU].reward * teamShare(MAX_PLAYERS)), 'phòng 10 người: đồng đội nhận phần chia đã giảm');
+  room.dispose();
+  // AI 150 khỉ + 10 người vẫn rẻ
+  const host: WorldHost = { hurt() {}, killed() {}, heal() {}, pickup() {} };
+  const w2 = new MonkeyWorld(host, 1);
+  w2.players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({ idx: i, st: newState(i % CLASSES.length, PLAYER_SPAWNS[i].x, PLAYER_SPAWNS[i].z), tauntUntil: 0 }));
+  for (let i = 0; i < 150; i++) w2.spawn(i % 6, (rnd() - 0.5) * 64, (rnd() - 0.5) * 64, 1, 1, 1);
+  for (let i = 0; i < 40; i++) w2.update();
+  const t0 = performance.now();
+  for (let i = 0; i < 200; i++) w2.update();
+  const per = (performance.now() - t0) / 200;
+  ok(per < 4, `AI 150 khỉ + ${MAX_PLAYERS} người: ${per.toFixed(2)} ms/tick (ngân sách 50ms)`);
 }
 
 /* ---------------- 6b. phòng bỏ trống ---------------- */

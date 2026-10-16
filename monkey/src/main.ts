@@ -15,9 +15,10 @@ import { MonkeyRenderer } from './render/monkeys';
 import { Stage, blobTex as blobTexture, resolveQuality } from './render/scene';
 import { MAPS, MAP_RANDOM, isMapChoice, setActiveMap } from '@shared/monkey/map';
 import { keyLabel, onSettings, sessionGet, sessionSet, settings, store } from './settings';
-import { CLASS_ICON, clear, clsColor, clsIcon, fmt, h, timeStr, toast } from './ui/dom';
+import { CLASS_ICON, clear, clsColor, clsIcon, fmt, h, playerColor, timeStr, toast } from './ui/dom';
 import { openSettings } from './ui/settingsUi';
 import { openShop } from './ui/shop';
+import { Chat } from './ui/chat';
 
 const app = document.getElementById('app')!;
 /** Windows có "tắt touchpad khi đang gõ phím": giữ WASD là touchpad bị khoá → không xoay được camera */
@@ -116,6 +117,10 @@ net.onJson = (m) => {
       setActiveMap(m.map);
       stage.setMap(m.map);
       startGame(m.players);
+      return;
+    case 'chat':
+      chat.add(m.i, m.n, m.m);
+      if (!chat.isOpen) A.sfxUi();
       return;
     case 'paused':
       game?.model.resetClock();
@@ -240,26 +245,26 @@ function renderHome() {
   };
   drawLb();
   app.append(h('div', { class: 'home' },
-    h('div', null,
-      h('h1', { class: 'logo' }, 'SINH TỒN', h('small', null, 'BẦY KHỈ 🐒')),
-      h('p', { class: 'tag' }, 'Bắn súng sinh tồn co-op 1–4 người. Bầy khỉ ùa ra từ rừng mỗi đợt một đông — hạ khỉ kiếm xu, nâng cấp súng, dùng kỹ năng nhân vật và đỡ đồng đội dậy. Trụ được bao nhiêu đợt?'),
-      h('div', { class: 'card' },
-        h('div', { class: 'field' }, h('label', null, 'Tên'), nameIn),
-        h('div', { class: 'field' }, h('label', null, 'Chọn nhân vật')),
-        characterPicker((c) => { myCls = c; store('monkey-cls', String(c)); }, myCls),
-        h('div', { class: 'field' }, h('label', null, 'Bản đồ')),
-        mapPicker(myMap, true, (id) => { myMap = id; store('monkey-map', id); }),
-        h('div', { class: 'row' },
-          h('button', { class: 'btn big grow', onclick: () => { A.initAudio(); if (nameOk()) net.send({ t: 'create', name: name.trim(), cls: myCls, solo: true, map: myMap }); } }, '▶ CHƠI MỘT MÌNH'),
-          h('button', { class: 'btn green big grow', onclick: () => { A.initAudio(); if (nameOk()) net.send({ t: 'create', name: name.trim(), cls: myCls, solo: false, map: myMap }); } }, '👥 TẠO PHÒNG')),
-        h('div', { class: 'row', style: 'margin-top:10px' },
-          h('div', { class: 'grow', style: 'font-size:13px;color:var(--dim)' }, 'Có mã phòng của bạn bè?'),
-          h('div', { class: 'join' }, codeIn, h('button', { class: 'btn ghost', onclick: join }, 'VÀO PHÒNG'))))),
+    h('div', { class: 'card main' },
+      h('div', { class: 'field' }, h('label', null, 'Tên'), nameIn),
+      h('div', { class: 'field' }, h('label', null, 'Chọn nhân vật')),
+      characterPicker((c) => { myCls = c; store('monkey-cls', String(c)); }, myCls),
+      h('div', { class: 'field' }, h('label', null, 'Bản đồ')),
+      mapPicker(myMap, true, (id) => { myMap = id; store('monkey-map', id); }),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn big grow', onclick: () => { A.initAudio(); if (nameOk()) { goFullscreen(); net.send({ t: 'create', name: name.trim(), cls: myCls, solo: true, map: myMap }); } } }, '▶ CHƠI MỘT MÌNH'),
+        h('button', { class: 'btn green big grow', onclick: () => { A.initAudio(); if (nameOk()) net.send({ t: 'create', name: name.trim(), cls: myCls, solo: false, map: myMap }); } }, '👥 TẠO PHÒNG')),
+      h('div', { class: 'row', style: 'margin-top:10px' },
+        h('div', { class: 'grow', style: 'font-size:13px;color:var(--dim)' }, 'Có mã phòng của bạn bè?'),
+        h('div', { class: 'join' }, codeIn, h('button', { class: 'btn ghost', onclick: join }, 'VÀO PHÒNG')))),
     h('div', { class: 'side' },
-      h('div', { class: 'card' }, h('h3', { style: 'margin:0 0 10px;letter-spacing:.12em;font-size:13px;color:var(--dim)' }, '🏆 BẢNG XẾP HẠNG'), lbBox),
+      h('h1', { class: 'logo' }, 'SINH TỒN', h('small', null, 'BẦY KHỈ 🐒')),
+      h('p', { class: 'tag' }, `Bắn súng sinh tồn co-op 1–${MAX_PLAYERS} người. Bầy khỉ ùa ra từ rừng mỗi đợt một đông — hạ khỉ kiếm xu, nâng cấp súng, dùng kỹ năng nhân vật và đỡ đồng đội dậy. Trụ được bao nhiêu đợt?`),
+      h('div', { class: 'card lbcard' }, h('h3', { style: 'margin:0 0 10px;letter-spacing:.12em;font-size:13px;color:var(--dim)' }, '🏆 BẢNG XẾP HẠNG'), lbBox),
       h('div', { class: 'foot' },
         h('button', { class: 'btn ghost grow', onclick: () => { A.initAudio(); showHelp(); } }, '❓ CÁCH CHƠI'),
-        h('button', { class: 'btn ghost grow', onclick: () => { A.initAudio(); modal(openSettings(() => (modalClose = null))); } }, '⚙ CÀI ĐẶT')))));
+        h('button', { class: 'btn ghost grow', onclick: () => { A.initAudio(); modal(openSettings(() => (modalClose = null))); } }, '⚙ CÀI ĐẶT'),
+        document.fullscreenEnabled ? h('button', { class: 'btn ghost', title: 'Toàn màn hình', onclick: () => { fsDeclined = false; sessionSet('monkey-fs', 'yes'); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {}); } }, '⛶') : null))));
   if (!name) setTimeout(() => nameIn.focus(), 50);
   if (pendingJoin && name) {
     pendingJoin = null;
@@ -323,7 +328,7 @@ function renderLobby() {
       continue;
     }
     const st = !p.on ? h('div', { class: 'st off' }, 'MẤT KẾT NỐI') : p.idx === r.host ? h('div', { class: 'st host' }, 'CHỦ PHÒNG') : p.ready ? h('div', { class: 'st ok' }, 'SẴN SÀNG') : h('div', { class: 'st' }, 'CHƯA SẴN SÀNG');
-    slots.append(h('div', { class: `slot filled${p.idx === meIdx ? ' me' : ''}` }, clsIcon(p.cls, 48), h('div', { class: 'nm' }, p.name), h('div', { style: `font-size:12px;color:${clsColor(p.cls)};font-weight:800` }, CLASSES[p.cls].name), st));
+    slots.append(h('div', { class: `slot filled${p.idx === meIdx ? ' me' : ''}`, style: `box-shadow:inset 0 3px 0 ${playerColor(p.idx)}` }, clsIcon(p.cls, 40), h('div', { class: 'nm' }, p.name), h('div', { style: `font-size:12px;color:${clsColor(p.cls)};font-weight:800` }, CLASSES[p.cls].name), st));
   }
   const notReady = r.players.filter((p) => p.idx !== r.host && p.on && !p.ready);
   const link = `${location.origin}${location.pathname}?room=${r.code}`;
@@ -341,7 +346,7 @@ function renderLobby() {
     mapPicker(r.map, isHost, (id) => net.send({ t: 'map', id })),
     h('div', { class: 'row' },
       h('div', { class: 'grow', style: 'color:var(--dim);font-size:13px' },
-        isHost ? (notReady.length ? `Đang chờ: ${notReady.map((p) => p.name).join(', ')}` : r.players.length === 1 ? 'Chơi một mình được — hoặc gửi mã cho bạn bè (tối đa 4 người).' : 'Mọi người đã sẵn sàng!') : 'Chủ phòng sẽ bắt đầu khi mọi người sẵn sàng.'),
+        isHost ? (notReady.length ? `Đang chờ: ${notReady.map((p) => p.name).join(', ')}` : r.players.length === 1 ? `Chơi một mình được — hoặc gửi mã cho bạn bè (tối đa ${MAX_PLAYERS} người).` : 'Mọi người đã sẵn sàng!') : 'Chủ phòng sẽ bắt đầu khi mọi người sẵn sàng.'),
       isHost
         ? h('button', { class: 'btn green big', disabled: notReady.length > 0, onclick: () => { A.initAudio(); goFullscreen(); net.send({ t: 'start' }); } }, '▶ BẮT ĐẦU')
         : h('button', { class: `btn big ${me?.ready ? 'ghost' : 'green'}`, onclick: () => { A.initAudio(); if (!me?.ready) goFullscreen(); net.send({ t: 'ready', r: !me?.ready }); } }, me?.ready ? 'HUỶ SẴN SÀNG' : '✔ SẴN SÀNG')))));
@@ -368,12 +373,63 @@ function startGame(players: { idx: number; name: string; cls: number }[]) {
 /* ---------- bắt buộc toàn màn hình + khoá chuột ---------- */
 /** vào toàn màn hình sẵn từ sảnh (nút Bắt đầu / Sẵn sàng là cử chỉ người dùng) */
 function goFullscreen() {
+  if (fsDeclined) return;
   if (document.fullscreenEnabled && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 }
-/** máy hỗ trợ toàn màn hình (iPhone không có) thì bắt buộc phải vào toàn màn hình mới điều khiển được */
-const fsOk = () => !document.fullscreenEnabled || !!document.fullscreenElement;
+/** người chơi bấm "Để sau" ở lời mời toàn màn hình → chơi trong cửa sổ, không ép nữa (nhớ trong phiên) */
+let fsDeclined = sessionGet('monkey-fs') === 'no';
+/** chưa từ chối thì cần toàn màn hình mới điều khiển (iPhone không hỗ trợ → bỏ qua) */
+const fsOk = () => fsDeclined || !document.fullscreenEnabled || !!document.fullscreenElement;
+
+/** lời mời toàn màn hình khi mới vào trang */
+function askFullscreen() {
+  if (!document.fullscreenEnabled || document.fullscreenElement || sessionGet('monkey-fs')) return;
+  const el = h('div', { class: 'modal fsask' }, h('div', { class: 'card', style: 'width:min(420px,100%);text-align:center' },
+    h('div', { style: 'font-size:46px;line-height:1' }, '⛶'),
+    h('h2', { style: 'justify-content:center' }, 'CHƠI TOÀN MÀN HÌNH'),
+    h('p', { style: 'color:var(--dim);margin-top:0' }, 'Để có trải nghiệm tốt nhất (khung nhìn rộng, chuột không lọt ra ngoài), hãy chơi ở chế độ toàn màn hình. Nhấn Esc để thoát bất cứ lúc nào.'),
+    h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+      h('button', { class: 'btn green big', onclick: () => {
+        sessionSet('monkey-fs', 'yes');
+        fsDeclined = false;
+        el.remove();
+        document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+      } }, '⛶ VÀO TOÀN MÀN HÌNH'),
+      h('button', { class: 'btn ghost', onclick: () => {
+        sessionSet('monkey-fs', 'no');
+        fsDeclined = true;
+        el.remove();
+      } }, 'Để sau — chơi trong cửa sổ'))));
+  document.body.append(el);
+}
 input.gate = fsOk;
 const inGameFree = () => !!game && screen === 'game' && !pauseEl && !shopOpen && !modalClose;
+
+/* ---------- chat (Enter) ---------- */
+const chat = new Chat();
+chat.onSend = (m) => net.send({ t: 'chat', m });
+chat.onToggle = (open) => {
+  if (!game || screen !== 'game') return;
+  if (open) {
+    // đang gõ: tắt điều khiển (chuột vẫn khoá, nhưng không bắn/chạy); Esc của trình duyệt cũng không mở menu tạm dừng
+    input.enabled = false;
+    input.resetKeys();
+  } else if (!pauseEl && !shopOpen && !modalClose) {
+    input.enabled = true;
+    refreshPrompt();
+  }
+};
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || chat.isOpen || e.repeat) return;
+  if ((e.target as HTMLElement | null)?.closest('input, textarea')) return;
+  if (screen === 'lobby' && !modalClose) {
+    e.preventDefault();
+    chat.open();
+  } else if (inGameFree()) {
+    e.preventDefault();
+    chat.open();
+  }
+}, true);
 
 /** gọi trong cú bấm của người chơi: xin toàn màn hình rồi khoá chuột (cả hai cần cử chỉ người dùng) */
 function enterPlay() {
@@ -569,6 +625,7 @@ function showOver(m: Extract<SMsg, { t: 'over' }>) {
 }
 
 function goHome() {
+  chat.clear();
   endGame();
   room = null;
   meIdx = -1;
@@ -689,6 +746,7 @@ if (SHOW !== null) {
 /* ======================= VÒNG LẶP ======================= */
 function loop(now: number) {
   requestAnimationFrame(loop);
+  chat.setVisible(screen === 'lobby' || screen === 'game' || screen === 'over');
   try {
     if (game && (screen === 'game' || screen === 'over')) game.frame(now);
     else if (showcaseFrame) showcaseFrame(now);
@@ -700,6 +758,7 @@ function loop(now: number) {
 requestAnimationFrame(loop);
 
 renderHome();
+if (SHOW === null) askFullscreen();
 document.title = GAME_TITLE;
 void lastOver;
 

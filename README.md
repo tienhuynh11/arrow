@@ -522,7 +522,7 @@ Mở `/arrow/#admin`, nhập mật khẩu quản trị rồi thêm câu hỏi (�
 
 ## Game riêng: 🐒 SINH TỒN BẦY KHỈ (`/monkey/`)
 
-Bắn súng sinh tồn **co-op 1–4 người** góc nhìn thứ ba qua vai (lấy cảm hứng từ thể loại "survive the horde" như *Survive a Million Monkeys* trên Roblox, nhưng tên, hình, số liệu đều là của riêng dự án). Chạy **chung tiến trình server Node** với Arrow Party nhưng **tách hẳn**: phòng riêng, giao thức riêng, WebSocket riêng, bundle riêng.
+Bắn súng sinh tồn **co-op 1–10 người** góc nhìn thứ ba qua vai (lấy cảm hứng từ thể loại "survive the horde" như *Survive a Million Monkeys* trên Roblox, nhưng tên, hình, số liệu đều là của riêng dự án). Chạy **chung tiến trình server Node** với Arrow Party nhưng **tách hẳn**: phòng riêng, giao thức riêng, WebSocket riêng, bundle riêng.
 
 | | Arrow Party (minigame) | Sinh Tồn Bầy Khỉ |
 |---|---|---|
@@ -596,7 +596,7 @@ WASD đi · chuột ngắm (Pointer Lock) · chuột trái bắn · chuột ph�
 
 - **Nhân vật mình:** mô phỏng xác định 60Hz dùng chung ([shared/monkey/sim.ts](shared/monkey/sim.ts), sin/cos tự dựng bằng bảng) — client dự đoán ngay, gửi lệnh có `seq` (gói nhị phân 12 byte/lệnh, ~30 gói/s), server chạy đúng lệnh đó khi tới và trả `ack`; client lấy trạng thái server rồi chạy lại các lệnh chưa xác nhận (hoà giải), lệch hiển thị được làm mờ dần. Server giới hạn 62 lệnh/giây (chống hack tốc độ).
 - **Bắn:** vệt đạn/tia lửa/dấu trúng hiện ngay ở client; mỗi lệnh kèm `vt` = thời điểm client đang nhìn thấy khỉ; server **tua lịch sử vị trí khỉ** (16 tick) về đúng lúc đó, tối đa 7 tick = 350 ms (≈ đệm nội suy 100 ms + 250 ms trễ mạng). Tản đạn dùng PRNG seed theo (người, seq) nên client/server ra cùng hướng. Client còn đoán trước khỉ "chắc đã chết" từ sát thương mình vừa bắn để không bắn thừa khi mạng chậm.
-- **Khỉ:** AI ở server 20Hz (spatial hash, flow field BFS 1 m, typed array, không cấp phát trong vòng nóng), trần 150 khỉ sống đồng thời (160 slot). Snapshot nhị phân **mã hoá một lần cho cả phòng**, delta theo slot (1/256 m, khỉ đứng yên không tốn byte), client nội suy với đệm tự giãn theo độ giật.
+- **Khỉ:** AI ở server 20Hz (spatial hash, flow field BFS 1 m, typed array, không cấp phát trong vòng nóng), trần 150 khỉ sống đồng thời (160 slot) kể cả phòng 10 người — quá 4 người thì số khỉ cùng lúc tăng chậm lại (×0.2/người thay vì ×0.35), độ trâu +8%/người, phần xu chia đồng đội giảm theo căn (10 người ≈ 17%/người) để không lạm phát. Snapshot nhị phân **mã hoá một lần cho cả phòng**, delta theo slot (1/256 m, khỉ đứng yên không tốn byte), client nội suy với đệm tự giãn theo độ giật.
 - Phòng hết ván / không còn ai: thế giới khỉ được giải phóng ngay, phòng tự huỷ.
 
 ### Kiểm thử

@@ -2,14 +2,14 @@
 // số sát thương, hướng bị đánh, nhắc đỡ dậy, màn gục, bảng tin, thông báo lớn, bảng điểm.
 
 import * as THREE from 'three';
-import { MAX_MONKEYS } from '@shared/monkey/config';
+import { MAX_MONKEYS, MAX_PLAYERS } from '@shared/monkey/config';
 import type { GameModel } from '@shared/monkey/client';
 import { CLASSES, HP_TIER_COST, MAX_HP_TIER, MAX_TIER, MK_DOT, MK_VUA, MONKEYS, REVIVE_RANGE, reloadTicks, weaponOf } from '@shared/monkey/content';
 import { ARENA } from '@shared/monkey/map';
 import { PF_DOWN_MASK, PF_ON, PH_BREAK, PH_FIGHT, type SnapPlayer } from '@shared/monkey/proto';
 import { spreadOf, type Cmd } from '@shared/monkey/sim';
 import { keyLabel, settings } from '../settings';
-import { CLASS_ICON, clear, clsColor, fmt, h } from './dom';
+import { CLASS_ICON, clear, clsColor, fmt, h, playerColor } from './dom';
 import { gunSvg } from './icons';
 
 export interface HudPlayer { idx: number; name: string; cls: number }
@@ -151,13 +151,15 @@ export class Hud {
     this.me = me;
     clear(this.team);
     this.teamRows = [];
+    // đông người (> 4): bảng đội gọn (ô nhỏ, thanh máu mỏng) để 10 người vẫn vừa màn hình
+    this.team.classList.toggle('compact', list.length > 4);
     for (const p of list) {
       const bar = h('div');
       const sh = h('div', { class: 'sh' });
       const cash = h('i');
       const nm = h('div', { class: 'nm' }, h('span', null, p.idx === me ? `${p.name} (bạn)` : p.name), cash);
       const tag = h('div', { class: 'tag2' });
-      const el = h('div', { class: 'tm' }, h('div', { class: 'ic', style: `background:${clsColor(p.cls)}` }, CLASS_ICON[p.cls]), h('div', null, nm, h('div', { class: 'bar' }, bar, sh), tag));
+      const el = h('div', { class: 'tm', style: `--pc:${playerColor(p.idx)}` }, h('div', { class: 'ic', style: `background:${clsColor(p.cls)}` }, CLASS_ICON[p.cls]), h('div', null, nm, h('div', { class: 'bar' }, bar, sh), tag));
       this.team.append(el);
       this.teamRows.push({ el, bar, sh, nm, cash, tag });
     }
@@ -166,7 +168,7 @@ export class Hud {
     this.tags = [];
     for (const o of this.offs) o.remove();
     this.offs = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < MAX_PLAYERS; i++) {
       const t = h('div', { class: 'tagname hidden' });
       this.root.append(t);
       this.tags.push(t);
@@ -256,6 +258,7 @@ export class Hud {
     this.scores.classList.toggle('hidden', !on);
     if (!on || !m) return;
     clear(this.scores);
+    this.scores.classList.toggle('compact', this.players.length > 5);
     const tb = h('table', null, h('tr', null, h('th', null, 'NGƯỜI CHƠI'), h('th', { class: 'n' }, 'HẠ'), h('th', { class: 'n' }, 'XU'), h('th', { class: 'n' }, 'SÚNG'), h('th', { class: 'n' }, 'MÁU')));
     for (const p of this.players) {
       const i = m.info[p.idx];
@@ -532,7 +535,7 @@ export class Hud {
       if (!inf) continue;
       const [x, y] = toR(m.oX[p.idx], m.oZ[p.idx]);
       const down = inf.flags & PF_DOWN_MASK;
-      g.fillStyle = down ? (Math.floor(performance.now() / 250) % 2 ? '#ff4d4d' : '#fff') : clsColor(p.cls);
+      g.fillStyle = down ? (Math.floor(performance.now() / 250) % 2 ? '#ff4d4d' : '#fff') : playerColor(p.idx);
       g.beginPath();
       g.arc(x, y, 7, 0, Math.PI * 2);
       g.fill();

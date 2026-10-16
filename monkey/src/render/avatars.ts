@@ -8,10 +8,12 @@
 
 import * as THREE from 'three';
 import { CLASSES, weaponOf, type WeaponModel } from '@shared/monkey/content';
+import { PLAYER_COLORS } from '../ui/dom';
 
-const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524];
+/** màu da theo idx người chơi (10 tông, đủ MAX_PLAYERS) */
+const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0xd1a17a, 0xa86b3c, 0x6b3e1f, 0xf3d2b3, 0xb98060];
 /** màu riêng của từng người chơi (thắt lưng, giày) */
-const PCOL = [0xffd23f, 0x38bdf8, 0xf472b6, 0xa3e635];
+const PCOL = PLAYER_COLORS;
 const DOWN = new THREE.Vector3(0, -1, 0);
 
 /* ---------- kích thước khung (m) ---------- */
@@ -371,17 +373,20 @@ export class Avatar {
   private tmpP = new THREE.Vector3();
   private q1 = new THREE.Quaternion();
   private q2 = new THREE.Quaternion();
+  /** chi tiết nhỏ ẩn được khi ở xa (LOD rẻ) */
+  private small: THREE.Object3D[] = [];
+  private detail = true;
 
   constructor(cls: number, blobTexture: THREE.Texture, idx = 0) {
     this.cls = cls;
     this.look = classLook(cls);
     const { id, color } = this.look;
     this.blinkOff = idx * 0.31 + cls * 0.17;
-    const skin = mat(SKINS[idx & 3], { rough: 0.6 });
+    const skin = mat(SKINS[idx % SKINS.length], { rough: 0.6 });
     const body = mat(color, { rough: 0.55 });
     const legM = mat(shade(color, 0.78), { rough: 0.6 });
-    const pcol = mat(PCOL[idx & 3], { rough: 0.5 });
-    const shoeM = mat(PCOL[idx & 3], { rough: 0.45 });
+    const pcol = mat(PCOL[idx % PCOL.length], { rough: 0.5 });
+    const shoeM = mat(PCOL[idx % PCOL.length], { rough: 0.45 });
     const ink = mat(0x1d1728, { basic: true });
     const white = mat(0xffffff, { basic: true });
     const red = mat(0xe11d48, { basic: true });
@@ -576,6 +581,26 @@ export class Avatar {
     this.blob.rotation.x = -Math.PI / 2;
     this.blob.position.y = 0.035;
     if (bulk) this.root.scale.setScalar(1.04);
+    this.collectSmall();
+  }
+
+  /** gom các chi tiết nhỏ (mắt, má, kính, nút, chữ thập…) để ẩn khi ở xa — bớt draw call khi đông người */
+  private collectSmall() {
+    this.hips.traverse((o) => {
+      const me = o as THREE.Mesh;
+      if (!me.isMesh || o === this.shield || o === this.rageM) return;
+      const g = me.geometry;
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      const r = (g.boundingSphere?.radius ?? 1) * Math.max(o.scale.x, o.scale.y, o.scale.z);
+      if (r < 0.075) this.small.push(o);
+    });
+  }
+
+  /** near = false: ẩn chi tiết nhỏ (gọi mỗi khung, chỉ đổi khi chuyển trạng thái) */
+  setDetail(near: boolean) {
+    if (near === this.detail) return;
+    this.detail = near;
+    for (const o of this.small) o.visible = near;
   }
 
   /** mũ theo lớp, gốc = tâm đầu (bán kính HEAD_R) */

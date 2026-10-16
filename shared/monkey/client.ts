@@ -3,7 +3,7 @@
 //  - Khỉ + đồng đội: nội suy giữa snapshot 20Hz, đệm tự giãn theo độ giật mạng.
 //  - Đồng hồ hiển thị (renderTick) gửi kèm mỗi lệnh để server bù trễ khi bắn.
 
-import { AI_MS, DT, MAX_MONKEYS, TICK_HZ } from './config.js';
+import { AI_MS, DT, MAX_MONKEYS, MAX_PLAYERS, TICK_HZ } from './config.js';
 import { CLASSES, MONKEYS, bodyR, bodyY, headR, headY, waveSpec, weaponOf } from './content.js';
 import { rayWorld } from './map.js';
 import {
@@ -78,7 +78,7 @@ export class GameModel {
   maxCorrection = 0;
   /** bản snapshot mới nhất của từng người (máu, tiền, hồi chiêu…) */
   info: SnapPlayer[] = [];
-  infoValid = new Uint8Array(4);
+  infoValid = new Uint8Array(MAX_PLAYERS);
   /** vị trí hiển thị của mình */
   rx = 0;
   ry = 0;
@@ -94,18 +94,18 @@ export class GameModel {
   snaps = 0;
 
   /* ---------- đồng đội (nội suy) ---------- */
-  private pT = new Int32Array(4 * RING).fill(-1);
-  private pX = new Float32Array(4 * RING);
-  private pY = new Float32Array(4 * RING);
-  private pZ = new Float32Array(4 * RING);
-  private pYaw = new Uint16Array(4 * RING);
-  private pPitch = new Int16Array(4 * RING);
-  oX = new Float32Array(4);
-  oY = new Float32Array(4);
-  oZ = new Float32Array(4);
-  oYaw = new Float32Array(4);
-  oPitch = new Float32Array(4);
-  oSpeed = new Float32Array(4);
+  private pT = new Int32Array(MAX_PLAYERS * RING).fill(-1);
+  private pX = new Float32Array(MAX_PLAYERS * RING);
+  private pY = new Float32Array(MAX_PLAYERS * RING);
+  private pZ = new Float32Array(MAX_PLAYERS * RING);
+  private pYaw = new Uint16Array(MAX_PLAYERS * RING);
+  private pPitch = new Int16Array(MAX_PLAYERS * RING);
+  oX = new Float32Array(MAX_PLAYERS);
+  oY = new Float32Array(MAX_PLAYERS);
+  oZ = new Float32Array(MAX_PLAYERS);
+  oYaw = new Float32Array(MAX_PLAYERS);
+  oPitch = new Float32Array(MAX_PLAYERS);
+  oSpeed = new Float32Array(MAX_PLAYERS);
 
   /* ---------- khỉ ---------- */
   mAlive = new Uint8Array(SLOTS);
@@ -376,7 +376,7 @@ export class GameModel {
     };
     // văng nhẹ ra xa người hạ
     const k = this.mKiller[sl];
-    if (k < 4) {
+    if (k < MAX_PLAYERS) {
       const px = k === this.me ? this.rx : this.oX[k];
       const pz = k === this.me ? this.rz : this.oZ[k];
       const dx = c.x - px;
@@ -670,7 +670,7 @@ export class GameModel {
       this.rmVisible[sl] = 1;
     }
     // đồng đội
-    for (let p = 0; p < 4; p++) {
+    for (let p = 0; p < MAX_PLAYERS; p++) {
       if (p === this.me) continue;
       const b = p * RING;
       const i0 = b + (t0 & (RING - 1));

@@ -137,13 +137,15 @@ export function openShop(m: GameModel, buy: (item: 'weapon' | 'hp') => void, bre
 
     // ---- kỹ năng ----
     body.append(hp, h('h3', null, `Kỹ năng ${cls.name}`));
-    const sk = h('div', { class: 'grid skills' });
+    // lưu ý: không dùng class 'skills' — trùng với thanh kỹ năng nổi của HUD (position: absolute)
+    const sk = h('div', { class: 'grid sks' });
     const skill = (icon: string, key: string, name: string, desc: string, price: string) =>
       h('div', { class: 'item scard' },
         svgEl(badgeSvg(icon, cls.color)),
-        h('div', { class: 'ti' }, h('span', { class: 'kk' }, key), ` ${name}`),
-        h('div', { class: 'st2' }, desc),
-        h('div', { class: 'pr2' }, price));
+        h('div', { class: 'sx' },
+          h('div', { class: 'ti' }, h('span', { class: 'kk' }, key), ` ${name}`),
+          h('div', { class: 'st2' }, desc),
+          h('div', { class: 'pr2' }, price)));
     sk.append(
       skill(cls.g.icon, keyLabel(settings.keys.skillG), cls.g.name, cls.g.desc, `${cls.g.cost} xu mỗi lần · hồi ${cls.g.cd}s`),
       skill(cls.x.icon, keyLabel(settings.keys.skillX), cls.x.name, cls.x.desc, `${cls.x.cost} xu mỗi lần · hồi ${cls.x.cd}s`),

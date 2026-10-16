@@ -54,7 +54,7 @@ export interface MapDef {
   deco: Deco[];
   /** cổng khỉ ùa vào (mép sân) */
   spawns: Pt[];
-  /** chỗ đứng đầu trận của 4 người chơi */
+  /** chỗ đứng đầu trận của từng người chơi (theo idx, ≥ MAX_PLAYERS chỗ) */
   playerSpawns: Pt[];
   theme: MapTheme;
 }
@@ -89,7 +89,11 @@ function rot4P(list: Pt[]): Pt[] {
   return out;
 }
 
-const CENTER_SPAWNS = [P(-3.5, -3.5), P(3.5, -3.5), P(-3.5, 3.5), P(3.5, 3.5)];
+/** chỗ đứng đầu trận theo idx người chơi: 4 chỗ trong (r≈5 m) + vòng 6 chỗ ngoài (r = 7 m) — đủ MAX_PLAYERS = 10 */
+const CENTER_SPAWNS = [
+  P(-3.5, -3.5), P(3.5, -3.5), P(-3.5, 3.5), P(3.5, 3.5),
+  P(0, 7), P(0, -7), P(6.06, 3.5), P(-6.06, -3.5), P(6.06, -3.5), P(-6.06, 3.5),
+];
 
 /* ======================= ĐỀN RỪNG ======================= */
 const RUNG: MapDef = {

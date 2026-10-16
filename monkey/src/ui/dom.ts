@@ -60,3 +60,10 @@ export function timeStr(s: number) {
   const m = Math.floor(s / 60);
   return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 }
+
+/** màu riêng của từng người chơi theo idx (thắt lưng + giày nhân vật, chấm radar, viền ô đội) — đủ MAX_PLAYERS = 10, dễ phân biệt */
+export const PLAYER_COLORS = [0xffd23f, 0x38bdf8, 0xf472b6, 0xa3e635, 0xfb923c, 0xa78bfa, 0x2dd4bf, 0xf87171, 0xe5e7eb, 0x6366f1];
+
+export function playerColor(idx: number) {
+  return `#${PLAYER_COLORS[idx % PLAYER_COLORS.length].toString(16).padStart(6, '0')}`;
+}
