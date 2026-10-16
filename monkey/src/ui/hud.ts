@@ -4,12 +4,13 @@
 import * as THREE from 'three';
 import { MAX_MONKEYS } from '@shared/monkey/config';
 import type { GameModel } from '@shared/monkey/client';
-import { CLASSES, HP_TIER_COST, MAX_HP_TIER, MAX_TIER, MK_DOT, MK_VUA, MONKEYS, REVIVE_RANGE, WEAPONS } from '@shared/monkey/content';
+import { CLASSES, HP_TIER_COST, MAX_HP_TIER, MAX_TIER, MK_DOT, MK_VUA, MONKEYS, REVIVE_RANGE, reloadTicks, weaponOf } from '@shared/monkey/content';
 import { ARENA } from '@shared/monkey/map';
 import { PF_DOWN_MASK, PF_ON, PH_BREAK, PH_FIGHT, type SnapPlayer } from '@shared/monkey/proto';
 import { spreadOf, type Cmd } from '@shared/monkey/sim';
 import { keyLabel, settings } from '../settings';
 import { CLASS_ICON, clear, clsColor, fmt, h } from './dom';
+import { gunSvg } from './icons';
 
 export interface HudPlayer { idx: number; name: string; cls: number }
 
@@ -36,6 +37,8 @@ export class Hud {
   private cashEl: HTMLElement;
   private cashN: HTMLElement;
   private tiersEl: HTMLElement;
+  private gunPic: HTMLElement;
+  private gunPicKey = '';
   private gunNm: HTMLElement;
   private gunAm: HTMLElement;
   private gunRl: HTMLElement;
@@ -101,12 +104,13 @@ export class Hud {
     const me = h('div', { class: 'selfbox' },
       h('div', { class: 'hp' }, this.hpV, h('div', { class: 'hpb' }, this.hpLag, this.hpG, this.hpS)),
       this.cashEl, this.tiersEl);
+    this.gunPic = h('div', { class: 'gp' });
     this.gunNm = h('div', { class: 'nm' });
     this.gunAm = h('div', { class: 'am' });
     this.gunRl = h('div');
     this.gunRlWrap = h('div', { class: 'rl' }, this.gunRl);
     this.gunUp = h('div', { class: 'up' });
-    const gun = h('div', { class: 'gun' }, this.gunNm, this.gunAm, this.gunRlWrap, this.gunUp);
+    const gun = h('div', { class: 'gun' }, this.gunPic, this.gunNm, this.gunAm, this.gunRlWrap, this.gunUp);
     const skills = h('div', { class: 'skills' });
     for (let i = 0; i < 3; i++) {
       const cd = h('div', { class: 'cd' });
@@ -255,7 +259,7 @@ export class Hud {
     const tb = h('table', null, h('tr', null, h('th', null, 'NGƯỜI CHƠI'), h('th', { class: 'n' }, 'HẠ'), h('th', { class: 'n' }, 'XU'), h('th', { class: 'n' }, 'SÚNG'), h('th', { class: 'n' }, 'MÁU')));
     for (const p of this.players) {
       const i = m.info[p.idx];
-      tb.append(h('tr', null, h('td', null, `${CLASS_ICON[p.cls]} ${p.name}`), h('td', { class: 'n' }, i ? i.kills : 0), h('td', { class: 'n' }, i ? fmt(i.cash) : 0), h('td', { class: 'n' }, i ? WEAPONS[i.tier].short : ''), h('td', { class: 'n' }, i ? `${i.hp}/${i.maxHp}` : '')));
+      tb.append(h('tr', null, h('td', null, `${CLASS_ICON[p.cls]} ${p.name}`), h('td', { class: 'n' }, i ? i.kills : 0), h('td', { class: 'n' }, i ? fmt(i.cash) : 0), h('td', { class: 'n' }, i ? weaponOf(p.cls, i.tier).short : ''), h('td', { class: 'n' }, i ? `${i.hp}/${i.maxHp}` : '')));
     }
     this.scores.append(h('h3', { style: 'margin:0 0 8px' }, `BẢNG ĐIỂM · ĐỢT ${m.wave}`), tb);
   }
@@ -318,20 +322,26 @@ export class Hud {
       const pips = (n: number, max: number) => h('span', { class: 'pips' }, ...Array.from({ length: max }, (_, i) => h('i', { class: i < n ? 'on' : '' })));
       this.tiersEl.append(h('span', null, 'Súng ', pips(me.tier + 1, MAX_TIER + 1)), h('span', null, 'Máu ', pips(me.hpTier, MAX_HP_TIER)));
       // ---- súng ----
-      const w = WEAPONS[me.tier];
+      const w = weaponOf(me.cls, me.tier);
       const ammo = m.pred.ammo;
       this.gunNm.textContent = w.name.toUpperCase();
+      const pk = `${w.name}|${w.color}`;
+      if (pk !== this.gunPicKey) {
+        this.gunPicKey = pk;
+        this.gunPic.innerHTML = gunSvg(w); // SVG tự vẽ trong icons.ts, không có dữ liệu người dùng
+      }
       this.gunAm.className = `am${ammo <= Math.ceil(w.mag * 0.25) ? ' low' : ''}`;
       this.gunAm.textContent = '';
       this.gunAm.append(String(ammo), h('small', null, ` / ${w.mag}`));
       const rl = m.pred.reloadT;
       this.gunRlWrap.style.visibility = rl > 0 ? 'visible' : 'hidden';
-      if (rl > 0) this.gunRl.style.transform = `scaleX(${1 - rl / w.reload})`;
+      if (rl > 0) this.gunRl.style.transform = `scaleX(${1 - rl / reloadTicks(me.cls, me.tier)})`;
       clear(this.gunUp);
       if (me.tier < MAX_TIER) {
-        const c = WEAPONS[me.tier + 1].cost;
+        const nw = weaponOf(me.cls, me.tier + 1);
+        const c = nw.cost;
         this.gunUp.className = `up${me.cash >= c ? ' can' : ''}`;
-        this.gunUp.append(`[${keyLabel(settings.keys.buyWeapon)}] ${WEAPONS[me.tier + 1].short}: `, h('b', null, `${fmt(c)} xu`));
+        this.gunUp.append(`[${keyLabel(settings.keys.buyWeapon)}] ${nw.short}: `, h('b', null, `${fmt(c)} xu`));
       }
       if (me.hpTier < MAX_HP_TIER) {
         const c = HP_TIER_COST[me.hpTier + 1];

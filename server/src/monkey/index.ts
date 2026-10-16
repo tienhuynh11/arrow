@@ -13,6 +13,7 @@ import { decodeCmds, type CMsg, type SMsg } from '../../../shared/monkey/proto.j
 import type { Cmd } from '../../../shared/monkey/sim.js';
 import { topRuns } from './leaderboard.js';
 import { MonkeyRoom, type MConn, type MPlayer } from './room.js';
+import { isMapChoice } from '../../../shared/monkey/map.js';
 
 const MAX_ROOMS = 40;
 const rooms = new Map<string, MonkeyRoom>();
@@ -150,6 +151,7 @@ function handle(s: Session, m: CMsg, send: (m: SMsg) => void) {
       if (s.room && s.player) s.room.leave(s.player);
       const room = createRoom(!!m.solo);
       if (!room) return send({ t: 'err', m: 'Máy chủ đang đầy phòng, thử lại sau' });
+      if (isMapChoice(m.map)) room.mapChoice = m.map;
       s.room = room;
       s.player = room.add(sanitizeName(m.name), sanitizeCls(m.cls), s.conn);
       if (room.solo) room.begin();
@@ -204,6 +206,12 @@ function handle(s: Session, m: CMsg, send: (m: SMsg) => void) {
       return;
     case 'again':
       room.again(p);
+      return;
+    case 'map':
+      room.setMap(p, m.id);
+      return;
+    case 'pause':
+      room.setPaused(!!m.p);
       return;
   }
 }

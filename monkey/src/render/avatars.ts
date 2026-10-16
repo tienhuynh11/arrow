@@ -1,12 +1,13 @@
 // Nhân vật người chơi kiểu "hạt đậu" (giống nhân vật minigame / Fall Guys): thân tròn mũm mĩm liền đầu,
-// mặt dán phía trước, tay "sợi mì" co giãn bám đúng báng/ốp súng, chân ngắn hai khúc.
-// Thân trên xoay theo hướng NGẮM, chân theo hướng CHẠY (chạy lùi, đi ngang đúng chiều), ngẩng theo pitch.
-// Hoạt cảnh: thở, chạy, chạy nhanh hạ súng, nhảy/đáp (bóp dẹt), giật súng, ngắm, nạp đạn, trúng đòn, gục bò, chết,
-// đỡ đồng đội, ném, dựng, dậm đất, gồng, tuyệt chiêu, chớp mắt. Mỗi lớp một bộ đồ riêng; màu thắt lưng + giày theo người chơi.
+// mặt dán phía trước, tay "sợi mì" hai khúc (vai nhô ra ngoài thân, tay áo + găng tương phản) bám đúng báng/ốp súng.
+// Thân trên xoay theo hướng NGẮM; chân xoay mượt theo hướng CHẠY (chạy lùi, đi ngang đúng chiều), ngẩng theo pitch.
+// MƯỢT: mọi thông số tư thế đều đi qua giảm chấn độc lập khung hình (1 - e^(-k·dt)); vận tốc lấy từ vị trí hiển thị
+// rồi lọc; pha bước chân cộng dồn liên tục; mọi chuyển trạng thái (trên không, đáp, gồng, gục, chết, chạy lùi) đều trộn dần.
+// Mỗi lớp một bộ đồ riêng (7 lớp); màu thắt lưng + giày theo người chơi. Súng dựng theo họ mô hình của vũ khí.
 // Cao ~1.5 m (không tính mũ). Hình khối + vật liệu dùng chung giữa các nhân vật.
 
 import * as THREE from 'three';
-import { CLASSES, WEAPONS } from '@shared/monkey/content';
+import { CLASSES, weaponOf, type WeaponModel } from '@shared/monkey/content';
 
 const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524];
 /** màu riêng của từng người chơi (thắt lưng, giày) */
@@ -24,11 +25,11 @@ const HEAD_R = 0.35;
 const NECK_Y = 0.6;
 const HEAD_Y = 0.18; // đỉnh đầu = HIP_Y + NECK_Y + HEAD_Y + HEAD_R = 1.50
 const AIM_Y = 0.52;
-const SHO_X = 0.27;
-const SHO_Z = 0.12;
-const ARM_MIN = 0.16;
-const ARM_MAX = 0.56;
-const ARM_REST = 0.3;
+const SHO_X = 0.385; // vai nằm NGOÀI mặt thân (BODY_R) để tay luôn nhô ra
+const SHO_Z = 0.1;
+const UA = 0.22; // cánh tay trên
+const FA = 0.22; // cẳng tay
+const ARM_STRETCH = 1.45; // tay sợi mì giãn tối đa
 const GUN_S = 0.85;
 
 export interface AvatarPose {
@@ -42,6 +43,38 @@ export interface AvatarPose {
 }
 
 type Skill = 'throw' | 'build' | 'stomp' | 'brace' | 'ult';
+
+/* ---------- lớp nhân vật (chịu được khi CLASSES đang được mở rộng) ---------- */
+const IDS = ['chienbinh', 'ysi', 'kysu', 'dausi', 'xathu', 'phaothu', 'caoboi'];
+const FALLBACK_COL: Record<string, number> = {
+  chienbinh: 0x3b82f6, ysi: 0x22c55e, kysu: 0xf97316, dausi: 0xdc2626, xathu: 0x8b5cf6, phaothu: 0xeab308, caoboi: 0x14b8a6,
+};
+/** [tay áo, găng tay] — luôn khác màu thân để tay dễ thấy */
+const ARMS: Record<string, [number, number]> = {
+  chienbinh: [0x4d6b2f, 0x2a2a2e],
+  ysi: [0xf4f6f2, 0x60a5fa],
+  kysu: [0x374151, 0xfacc15],
+  dausi: [0x8a919c, 0x1f2937],
+  xathu: [0x5b6b3a, 0x2a2a2e],
+  phaothu: [0x6b4423, 0x1c1917],
+  caoboi: [0xf1e4c3, 0x7c4a1e],
+};
+function classLook(cls: number): { id: string; color: number } {
+  const c = CLASSES[cls] as { id?: string; color?: number } | undefined;
+  const id = c?.id ?? IDS[cls] ?? IDS[Math.abs(cls | 0) % IDS.length];
+  return { id, color: c?.color ?? FALLBACK_COL[id] ?? 0x3b82f6 };
+}
+
+/* ---------- vũ khí theo lớp + bậc ---------- */
+type GunModelId = WeaponModel;
+const MODELS: GunModelId[] = ['pistol', 'revolver', 'smg', 'shotgun', 'rifle', 'lmg', 'sniper', 'launcher'];
+function weaponLook(cls: number, tier: number): { model: GunModelId; color: number } {
+  try {
+    const w = weaponOf(cls, tier) as { model?: string; color?: number } | undefined;
+    if (w) return { model: (MODELS as string[]).includes(w.model ?? '') ? (w.model as GunModelId) : 'pistol', color: w.color ?? 0x6b7280 };
+  } catch { /* dữ liệu lớp đang thay đổi: dùng súng lục mặc định */ }
+  return { model: 'pistol', color: 0x6b7280 };
+}
 
 /* ---------- vật liệu + hình khối dùng chung ---------- */
 const matCache = new Map<string, THREE.Material>();
@@ -67,14 +100,19 @@ function G<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
 }
 const box = (sx: number, sy: number, sz: number) => G(`b${sx},${sy},${sz}`, () => new THREE.BoxGeometry(sx, sy, sz));
 const sph = (r: number, w = 12, h = 10) => G(`s${r},${w},${h}`, () => new THREE.SphereGeometry(r, w, h));
-const cylZ = (r: number, len: number) => G(`c${r},${len}`, () => new THREE.CylinderGeometry(r, r, len, 10).rotateX(Math.PI / 2));
+const cylZ = (r: number, len: number, seg = 10) => G(`c${r},${len},${seg}`, () => new THREE.CylinderGeometry(r, r, len, seg).rotateX(Math.PI / 2));
+const cylY = (r0: number, r1: number, len: number, seg = 12) => G(`y${r0},${r1},${len},${seg}`, () => new THREE.CylinderGeometry(r0, r1, len, seg));
 /** khối tròn treo từ khớp xuống theo -Y */
 const limbGeo = (r: number, len: number) => G(`l${r},${len}`, () => new THREE.CapsuleGeometry(r, Math.max(0.01, len - r * 2), 4, 12).translate(0, -len / 2, 0));
-/** cánh tay "sợi mì": trụ dài 1 từ vai xuống -Y, co giãn bằng scale.y */
-const armGeo = () => G('arm', () => new THREE.CylinderGeometry(0.072, 0.06, 1, 10, 1, true).translate(0, -0.5, 0));
+/** đoạn tay: trụ dài 1 từ khớp xuống -Y, co giãn bằng scale.y (đầu khớp có quả cầu che mối nối) */
+const segGeo = (r0: number, r1: number) => G(`seg${r0},${r1}`, () => new THREE.CylinderGeometry(r0, r1, 1, 12, 1, true).translate(0, -0.5, 0));
 
 function shade(hex: number, k: number) {
   return new THREE.Color(hex).multiplyScalar(k).getHex();
+}
+function colDist(a: number, b: number) {
+  const A = new THREE.Color(a), B = new THREE.Color(b);
+  return Math.abs(A.r - B.r) + Math.abs(A.g - B.g) + Math.abs(A.b - B.b);
 }
 
 function mesh(geo: THREE.BufferGeometry, m: THREE.Material, parent: THREE.Object3D, x = 0, y = 0, z = 0, shadow = true) {
@@ -85,37 +123,82 @@ function mesh(geo: THREE.BufferGeometry, m: THREE.Material, parent: THREE.Object
   return o;
 }
 
+const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
+const smooth01 = (v: number) => {
+  const x = clamp(v, 0, 1);
+  return x * x * (3 - 2 * x);
+};
+/** chỉnh lưu mềm: ≈ max(0, x) nhưng không gãy khúc (tránh khớp gối "bật") */
+const softPos = (x: number) => (x + Math.sqrt(x * x + 0.04)) * 0.5 - 0.1;
+const wrapPi = (a: number) => {
+  a %= Math.PI * 2;
+  if (a > Math.PI) a -= Math.PI * 2;
+  else if (a < -Math.PI) a += Math.PI * 2;
+  return a;
+};
+const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+
 let shieldMat: THREE.Material | null = null;
 let rageMat: THREE.Material | null = null;
 const blobMats = new Map<THREE.Texture, THREE.Material>();
 
-/* ---------- súng: mô hình + điểm cầm (điểm cầm đã nhân tỉ lệ GUN_S) ---------- */
-interface Gun { g: THREE.Group; grip: THREE.Vector3; fore: THREE.Vector3; muzzle: THREE.Vector3; mag: THREE.Object3D | null }
-function gunModel(tier: number): Gun {
+/* ---------- súng: mô hình theo họ + điểm cầm ---------- */
+interface Gun {
+  g: THREE.Group;
+  /** điểm cầm (toạ độ gunPose, đã nhân GUN_S) */
+  grip: THREE.Vector3;
+  fore: THREE.Vector3;
+  /** nòng (toạ độ riêng của g) */
+  muzzle: THREE.Vector3;
+  mag: THREE.Object3D | null;
+  /** vị trí cầm súng (toạ độ aim) */
+  hold: THREE.Vector3;
+}
+function gunModel(model: GunModelId, color: number): Gun {
   const g = new THREE.Group();
-  const w = WEAPONS[tier];
   const metal = mat(0x2b2f36, { rough: 0.45, metal: 0.6 });
   const dark = mat(0x16181c, { rough: 0.5, metal: 0.4 });
-  const accent = mat(w.color, { rough: 0.5, metal: 0.2 });
+  const accent = mat(color, { rough: 0.5, metal: 0.2 });
   const wood = mat(0x8a5a2b, { rough: 0.8 });
+  const glass = mat(0x88ccff, { basic: true });
   const b = (sx: number, sy: number, sz: number, x: number, y: number, z: number, m: THREE.Material) => mesh(box(sx, sy, sz), m, g, x, y, z);
-  const c = (r: number, len: number, x: number, y: number, z: number, m: THREE.Material) => mesh(cylZ(r, len), m, g, x, y, z);
+  const c = (r: number, len: number, x: number, y: number, z: number, m: THREE.Material, seg = 10) => mesh(cylZ(r, len, seg), m, g, x, y, z);
   let grip = new THREE.Vector3(0, -0.1, 0);
-  let fore = new THREE.Vector3(0, -0.12, 0.05);
-  let len = 0.3;
+  let fore = new THREE.Vector3(0, -0.07, 0.3);
+  let len = 0.64;
+  let muzY = 0.02;
   let mag: THREE.Object3D | null = null;
-  switch (tier) {
-    case 0: // súng lục: hai tay ôm báng
-      b(0.06, 0.09, 0.26, 0, 0.02, 0.09, metal);
-      b(0.055, 0.03, 0.2, 0, 0.075, 0.08, dark);
-      mag = b(0.05, 0.15, 0.07, 0, -0.08, 0, accent);
+  const hold = new THREE.Vector3(0.17, -0.08, 0.38);
+  switch (model) {
+    case 'pistol': // súng lục: hai tay ôm báng, đưa ra trước
+      b(0.06, 0.09, 0.26, 0, 0.02, 0.09, accent);
+      b(0.056, 0.03, 0.22, 0, 0.075, 0.08, dark);
+      mag = b(0.05, 0.15, 0.07, 0, -0.08, 0, dark);
       mag.rotation.x = -0.15;
       c(0.016, 0.06, 0, 0.03, 0.24, dark);
       grip = new THREE.Vector3(0, -0.07, 0);
       fore = new THREE.Vector3(0.03, -0.1, 0.03);
       len = 0.27;
+      hold.set(0.13, -0.02, 0.5);
       break;
-    case 1: // tiểu liên
+    case 'revolver': { // súng ổ quay: ổ đạn tròn, nòng dài, báng gỗ cong
+      c(0.024, 0.3, 0, 0.035, 0.22, metal);
+      b(0.05, 0.03, 0.26, 0, 0.065, 0.16, accent); // gân trên nòng
+      const drum = c(0.058, 0.1, 0, 0.02, 0.04, accent, 8);
+      drum.rotation.z = Math.PI / 8;
+      b(0.05, 0.08, 0.12, 0, -0.005, -0.04, metal); // khung
+      const gr = b(0.05, 0.14, 0.07, 0, -0.09, -0.08, wood);
+      gr.rotation.x = 0.35;
+      b(0.02, 0.04, 0.02, 0, 0.07, -0.08, dark); // búa
+      mag = drum;
+      grip = new THREE.Vector3(0, -0.08, -0.07);
+      fore = new THREE.Vector3(0.03, -0.11, -0.04);
+      len = 0.37;
+      muzY = 0.035;
+      hold.set(0.13, -0.02, 0.5);
+      break;
+    }
+    case 'smg':
       b(0.08, 0.11, 0.38, 0, 0, 0.1, metal);
       b(0.06, 0.07, 0.2, 0, -0.01, -0.17, dark);
       mag = b(0.05, 0.2, 0.06, 0, -0.14, 0.13, accent);
@@ -124,20 +207,23 @@ function gunModel(tier: number): Gun {
       grip = new THREE.Vector3(0, -0.1, -0.03);
       fore = new THREE.Vector3(0, -0.07, 0.25);
       len = 0.43;
+      hold.set(0.17, -0.07, 0.4);
       break;
-    case 2: // súng săn
+    case 'shotgun': // hai nòng, ốp gỗ
       c(0.03, 0.75, 0, 0.02, 0.27, metal);
       c(0.026, 0.55, 0, -0.04, 0.22, dark);
       b(0.08, 0.075, 0.24, 0, -0.04, 0.3, wood);
       b(0.07, 0.12, 0.3, 0, -0.04, -0.2, wood);
+      b(0.072, 0.05, 0.16, 0, 0.0, -0.02, accent);
       grip = new THREE.Vector3(0, -0.09, -0.08);
       fore = new THREE.Vector3(0, -0.07, 0.3);
       len = 0.65;
+      hold.set(0.18, -0.08, 0.34);
       break;
-    case 3: // súng trường
+    case 'rifle':
       b(0.075, 0.12, 0.62, 0, 0, 0.14, accent);
       b(0.06, 0.06, 0.22, 0, 0.1, 0.08, dark);
-      c(0.03, 0.06, 0, 0.1, 0.21, mat(0x88ccff, { basic: true }));
+      c(0.03, 0.06, 0, 0.1, 0.21, glass);
       mag = b(0.05, 0.2, 0.08, 0, -0.15, 0.14, metal);
       mag.rotation.x = 0.25;
       b(0.06, 0.12, 0.24, 0, -0.03, -0.27, metal);
@@ -145,22 +231,80 @@ function gunModel(tier: number): Gun {
       grip = new THREE.Vector3(0, -0.1, 0.0);
       fore = new THREE.Vector3(0, -0.07, 0.34);
       len = 0.64;
+      hold.set(0.18, -0.08, 0.34);
       break;
-    default: { // pháo chuối
-      c(0.11, 0.9, 0, 0.04, 0.18, accent);
-      c(0.125, 0.08, 0, 0.04, 0.6, dark);
+    case 'lmg': { // súng máy: thân to, hộp đạn vuông bên hông, ống tản nhiệt, chân chống
+      b(0.1, 0.14, 0.5, 0, 0, 0.08, metal);
+      b(0.07, 0.12, 0.24, 0, -0.02, -0.28, accent); // báng
+      c(0.042, 0.36, 0, 0.02, 0.5, accent, 8); // ống tản nhiệt
+      c(0.02, 0.18, 0, 0.02, 0.76, dark);
+      mag = b(0.15, 0.15, 0.13, -0.07, -0.13, 0.06, mat(0x4d5b2c, { rough: 0.8 })); // hộp đạn
+      b(0.03, 0.05, 0.2, 0, 0.1, 0.06, dark); // quai xách
+      for (const sx of [-1, 1]) {
+        const leg = mesh(cylY(0.012, 0.012, 0.26, 6), dark, g, 0.04 * sx, -0.11, 0.6);
+        leg.rotation.set(-0.5, 0, 0.25 * sx);
+      }
+      b(0.05, 0.12, 0.06, 0, -0.11, -0.06, dark); // tay cầm
+      grip = new THREE.Vector3(0, -0.12, -0.06);
+      fore = new THREE.Vector3(0, -0.06, 0.32);
+      len = 0.86;
+      hold.set(0.18, -0.12, 0.3);
+      break;
+    }
+    case 'sniper': { // bắn tỉa: nòng rất dài, ống ngắm to, báng dài
+      b(0.07, 0.1, 0.4, 0, 0, 0.05, accent);
+      c(0.02, 0.62, 0, 0.02, 0.56, metal);
+      c(0.03, 0.08, 0, 0.02, 0.9, dark); // giảm giật đầu nòng
+      c(0.04, 0.3, 0, 0.12, 0.06, dark); // ống ngắm
+      c(0.05, 0.05, 0, 0.12, 0.22, dark);
+      c(0.042, 0.012, 0, 0.12, 0.25, glass);
+      b(0.02, 0.05, 0.03, 0, 0.07, 0.06, dark); // chân ống ngắm
+      b(0.065, 0.14, 0.26, 0, -0.04, -0.27, accent); // báng
+      mag = b(0.045, 0.1, 0.07, 0, -0.09, 0.08, metal);
+      const bolt = mesh(sph(0.02, 6, 5), metal, g, 0.06, 0.03, -0.06);
+      bolt.scale.set(1.3, 1, 1);
+      grip = new THREE.Vector3(0, -0.1, -0.08);
+      fore = new THREE.Vector3(0, -0.06, 0.3);
+      len = 0.96;
+      hold.set(0.17, -0.07, 0.3);
+      break;
+    }
+    case 'launcher':
+    default: { // ống phóng: ống lớn vác cao ngang vai, đầu đạn nhô ra
+      c(0.1, 0.95, 0, 0.04, 0.16, accent, 12);
+      c(0.115, 0.08, 0, 0.04, 0.6, dark, 12);
+      c(0.115, 0.08, 0, 0.04, -0.28, dark, 12);
+      const tip = mesh(G('warhead', () => new THREE.ConeGeometry(0.075, 0.14, 10).rotateX(Math.PI / 2)), mat(0xe5e7eb, { rough: 0.5 }), g, 0, 0.04, 0.7);
+      tip.castShadow = false;
       b(0.06, 0.16, 0.08, 0, -0.12, 0.0, metal);
       b(0.05, 0.12, 0.06, 0, -0.1, 0.28, metal);
-      const ban = mesh(G('banana', () => new THREE.TorusGeometry(0.09, 0.03, 6, 10, Math.PI * 0.9)), mat(0xffe14a, { emissive: 0x3a2a00 }), g, 0, 0.18, 0.1);
-      ban.rotation.set(0, Math.PI / 2, 0.5);
-      grip = new THREE.Vector3(0, -0.15, 0);
-      fore = new THREE.Vector3(0, -0.12, 0.28);
-      len = 0.64;
+      b(0.04, 0.08, 0.1, -0.11, 0.1, 0.18, dark); // ống ngắm bên
+      mag = tip;
+      grip = new THREE.Vector3(0, -0.16, 0);
+      fore = new THREE.Vector3(0, -0.13, 0.28);
+      len = 0.66;
+      muzY = 0.04;
+      hold.set(0.2, 0.0, 0.3);
     }
   }
   g.scale.setScalar(GUN_S);
-  // muzzle ở toạ độ riêng của g (localToWorld đã tính scale), grip/fore ở toạ độ gunPose
-  return { g, grip: grip.multiplyScalar(GUN_S), fore: fore.multiplyScalar(GUN_S), muzzle: new THREE.Vector3(0, 0.02, len), mag };
+  return { g, grip: grip.multiplyScalar(GUN_S), fore: fore.multiplyScalar(GUN_S), muzzle: new THREE.Vector3(0, muzY, len), mag, hold };
+}
+
+/* ---------- kênh giảm chấn (mọi thông số tư thế) ---------- */
+const C_HY = 0, C_HRX = 1, C_CRX = 2, C_CRZ = 3, C_CY = 4, C_SQ = 5, C_NRX = 6, C_HDX = 7;
+const C_THL = 8, C_THR = 9, C_KNL = 10, C_KNR = 11, C_AKL = 12, C_AKR = 13;
+const C_GPX = 14, C_GPY = 15, C_GPZ = 16, C_GRX = 17, C_GRY = 18, C_GRZ = 19;
+const C_TR = 20, C_TL = 23, C_AIM = 26, C_GS = 27, C_HDZ = 28;
+const NCH = 29;
+
+interface Arm {
+  sh: THREE.Group;
+  el: THREE.Group;
+  upper: THREE.Mesh;
+  fore: THREE.Mesh;
+  hand: THREE.Mesh;
+  pole: THREE.Vector3;
 }
 
 export class Avatar {
@@ -174,12 +318,8 @@ export class Avatar {
   private headG = new THREE.Group();
   private aim = new THREE.Group();
   private gunPose = new THREE.Group();
-  private shL = new THREE.Group();
-  private shR = new THREE.Group();
-  private armL: THREE.Mesh;
-  private armR: THREE.Mesh;
-  private handL: THREE.Mesh;
-  private handR: THREE.Mesh;
+  private armL: Arm;
+  private armR: Arm;
   private thL = new THREE.Group();
   private thR = new THREE.Group();
   private knL = new THREE.Group();
@@ -192,7 +332,10 @@ export class Avatar {
   private shield: THREE.Mesh;
   private rageM: THREE.Mesh;
   private blinkOff: number;
+  private look: { id: string; color: number };
   /* trạng thái hoạt cảnh */
+  private ch = new Float32Array(NCH);
+  private chInit = false;
   private phase = 0;
   private recoil = 0;
   private hitT = 0;
@@ -202,37 +345,50 @@ export class Avatar {
   private skillKind: Skill = 'throw';
   private lastX = NaN;
   private lastZ = NaN;
-  private lastY = 0;
   private vx = 0;
   private vz = 0;
-  private hipYaw = 0;
+  private speedS = 0;
+  private legYawW = NaN;
+  private backK = 0;
+  private backward = false;
+  private airK = 0;
+  private wasAir = false;
   private landT = 0;
-  private air = 0;
+  private landS = 0;
   private sprintK = 0;
   private adsK = 0;
   private crawlK = 0;
+  private deadK = 0;
   private kneelK = 0;
+  private braceK = 0;
   private tR = new THREE.Vector3();
   private tL = new THREE.Vector3();
   private tG = new THREE.Vector3();
   private tF = new THREE.Vector3();
-  private tmpD = new THREE.Vector3();
-  private eul = new THREE.Euler();
+  private tmpA = new THREE.Vector3();
+  private tmpB = new THREE.Vector3();
+  private tmpE = new THREE.Vector3();
+  private tmpP = new THREE.Vector3();
+  private q1 = new THREE.Quaternion();
+  private q2 = new THREE.Quaternion();
 
   constructor(cls: number, blobTexture: THREE.Texture, idx = 0) {
     this.cls = cls;
-    const c = CLASSES[cls];
-    const id = c.id;
+    this.look = classLook(cls);
+    const { id, color } = this.look;
     this.blinkOff = idx * 0.31 + cls * 0.17;
     const skin = mat(SKINS[idx & 3], { rough: 0.6 });
-    const body = mat(c.color, { rough: 0.55 });
-    const legM = mat(shade(c.color, 0.78), { rough: 0.6 });
+    const body = mat(color, { rough: 0.55 });
+    const legM = mat(shade(color, 0.78), { rough: 0.6 });
     const pcol = mat(PCOL[idx & 3], { rough: 0.5 });
     const shoeM = mat(PCOL[idx & 3], { rough: 0.45 });
     const ink = mat(0x1d1728, { basic: true });
     const white = mat(0xffffff, { basic: true });
     const red = mat(0xe11d48, { basic: true });
     const bulk = id === 'dausi';
+    let [sleeveC, gloveC] = ARMS[id] ?? [shade(color, 0.5), 0x2a2a2e];
+    if (colDist(sleeveC, color) < 0.35) sleeveC = shade(color, 0.5);
+    if (colDist(gloveC, sleeveC) < 0.35) gloveC = colDist(sleeveC, 0xffffff) > 1.2 ? 0xf5f5f4 : 0x1f2937;
 
     this.root.add(this.hips);
     this.hips.position.y = HIP_Y;
@@ -260,7 +416,7 @@ export class Avatar {
     }
     const front = bulk ? 0.36 : 0.335;
     // ---- đồ theo lớp ----
-    let packCol = 0x5b4a33;
+    let packCol: number | null = 0x5b4a33;
     if (id === 'chienbinh') {
       // túi đạn trên thắt lưng + ba lô quân đội
       for (const x of [-0.12, 0, 0.12]) mesh(box(0.09, 0.1, 0.06), mat(0x445530), this.chestG, x, BODY_Y - 0.13, front + 0.01);
@@ -280,19 +436,77 @@ export class Avatar {
       const wr = mesh(box(0.035, 0.2, 0.025), mat(0xb0b6bf, { metal: 0.8, rough: 0.3 }), this.chestG, 0.345, BODY_Y - 0.2, 0.06);
       wr.rotation.z = 0.3;
       packCol = 0x6b7280;
-    } else {
+    } else if (id === 'dausi') {
       // đấu sĩ: giáp vai to + khoá thắt lưng
       const armor = mat(0x8a919c, { metal: 0.35, rough: 0.45 });
       for (const sx of [-1, 1]) {
-        const p = mesh(G('pad', () => new THREE.SphereGeometry(0.16, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2)), armor, this.chestG, 0.3 * sx, BODY_Y + 0.21, 0.03);
+        const p = mesh(G('pad', () => new THREE.SphereGeometry(0.16, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2)), armor, this.chestG, 0.32 * sx, BODY_Y + 0.21, 0.03);
         p.scale.set(1.15, 0.8, 1.1);
         p.rotation.z = -0.35 * sx;
       }
       mesh(box(0.13, 0.1, 0.03), mat(0xd4a017, { metal: 0.7, rough: 0.35 }), this.chestG, 0, BODY_Y - 0.17, 0.375);
       packCol = 0x2a2d33;
+    } else if (id === 'xathu') {
+      // xạ thủ: khăn ngụy trang ghillie quấn cổ + tua lá rủ sau lưng
+      const ghA = mat(0x5b6b3a, { rough: 0.95 });
+      const ghB = mat(0x3f4a26, { rough: 0.95 });
+      const scarf = mesh(G('scarf', () => new THREE.TorusGeometry(0.33, 0.075, 8, 22)), ghA, this.chestG, 0, NECK_Y - 0.1, 0.0);
+      scarf.rotation.x = Math.PI / 2;
+      scarf.scale.set(1.04, 1.04, 0.9);
+      const tufts: [number, number, number, number, THREE.Material][] = [
+        [-0.2, NECK_Y - 0.22, -0.27, 0.3, ghB], [0.02, NECK_Y - 0.26, -0.33, -0.1, ghA], [0.22, NECK_Y - 0.2, -0.25, -0.35, ghB],
+        [0.3, NECK_Y - 0.17, 0.16, 0.2, ghB],
+      ];
+      for (const [x, y, z, rz, m] of tufts) {
+        const tf = mesh(box(0.09, 0.2, 0.03), m, this.chestG, x, y, z);
+        tf.rotation.set(0.25 * Math.sign(z), Math.atan2(x, z), rz);
+      }
+      packCol = 0x4a5530;
+    } else if (id === 'phaothu') {
+      // pháo thủ: đai bom trước bụng + ba lô to cắm tên lửa
+      const strap = mat(0x5a3a1e, { rough: 0.8 });
+      const bb = mesh(G('bombbelt', () => new THREE.TorusGeometry(0.345, 0.032, 6, 24)), strap, this.chestG, 0, BODY_Y + 0.04, 0);
+      bb.rotation.x = Math.PI / 2;
+      const bomb = mat(0x22262c, { rough: 0.4, metal: 0.3 });
+      const fuse = mat(0xf97316, { emissive: 0x7c2d12 });
+      for (const a of [-0.55, 0, 0.55]) {
+        const x = Math.sin(a) * 0.39, z = Math.cos(a) * 0.39;
+        mesh(sph(0.062, 10, 8), bomb, this.chestG, x, BODY_Y + 0.04, z);
+        mesh(cylY(0.012, 0.012, 0.06, 5), fuse, this.chestG, x, BODY_Y + 0.12, z, false);
+      }
+      packCol = null;
+      const bp = mesh(box(0.44, 0.46, 0.22), mat(0x4b5320, { rough: 0.9 }), this.chestG, 0, BODY_Y + 0.08, -0.42);
+      bp.rotation.x = 0.06;
+      const rk = mat(0xdc2626, { rough: 0.5 });
+      const nose = mat(0xe5e7eb, { rough: 0.5 });
+      for (const sx of [-1, 1]) {
+        mesh(cylY(0.055, 0.055, 0.46, 10), rk, this.chestG, 0.13 * sx, BODY_Y + 0.38, -0.45);
+        mesh(G('rnose', () => new THREE.ConeGeometry(0.055, 0.13, 10)), nose, this.chestG, 0.13 * sx, BODY_Y + 0.675, -0.45);
+      }
+    } else if (id === 'caoboi') {
+      // cao bồi: áo gi-lê da hở trước + ngôi sao + khăn rằn cổ + bao súng bên hông
+      const leather = mat(0x5b3a1e, { rough: 0.8 });
+      leather.side = THREE.DoubleSide;
+      mesh(G('vest', () => new THREE.CylinderGeometry(0.352, 0.352, 0.34, 20, 1, true, 0.55, Math.PI * 2 - 1.1)), leather, this.chestG, 0, BODY_Y + 0.02, 0);
+      const star = mesh(G('star', () => new THREE.CylinderGeometry(0.05, 0.05, 0.015, 5).rotateX(Math.PI / 2)), mat(0xfacc15, { metal: 0.7, rough: 0.3 }), this.chestG, Math.sin(-0.75) * 0.36, BODY_Y + 0.08, Math.cos(-0.75) * 0.36, false);
+      star.rotation.y = -0.75;
+      const scarfM = mat(0xb91c1c, { rough: 0.7 });
+      const sc = mesh(G('neckerchief', () => new THREE.TorusGeometry(0.3, 0.05, 8, 20)), scarfM, this.chestG, 0, NECK_Y - 0.08, 0.02);
+      sc.rotation.x = Math.PI / 2;
+      const tri = mesh(G('kerchief', () => new THREE.ConeGeometry(0.15, 0.2, 3)), scarfM, this.chestG, 0, NECK_Y - 0.2, 0.3);
+      tri.rotation.set(Math.PI - 0.35, Math.PI / 6, 0);
+      tri.scale.set(1, 1, 0.35);
+      mesh(box(0.1, 0.17, 0.09), leather, this.chestG, 0.37, BODY_Y - 0.25, 0.04); // bao súng
+      const hg = mesh(box(0.05, 0.1, 0.05), mat(0x8a5a2b, { rough: 0.8 }), this.chestG, 0.38, BODY_Y - 0.13, 0.0);
+      hg.rotation.x = -0.35;
+      packCol = null;
+      const roll = mesh(cylY(0.09, 0.09, 0.44, 12), mat(0xd6c7a1, { rough: 0.95 }), this.chestG, 0, BODY_Y + 0.22, -0.37);
+      roll.rotation.z = Math.PI / 2;
     }
-    const pack = mesh(box(0.32, 0.34, 0.15), mat(packCol, { rough: 0.9 }), this.chestG, 0, BODY_Y + 0.1, -0.37);
-    pack.rotation.x = 0.06;
+    if (packCol !== null) {
+      const pack = mesh(box(0.32, 0.34, 0.15), mat(packCol, { rough: 0.9 }), this.chestG, 0, BODY_Y + 0.1, -0.37);
+      pack.rotation.x = 0.06;
+    }
 
     // ---- đầu (liền thân) + mặt ----
     this.neck.position.set(0, NECK_Y, 0);
@@ -307,27 +521,36 @@ export class Avatar {
       mesh(sph(0.02, 6, 5), white, eye, 0.022, 0.03, 0.05, false);
       this.eyes.push(eye);
       mesh(sph(0.05, 10, 6), mat(0xff8fa3, { basic: true }), this.headG, 0.19 * sx, -0.075, 0.322, false).scale.set(1.3, 0.7, 0.4);
-      if (bulk) mesh(box(0.12, 0.028, 0.02), ink, this.headG, 0.11 * sx, 0.125, 0.338, false).rotation.z = sx * 0.45;
+      if (bulk || id === 'xathu') mesh(box(0.12, 0.028, 0.02), ink, this.headG, 0.11 * sx, 0.125, 0.338, false).rotation.z = sx * (bulk ? 0.45 : 0.15);
     }
     const mouth = mesh(G('smile', () => new THREE.TorusGeometry(0.05, 0.012, 6, 14, Math.PI)), ink, this.headG, 0, -0.085, 0.368, false);
     mouth.rotation.z = Math.PI;
     this.headG.add(this.hat(id));
 
-    // ---- tay "sợi mì" + súng ----
+    // ---- tay "sợi mì" hai khúc + súng ----
     this.aim.position.set(0, AIM_Y, 0);
     this.chestG.add(this.aim);
-    const arms: THREE.Mesh[] = [];
-    const hands: THREE.Mesh[] = [];
-    for (const [sh, sx] of [[this.shL, -1], [this.shR, 1]] as const) {
-      sh.position.set(SHO_X * sx * (bulk ? 1.05 : 1), 0, SHO_Z);
+    const sleeve = mat(sleeveC, { rough: 0.7 });
+    const sleeve2 = mat(shade(sleeveC, 0.88), { rough: 0.7 });
+    const glove = mat(gloveC, { rough: 0.6 });
+    const mkArm = (sx: number): Arm => {
+      const sh = new THREE.Group();
+      sh.position.set(SHO_X * sx * (bulk ? 1.06 : 1), 0, SHO_Z);
       this.aim.add(sh);
-      arms.push(mesh(armGeo(), body, sh));
-      hands.push(mesh(sph(0.088, 12, 10), body, sh));
-    }
-    [this.armL, this.armR] = arms;
-    [this.handL, this.handR] = hands;
-    this.setArmLen(this.armL, this.handL, ARM_REST);
-    this.setArmLen(this.armR, this.handR, ARM_REST);
+      mesh(sph(0.112, 12, 10), sleeve, sh); // vai tròn nhô ra
+      const upper = mesh(segGeo(0.095, 0.085), sleeve, sh);
+      const el = new THREE.Group();
+      sh.add(el);
+      mesh(sph(0.086, 10, 8), sleeve2, el); // khuỷu
+      const fore = mesh(segGeo(0.084, 0.076), sleeve2, el);
+      const hand = mesh(sph(0.1, 12, 10), glove, el);
+      hand.scale.set(1, 0.9, 1.1);
+      return { sh, el, upper, fore, hand, pole: new THREE.Vector3(sx * 1, -0.55, -0.55) };
+    };
+    this.armL = mkArm(-1);
+    this.armR = mkArm(1);
+    this.setArm(this.armL, UA, FA);
+    this.setArm(this.armR, UA, FA);
     this.aim.add(this.gunPose);
 
     // khiên gồng mình / cuồng nộ
@@ -382,7 +605,7 @@ export class Avatar {
       ridge.scale.set(1.05, 0.9, 1);
       mesh(G('lamp', () => new THREE.CylinderGeometry(0.04, 0.045, 0.05, 10).rotateX(Math.PI / 2)), mat(0x333333), g, 0, 0.2, 0.36);
       mesh(G('lampL', () => new THREE.CircleGeometry(0.035, 10)), mat(0xfff7b0, { basic: true }), g, 0, 0.2, 0.387, false);
-    } else {
+    } else if (id === 'dausi') {
       // mũ giáp + sừng + mào màu lớp
       const steel = mat(0x8a919c, { metal: 0.35, rough: 0.45 });
       mesh(dome(0.37, Math.PI / 2.5), steel, g, 0, 0.02, 0).scale.set(1.05, 1, 1.05);
@@ -391,7 +614,55 @@ export class Avatar {
         const horn = mesh(G('horn', () => new THREE.ConeGeometry(0.06, 0.3, 10)), mat(0xf5f0e0, { rough: 0.5 }), g, 0.33 * sx, 0.27, 0);
         horn.rotation.z = -1.0 * sx;
       }
-      mesh(G('crest', () => new THREE.ConeGeometry(0.045, 0.16, 6)), mat(CLASSES[this.cls].color), g, 0, 0.43, -0.03);
+      mesh(G('crest', () => new THREE.ConeGeometry(0.045, 0.16, 6)), mat(this.look.color), g, 0, 0.43, -0.03);
+    } else if (id === 'xathu') {
+      // mũ len ngụy trang + kính ngắm (một mắt ống dài) đẩy lên trán
+      const wool = mat(0x3f4a26, { rough: 0.95 });
+      mesh(dome(0.372, Math.PI / 2.1), wool, g, 0, 0.03, -0.01).scale.set(1.03, 0.98, 1.06);
+      mesh(G('fold', () => new THREE.TorusGeometry(0.37, 0.045, 6, 24)), mat(0x55623a, { rough: 0.95 }), g, 0, 0.07, -0.01).rotation.x = Math.PI / 2;
+      mesh(G('pom', () => new THREE.SphereGeometry(0.07, 8, 6)), mat(0x55623a, { rough: 0.95 }), g, 0, 0.42, -0.02);
+      const gog = new THREE.Group();
+      gog.position.set(0, 0.17, 0.3);
+      gog.rotation.x = -0.45;
+      g.add(gog);
+      const blk = mat(0x1a1c20, { metal: 0.3, rough: 0.35 });
+      mesh(box(0.3, 0.07, 0.07), blk, gog, 0, 0, 0);
+      mesh(cylZ(0.048, 0.1), blk, gog, -0.075, 0, 0.06);
+      mesh(cylZ(0.05, 0.2), blk, gog, 0.075, 0, 0.11); // ống ngắm
+      const lensM = mat(0x4ade80, { basic: true });
+      mesh(cylZ(0.036, 0.012), lensM, gog, -0.075, 0, 0.112, false);
+      mesh(cylZ(0.038, 0.012), lensM, gog, 0.075, 0, 0.212, false);
+    } else if (id === 'phaothu') {
+      // mũ phi công da + vạt che tai + kính phi công
+      const lea = mat(0x7a4a26, { rough: 0.75 });
+      mesh(dome(0.373, Math.PI / 1.85), lea, g, 0, 0.02, -0.01).scale.set(1.03, 0.97, 1.05);
+      for (const sx of [-1, 1]) mesh(sph(0.11, 10, 8), lea, g, 0.335 * sx, -0.06, 0.0).scale.set(0.42, 1, 0.85);
+      const band = mesh(G('gband', () => new THREE.TorusGeometry(0.376, 0.024, 6, 24)), mat(0x2b2118, { rough: 0.7 }), g, 0, 0.16, 0);
+      band.rotation.x = Math.PI / 2 - 0.25;
+      const brass = mat(0xb08d57, { metal: 0.7, rough: 0.35 });
+      const lensM = mat(0x93c5fd, { basic: true });
+      for (const sx of [-1, 1]) {
+        const ring = mesh(cylZ(0.07, 0.05, 12), brass, g, 0.1 * sx, 0.24, 0.29);
+        ring.rotation.x = -0.6;
+        const ln = mesh(cylZ(0.055, 0.056, 12), lensM, g, 0.1 * sx, 0.244, 0.297, false);
+        ln.rotation.x = -0.6;
+      }
+    } else if (id === 'caoboi') {
+      // mũ cao bồi: vành rộng cong mép, chóp lõm, dải mũ
+      const felt = mat(0x8b5a2b, { rough: 0.85 });
+      const hg = new THREE.Group();
+      hg.position.set(0, 0.2, -0.01);
+      hg.rotation.x = -0.12;
+      g.add(hg);
+      mesh(cylY(0.5, 0.5, 0.028, 26), felt, hg, 0, 0, 0);
+      const lip = mesh(G('hlip', () => new THREE.TorusGeometry(0.49, 0.032, 6, 26)), felt, hg, 0, 0.02, 0);
+      lip.rotation.x = Math.PI / 2;
+      lip.scale.set(1, 0.82, 1);
+      const crown = mesh(cylY(0.235, 0.285, 0.27, 16), felt, hg, 0, 0.145, 0);
+      crown.scale.set(1, 1, 0.88);
+      mesh(cylY(0.289, 0.289, 0.055, 16), mat(0x3b2414, { rough: 0.7 }), hg, 0, 0.04, 0).scale.set(1, 1, 0.88);
+      const dent = mesh(box(0.05, 0.03, 0.36), mat(0x6f4421, { rough: 0.85 }), hg, 0, 0.285, 0);
+      dent.castShadow = false;
     }
     return g;
   }
@@ -400,7 +671,8 @@ export class Avatar {
     if (tier === this.tier) return;
     this.tier = tier;
     if (this.gun) this.gunPose.remove(this.gun.g);
-    this.gun = gunModel(tier);
+    const w = weaponLook(this.cls, tier);
+    this.gun = gunModel(w.model, w.color);
     this.gunPose.add(this.gun.g);
   }
 
@@ -420,29 +692,42 @@ export class Avatar {
     this.skillT = this.skillDur;
   }
 
-  private setArmLen(arm: THREE.Mesh, hand: THREE.Mesh, L: number) {
-    arm.scale.y = Math.max(0.01, L - 0.04);
-    hand.position.y = -L;
+  private setArm(arm: Arm, A: number, B: number) {
+    arm.upper.scale.y = A;
+    arm.el.position.y = -A;
+    arm.fore.scale.y = B;
+    arm.hand.position.y = -B;
   }
 
-  /** tay co giãn: xoay vai hướng về T (toạ độ của `aim`), kéo dài tay để bàn tay chạm T */
-  private reach(sh: THREE.Object3D, arm: THREE.Mesh, hand: THREE.Mesh, T: THREE.Vector3) {
-    const d = this.tmpD.copy(T).sub(sh.position);
+  /** IK hai khúc co giãn: vai + khuỷu để bàn tay chạm T (toạ độ `aim`); quá tầm thì tay sợi mì giãn ra */
+  private ik(arm: Arm, T: THREE.Vector3) {
+    const S = arm.sh.position;
+    const d = this.tmpA.copy(T).sub(S);
     let L = d.length();
-    if (L < 1e-4) d.copy(DOWN);
-    else d.multiplyScalar(1 / L);
-    L = Math.min(ARM_MAX, Math.max(ARM_MIN, L));
-    sh.quaternion.setFromUnitVectors(DOWN, d);
-    this.setArmLen(arm, hand, L);
-  }
-
-  private pose(sh: THREE.Object3D, arm: THREE.Mesh, hand: THREE.Mesh, x: number, z: number, L = ARM_REST) {
-    sh.quaternion.setFromEuler(this.eul.set(x, 0, z));
-    this.setArmLen(arm, hand, L);
+    if (L < 1e-4) {
+      d.copy(DOWN);
+      L = 1e-4;
+    } else d.multiplyScalar(1 / L);
+    const reach = (UA + FA) * 0.97;
+    const s = clamp(L / reach, 1, ARM_STRETCH);
+    const A = UA * s, B = FA * s;
+    const Lc = clamp(L, Math.abs(A - B) + 0.02, A + B - 1e-3);
+    const cosA = clamp((A * A + Lc * Lc - B * B) / (2 * A * Lc), -1, 1);
+    const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+    const p = this.tmpP.copy(arm.pole).addScaledVector(d, -arm.pole.dot(d)).normalize();
+    const E = this.tmpE.copy(S).addScaledVector(d, A * cosA).addScaledVector(p, A * sinA);
+    this.q1.setFromUnitVectors(DOWN, this.tmpB.copy(E).sub(S).normalize());
+    arm.sh.quaternion.copy(this.q1);
+    const tgt = this.tmpB.copy(S).addScaledVector(d, Lc).sub(E).normalize();
+    this.q2.setFromUnitVectors(DOWN, tgt);
+    arm.el.quaternion.copy(this.q1.invert()).multiply(this.q2);
+    this.setArm(arm, A, B);
   }
 
   update(P: AvatarPose) {
-    const { dt, t } = P;
+    const dt = clamp(P.dt, 0, 0.1);
+    const t = P.t;
+    const kk = (r: number) => 1 - Math.exp(-dt * r);
     this.root.position.set(P.x, P.y, P.z);
     this.root.rotation.set(0, P.yaw, 0);
     this.blob.position.set(P.x, 0.035, P.z);
@@ -451,228 +736,313 @@ export class Avatar {
     this.shield.visible = P.brace;
     this.rageM.visible = P.rage;
     if (P.rage) this.rageM.scale.set(0.8, 0.9, 0.8).multiplyScalar(0.95 + Math.sin(t * 10) * 0.05);
-    // vận tốc từ chuyển động hiển thị (dùng chung cho mình và đồng đội)
-    if (Number.isNaN(this.lastX) || dt <= 0) { this.lastX = P.x; this.lastZ = P.z; }
-    const k = 1 - Math.exp(-dt * 12);
-    if (dt > 0) {
-      this.vx += ((P.x - this.lastX) / dt - this.vx) * k;
-      this.vz += ((P.z - this.lastZ) / dt - this.vz) * k;
+
+    // ---- vận tốc từ chuyển động hiển thị (lọc: bỏ cú nhảy do hiệu chỉnh/dịch chuyển) ----
+    if (Number.isNaN(this.lastX)) {
+      this.lastX = P.x;
+      this.lastZ = P.z;
+    }
+    if (dt > 1e-4) {
+      let rvx = (P.x - this.lastX) / dt, rvz = (P.z - this.lastZ) / dt;
+      const rs = Math.hypot(rvx, rvz);
+      if (rs > 30) {
+        rvx = this.vx;
+        rvz = this.vz;
+      } else if (rs > 13) {
+        rvx *= 13 / rs;
+        rvz *= 13 / rs;
+      }
+      const kv = kk(9);
+      this.vx += (rvx - this.vx) * kv;
+      this.vz += (rvz - this.vz) * kv;
     }
     this.lastX = P.x;
     this.lastZ = P.z;
-    const speed = Math.min(12, Math.hypot(this.vx, this.vz));
-    const kk = (r: number) => 1 - Math.exp(-dt * r);
-    this.recoil = Math.max(0, this.recoil - dt * 8);
+    const speed = Math.hypot(this.vx, this.vz);
+    this.speedS += (speed - this.speedS) * kk(6);
+    const spd = this.speedS;
+
+    this.recoil = Math.max(0, this.recoil - dt * 7);
     this.hitT = Math.max(0, this.hitT - dt * 3.5);
     if (this.skillT > 0) this.skillT = Math.max(0, this.skillT - dt);
-    // đáp đất
-    const air = P.y > 0.04 ? 1 : 0;
-    if (this.air && !air) this.landT = 1;
-    this.air = air;
-    this.landT = Math.max(0, this.landT - dt * 5);
-    this.sprintK += ((P.sprint && !P.down ? 1 : 0) - this.sprintK) * kk(10);
+    // ---- trên không / đáp đất (trộn dần, không bật) ----
+    const air = P.y > 0.04 && !P.down;
+    if (this.wasAir && !air) this.landT = 1;
+    this.wasAir = air;
+    this.airK += ((air ? 1 : 0) - this.airK) * kk(air ? 10 : 18);
+    this.landT = Math.max(0, this.landT - dt * 4);
+    this.landS += (this.landT - this.landS) * kk(28);
+    const land = this.landS;
+    this.sprintK += ((P.sprint && !P.down ? 1 : 0) - this.sprintK) * kk(8);
     this.adsK += ((P.ads && !P.down ? 1 : 0) - this.adsK) * kk(14);
-    this.crawlK += ((P.down ? 1 : 0) - this.crawlK) * kk(8);
-    this.kneelK += ((P.reviving || (this.skillT > 0 && this.skillKind === 'build') ? 1 : 0) - this.kneelK) * kk(10);
+    this.crawlK += ((P.down ? 1 : 0) - this.crawlK) * kk(7);
+    this.deadK += ((P.down === 2 ? 1 : 0) - this.deadK) * kk(5);
+    this.kneelK += ((P.reviving || (this.skillT > 0 && this.skillKind === 'build') ? 1 : 0) - this.kneelK) * kk(9);
+    this.braceK += ((P.brace ? 1 : 0) - this.braceK) * kk(10);
+    const crawl = smooth01(this.crawlK);
+    const deadK = this.deadK;
 
-    // ---- hướng chân: chạy tới/ngang theo hướng di chuyển, chạy lùi thì quay chân về trước ----
-    const run = Math.min(1, speed / 5.5);
+    // ---- hướng chân (toạ độ thế giới, xoay mượt theo góc ngắn nhất) ----
+    const mv = smooth01((spd - 0.25) / 0.9); // trọng số "đang di chuyển"
     let rel = 0;
-    let backward = false;
-    if (speed > 0.6) {
-      rel = Math.atan2(this.vx, this.vz) - P.yaw;
-      while (rel > Math.PI) rel -= Math.PI * 2;
-      while (rel < -Math.PI) rel += Math.PI * 2;
-      if (Math.abs(rel) > 1.9) {
-        backward = true;
-        rel = rel > 0 ? rel - Math.PI : rel + Math.PI;
-      }
-      rel = Math.max(-1.25, Math.min(1.25, rel));
+    if (speed > 0.35) {
+      rel = wrapPi(Math.atan2(this.vx, this.vz) - P.yaw);
+      // chạy lùi: có trễ để không lật qua lại ở góc chéo
+      const ar = Math.abs(rel);
+      if (!this.backward && ar > 2.0) this.backward = true;
+      else if (this.backward && ar < 1.65) this.backward = false;
+      if (this.backward) rel = wrapPi(rel + Math.PI);
+      rel = clamp(rel, -1.25, 1.25);
     }
-    this.hipYaw += (rel * (1 - this.crawlK) - this.hipYaw) * kk(9);
-    // chân ngắn → bước ngắn, nhịp nhanh
-    const stride = 0.72 + this.sprintK * 0.3;
-    this.phase += (backward ? -1 : 1) * (speed / stride) * dt * Math.PI;
+    this.backK += ((this.backward && mv > 0.2 ? 1 : 0) - this.backK) * kk(6);
+    const legTarget = P.yaw + rel * mv * (1 - crawl);
+    if (Number.isNaN(this.legYawW)) this.legYawW = legTarget;
+    this.legYawW += wrapPi(legTarget - this.legYawW) * kk(mv > 0.3 ? 9 : 5);
+    let hipYaw = wrapPi(this.legYawW - P.yaw);
+    if (Math.abs(hipYaw) > 1.4) {
+      // xoay camera quá nhanh: chân bị kéo theo (vẫn liên tục)
+      hipYaw = clamp(hipYaw, -1.4, 1.4);
+      this.legYawW = P.yaw + hipYaw;
+    }
+
+    // ---- pha bước chân: cộng dồn liên tục từ tốc độ đã lọc ----
+    const run = clamp(spd / 5.5, 0, 1);
+    const stride = 1.0 + this.sprintK * 0.35; // m mỗi nửa chu kỳ
+    const dir = 1 - 2 * this.backK;
+    this.phase += dir * Math.min(spd / stride, 7.5) * dt * Math.PI;
+    if (this.phase > 1e4 || this.phase < -1e4) this.phase %= Math.PI * 2;
     const sw = Math.sin(this.phase);
     const cw = Math.cos(this.phase);
 
-    // ---- đặt lại ----
-    this.hips.position.set(0, HIP_Y, 0);
-    this.hips.rotation.set(0, this.hipYaw, 0);
-    this.spine.rotation.set(0, -this.hipYaw, 0);
-    this.chestG.rotation.set(0, 0, 0);
-    this.chestG.position.set(0, 0, 0);
-    this.neck.rotation.set(0, 0, 0);
-    this.headG.rotation.set(0, 0, 0);
-    this.gunPose.visible = true;
-
-    // ---- chân ----
-    const amp = run * (0.85 + this.sprintK * 0.3);
-    this.thL.rotation.set(sw * amp, 0, 0);
-    this.thR.rotation.set(-sw * amp, 0, 0);
-    this.knL.rotation.set(Math.max(0, -cw) * 1.1 * run + 0.05, 0, 0);
-    this.knR.rotation.set(Math.max(0, cw) * 1.1 * run + 0.05, 0, 0);
-    this.ankL.rotation.set(-this.thL.rotation.x * 0.3, 0, 0);
-    this.ankR.rotation.set(-this.thR.rotation.x * 0.3, 0, 0);
-    let bob = Math.abs(cw) * 0.045 * run - run * 0.015;
-    if (air) {
-      // trên không: co một chân, duỗi một chân
-      this.thL.rotation.x = -0.9;
-      this.knL.rotation.x = 1.2;
-      this.thR.rotation.x = -0.2;
-      this.knR.rotation.x = 0.5;
-    }
-    bob -= this.landT * 0.06;
-    this.knL.rotation.x += this.landT * 0.5;
-    this.knR.rotation.x += this.landT * 0.5;
-    this.thL.rotation.x -= this.landT * 0.25;
-    this.thR.rotation.x -= this.landT * 0.25;
-    // thở khi đứng + bóp/giãn kiểu hoạt hình (đáp đất dẹt, nảy theo bước)
+    // ---- mục tiêu tư thế ----
+    const gait = run * mv * (1 - this.airK);
+    const amp = gait * (0.85 + this.sprintK * 0.3);
+    let thL = sw * amp, thR = -sw * amp;
+    let knL = 0.06 + softPos(-cw) * 1.1 * gait;
+    let knR = 0.06 + softPos(cw) * 1.1 * gait;
+    // trên không: co một chân, duỗi một chân
+    const ak = this.airK;
+    thL = lerp(thL, -0.85, ak);
+    knL = lerp(knL, 1.15, ak);
+    thR = lerp(thR, -0.2, ak);
+    knR = lerp(knR, 0.5, ak);
+    // đáp đất: khuỵu gối
+    knL += land * 0.5;
+    knR += land * 0.5;
+    thL -= land * 0.25;
+    thR -= land * 0.25;
+    // nảy theo bước: hàm trơn (cos²) thay cho |cos| gãy khúc
+    let bob = gait * (0.045 * cw * cw - 0.02) - land * 0.06;
     const breath = Math.sin(t * 2.1) * (1 - run);
-    this.chestG.position.y = breath * 0.008;
-    let sq = 1 + breath * 0.012 + Math.sin(this.phase * 2 - 0.6) * 0.035 * run - this.landT * 0.12 + (air ? 0.05 : 0);
-    // lắc lư sang bên theo bước chạy (dáng đi lạch bạch)
-    this.chestG.rotation.z = sw * 0.07 * run - Math.sin(this.hipYaw) * 0.08 * run;
-    // nghiêng người khi chạy nhanh / lùi
-    this.chestG.rotation.x = 0.1 * run + this.sprintK * 0.22 - (backward ? 0.12 * run : 0);
+    const chestY = breath * 0.008;
+    let sq = 1 + breath * 0.012 + Math.sin(this.phase * 2 - 0.6) * 0.03 * gait - land * 0.12 + ak * 0.05;
+    // lắc lư sang bên theo bước chạy (dáng đi lạch bạch) + nghiêng khi chạy nhanh / lùi
+    let crz = sw * 0.06 * gait - Math.sin(hipYaw) * 0.08 * run * mv;
+    let crx = (0.1 * run + this.sprintK * 0.22 - this.backK * 0.2 * run) * mv;
     // quỳ (đỡ đồng đội / dựng đồ)
-    if (this.kneelK > 0.01) {
-      const q = this.kneelK;
+    const q = this.kneelK;
+    if (q > 0.001) {
       bob -= 0.16 * q;
-      this.thL.rotation.x = -1.4 * q + this.thL.rotation.x * (1 - q);
-      this.knL.rotation.x = 1.5 * q + this.knL.rotation.x * (1 - q);
-      this.thR.rotation.x = 0.2 * q + this.thR.rotation.x * (1 - q);
-      this.knR.rotation.x = 1.9 * q + this.knR.rotation.x * (1 - q);
-      this.chestG.rotation.x += 0.3 * q;
+      thL = lerp(thL, -1.4, q);
+      knL = lerp(knL, 1.5, q);
+      thR = lerp(thR, 0.2, q);
+      knR = lerp(knR, 1.9, q);
+      crx += 0.3 * q;
     }
     // gồng: hạ trọng tâm, người dẹt lại
-    if (P.brace) {
-      bob -= 0.05;
-      sq -= 0.05;
-      this.knL.rotation.x += 0.4;
-      this.knR.rotation.x += 0.4;
-      this.thL.rotation.x -= 0.25;
-      this.thR.rotation.x -= 0.25;
-    }
-    this.hips.position.y += bob;
+    const bk = this.braceK;
+    bob -= 0.05 * bk;
+    sq -= 0.05 * bk;
+    knL += 0.4 * bk;
+    knR += 0.4 * bk;
+    thL -= 0.25 * bk;
+    thR -= 0.25 * bk;
 
-    // ---- thân trên theo hướng ngắm ----
+    // thân trên theo hướng ngắm
     const pitch = P.pitch;
-    this.aim.rotation.set(-pitch * 0.75, 0, 0);
-    this.neck.rotation.x = -pitch * 0.2;
-    this.chestG.rotation.x += -pitch * 0.12;
+    let aimX = -pitch * 0.75;
+    let nrx = -pitch * 0.2;
+    crx += -pitch * 0.12;
+    let hdx = 0;
+    let hdz = 0;
     // trúng đòn: giật ngược hướng đòn
     if (this.hitT > 0) {
       const h = Math.sin(this.hitT * Math.PI) * 0.35;
-      this.chestG.rotation.x -= Math.cos(this.hitDir) * h;
-      this.chestG.rotation.z += Math.sin(this.hitDir) * h;
-      this.headG.rotation.x -= h * 0.4;
+      crx -= Math.cos(this.hitDir) * h;
+      crz += Math.sin(this.hitDir) * h;
+      hdx -= h * 0.4;
       sq -= h * 0.15;
     }
-
-    // ---- súng + tay ----
-    const gp = this.gunPose;
-    const r = this.recoil;
-    gp.position.set(0.12 - this.adsK * 0.12, -0.1 + this.adsK * 0.13, 0.42 + this.adsK * 0.03 - r * 0.06);
-    gp.rotation.set(-r * 0.22, 0, 0);
-    if (this.sprintK > 0.01) {
-      const s = this.sprintK;
-      gp.position.x += 0.03 * s;
-      gp.position.y -= 0.1 * s - Math.sin(this.phase) * 0.025 * s;
-      gp.position.z -= 0.08 * s;
-      gp.rotation.x += 0.75 * s;
-      gp.rotation.y += 0.65 * s;
+    // dậm đất: nhảy lên rồi đập xuống
+    if (this.skillT > 0 && this.skillKind === 'stomp') {
+      const p = 1 - this.skillT / this.skillDur;
+      const up = p < 0.5 ? Math.sin(p * Math.PI) : 0;
+      const slam = p > 0.5 ? Math.sin((p - 0.5) * 2 * Math.PI) : 0;
+      bob += up * 0.18 - slam * 0.12;
+      crx += slam * 0.5 - 0.2 * up;
+      sq += up * 0.08 - slam * 0.18;
+      thL -= 0.9 * up;
+      thR -= 0.9 * up;
+      knL += 1.2 * up + slam * 0.5;
+      knR += 1.2 * up + slam * 0.5;
     }
+    if (this.skillT > 0 && this.skillKind === 'ult') {
+      const u = Math.sin((1 - this.skillT / this.skillDur) * Math.PI);
+      hdx -= 0.3 * u;
+      sq += 0.08 * u;
+    }
+    // nghiêng đầu nhẹ khi đứng yên cho sinh động
+    hdz += Math.sin(t * 0.9 + this.blinkOff * 7) * 0.04 * (1 - run);
+
+    // ---- gục: nằm sấp bò lết / tử trận nằm ngửa (trộn theo crawl, deadK) ----
+    let hy = HIP_Y + bob;
+    let hrx = 0;
+    const crawlW = Math.sin(t * 5) * Math.min(1, spd / 0.8) * (1 - deadK);
+    if (crawl > 0.001) {
+      hy = lerp(hy, 0.3, crawl);
+      hrx = lerp(1.45, -1.5, deadK) * crawl;
+      crx = lerp(crx, lerp(-0.2, 0, deadK), crawl);
+      crz *= 1 - crawl;
+      nrx = lerp(nrx, lerp(-0.45, 0.2, deadK), crawl);
+      sq = lerp(sq, 1, crawl);
+      thL = lerp(thL, 0.15 + crawlW * 0.35, crawl);
+      thR = lerp(thR, 0.15 - crawlW * 0.35, crawl);
+      knL = lerp(knL, 0.3 + Math.max(0, crawlW) * 0.6, crawl);
+      knR = lerp(knR, 0.3 + Math.max(0, -crawlW) * 0.6, crawl);
+      aimX *= 1 - crawl;
+    }
+
+    // ---- súng ----
+    const gun = this.gun;
+    const hold = gun ? gun.hold : this.tmpA.set(0.17, -0.08, 0.38);
+    const r = this.recoil * this.recoil;
+    let gpx = hold.x * (1 - this.adsK * 0.88);
+    let gpy = hold.y + this.adsK * 0.12;
+    let gpz = hold.z + this.adsK * 0.03 - r * 0.07;
+    let grx = -r * 0.24;
+    let gry = 0;
+    let grz = 0;
+    const s = this.sprintK;
+    gpx += 0.03 * s;
+    gpy -= 0.1 * s - sw * 0.025 * s * mv;
+    gpz -= 0.08 * s;
+    grx += 0.75 * s;
+    gry += 0.65 * s;
     let reloadOut = 0;
     if (P.reload >= 0 && !P.down) {
       // nạp đạn: nghiêng súng, tay trái rút băng xuống hông rồi lắp lại
       const rp = P.reload;
       const tilt = Math.sin(Math.min(1, rp * 1.15) * Math.PI);
-      gp.rotation.z += 0.55 * tilt;
-      gp.rotation.x += 0.25 * tilt;
-      gp.position.y -= 0.03 * tilt;
+      grz += 0.55 * tilt;
+      grx += 0.25 * tilt;
+      gpy -= 0.03 * tilt;
       reloadOut = Math.sin(Math.min(1, rp * 1.4) * Math.PI);
     }
-    if (this.gun?.mag) this.gun.mag.visible = reloadOut < 0.6;
+    // nhịp súng nhún theo bước
+    gpy += Math.sin(this.phase * 2) * 0.012 * gait * (1 - s);
+
+    // ---- giảm chấn tất cả kênh (độc lập khung hình) ----
+    const ch = this.ch;
+    const first = !this.chInit;
+    const K = kk(22);
+    const KG = kk(38);
+    const d = (i: number, v: number, k = K) => (first ? (ch[i] = v) : (ch[i] += (v - ch[i]) * k));
+    this.hips.position.set(0, d(C_HY, hy), 0);
+    this.hips.rotation.set(d(C_HRX, hrx, kk(12)), hipYaw, 0);
+    this.spine.rotation.set(0, -hipYaw * (1 - crawl), 0);
+    this.chestG.position.set(0, d(C_CY, chestY), 0);
+    this.chestG.rotation.set(d(C_CRX, crx), 0, d(C_CRZ, crz));
+    const sqv = d(C_SQ, sq);
+    const sxz = 1 / Math.sqrt(sqv);
+    this.chestG.scale.set(sxz, sqv, sxz);
+    this.neck.rotation.set(d(C_NRX, nrx), 0, 0);
+    this.headG.rotation.set(d(C_HDX, hdx), 0, d(C_HDZ, hdz));
+    this.thL.rotation.set(d(C_THL, thL), 0, 0);
+    this.thR.rotation.set(d(C_THR, thR), 0, 0);
+    this.knL.rotation.set(d(C_KNL, knL), 0, 0);
+    this.knR.rotation.set(d(C_KNR, knR), 0, 0);
+    this.ankL.rotation.set(d(C_AKL, -thL * 0.3), 0, 0);
+    this.ankR.rotation.set(d(C_AKR, -thR * 0.3), 0, 0);
+    this.aim.rotation.set(d(C_AIM, aimX, kk(40)), 0, 0);
+    const gp = this.gunPose;
+    gp.position.set(d(C_GPX, gpx, KG), d(C_GPY, gpy, KG), d(C_GPZ, gpz, KG));
+    gp.rotation.set(d(C_GRX, grx, KG), d(C_GRY, gry, KG), d(C_GRZ, grz, KG));
+    // gục: súng thu nhỏ dần rồi ẩn (không bật tắt đột ngột)
+    const gs = d(C_GS, 1 - smooth01((crawl - 0.25) / 0.35), kk(12));
+    gp.visible = gs > 0.04;
+    if (gun) {
+      gun.g.scale.setScalar(GUN_S * Math.max(0.04, gs));
+      if (gun.mag) gun.mag.visible = reloadOut < 0.6;
+    }
     gp.updateMatrix();
-    const gun = this.gun;
+
+    // ---- tay ----
+    const Tr = this.tR;
+    const Tl = this.tL;
     if (gun) {
       // tay phải: báng
-      const Tr = this.tR.copy(gun.grip).applyMatrix4(gp.matrix);
+      Tr.copy(gun.grip).applyMatrix4(gp.matrix);
       if (this.skillT > 0 && (this.skillKind === 'throw' || this.skillKind === 'ult')) {
         const p = 1 - this.skillT / this.skillDur;
         const throwK = Math.sin(p * Math.PI);
         if (this.skillKind === 'throw') {
           // vung tay qua vai ra trước
           const ang = -2.6 + p * 3.6;
-          Tr.lerp(this.tmpD.set(0.3, -Math.cos(ang) * 0.4 + 0.05, SHO_Z + Math.sin(ang) * 0.4), throwK);
+          Tr.lerp(this.tmpB.set(0.36, -Math.cos(ang) * 0.42 + 0.05, SHO_Z + Math.sin(ang) * 0.42), throwK);
         } else {
           // giơ tay lên trời (pháo sáng / gầm)
-          Tr.lerp(this.tmpD.set(0.36, 0.5, 0.1), throwK);
+          Tr.lerp(this.tmpB.set(0.42, 0.5, 0.1), throwK);
         }
       }
-      this.reach(this.shR, this.armR, this.handR, Tr);
-      // tay trái: ốp trước; tay ngắn không với tới thì trượt dần về phía báng
-      const Tl = this.tL.copy(gun.fore).applyMatrix4(gp.matrix);
+      // tay trái: ốp trước; với không tới thì trượt dần về phía báng
+      Tl.copy(gun.fore).applyMatrix4(gp.matrix);
       const Tf = this.tF.copy(Tl);
       const Tg = this.tG.copy(gun.grip).applyMatrix4(gp.matrix);
-      for (let i = 1; i <= 4 && Tl.distanceTo(this.shL.position) > ARM_MAX - 0.04; i++) Tl.lerpVectors(Tf, Tg, i * 0.2);
-      if (reloadOut > 0) Tl.lerp(this.tmpD.set(-0.3, -0.3, 0.2), reloadOut);
+      const maxL = (UA + FA) * ARM_STRETCH * 0.95;
+      const shL = this.armL.sh.position;
+      if (Tf.distanceTo(shL) > maxL) {
+        // tìm điểm trên đoạn ốp→báng vừa tầm (liên tục theo vị trí súng, không nhảy bậc)
+        let lo = 0, hi = 1;
+        for (let i = 0; i < 6; i++) {
+          const m = (lo + hi) / 2;
+          if (this.tmpB.lerpVectors(Tf, Tg, m).distanceTo(shL) > maxL) lo = m;
+          else hi = m;
+        }
+        Tl.lerpVectors(Tf, Tg, hi);
+      }
+      if (reloadOut > 0) Tl.lerp(this.tmpB.set(-0.36, -0.32, 0.2), reloadOut);
       if (this.skillT > 0 && this.skillKind === 'build') {
         const p = 1 - this.skillT / this.skillDur;
-        Tl.set(-0.05, -0.42 + Math.abs(Math.sin(p * Math.PI * 4)) * 0.15, 0.45);
+        const bw = Math.sin(p * Math.PI);
+        Tl.lerp(this.tmpB.set(-0.05, -0.42 + Math.abs(Math.sin(p * Math.PI * 4)) * 0.15, 0.48), bw);
       }
-      this.reach(this.shL, this.armL, this.handL, Tl);
+    } else {
+      Tr.set(0.42, -0.36, 0.14);
+      Tl.set(-0.42, -0.36, 0.14);
     }
-    // dậm đất: nhảy lên rồi đập xuống
-    if (this.skillT > 0 && this.skillKind === 'stomp') {
-      const p = 1 - this.skillT / this.skillDur;
-      const up = p < 0.5 ? Math.sin(p * Math.PI) : 0;
-      this.hips.position.y += up * 0.18 - (p > 0.5 ? (1 - p) * 0.2 : 0);
-      this.chestG.rotation.x += p > 0.5 ? 0.5 * (1 - p) * 2 : -0.2 * up;
-      sq += up * 0.08 - (p > 0.5 ? (1 - p) * 0.3 : 0);
-      this.thL.rotation.x -= 0.9 * up;
-      this.thR.rotation.x -= 0.9 * up;
-      this.knL.rotation.x += 1.2 * up;
-      this.knR.rotation.x += 1.2 * up;
+    // gục: tay với ra trước (bò) / dang ra (chết) / vẫy cầu cứu khi nằm yên
+    if (crawl > 0.001) {
+      const wave = !P.down || P.down === 2 ? 0 : (1 - Math.min(1, spd / 0.3)) * (1 - deadK);
+      const cr = this.tmpB.set(0.3, 0.42 + crawlW * 0.12, 0.12 - crawlW * 0.1);
+      cr.lerp(this.tmpE.set(0.62, 0.0, 0.05), deadK);
+      cr.lerp(this.tmpE.set(0.4, 0.5 + Math.sin(t * 6) * 0.1, 0.3 + Math.sin(t * 3) * 0.12), wave);
+      Tr.lerp(cr, crawl);
+      const cl = this.tmpB.set(-0.3, 0.42 - crawlW * 0.12, 0.12 + crawlW * 0.1);
+      cl.lerp(this.tmpE.set(-0.62, 0.0, 0.05), deadK);
+      Tl.lerp(cl, crawl);
     }
-    if (this.skillT > 0 && this.skillKind === 'ult') {
-      const u = Math.sin((1 - this.skillT / this.skillDur) * Math.PI);
-      this.headG.rotation.x -= 0.3 * u;
-      sq += 0.08 * u;
-    }
+    const KA = kk(30);
+    Tr.set(d(C_TR, Tr.x, KA), d(C_TR + 1, Tr.y, KA), d(C_TR + 2, Tr.z, KA));
+    Tl.set(d(C_TL, Tl.x, KA), d(C_TL + 1, Tl.y, KA), d(C_TL + 2, Tl.z, KA));
+    this.ik(this.armR, Tr);
+    this.ik(this.armL, Tl);
+    this.chInit = true;
 
-    // ---- gục: nằm sấp bò lết / tử trận nằm ngửa ----
-    const dead = P.down === 2;
-    if (this.crawlK > 0.02) {
-      const c = this.crawlK;
-      this.hips.position.y = this.hips.position.y * (1 - c) + 0.3 * c;
-      this.hips.rotation.x = (dead ? -1.5 : 1.45) * c;
-      this.spine.rotation.y *= 1 - c;
-      this.chestG.rotation.x = this.chestG.rotation.x * (1 - c) + (dead ? 0 : -0.2) * c;
-      this.chestG.rotation.z *= 1 - c;
-      this.neck.rotation.x = (dead ? 0.2 : -0.45) * c;
-      sq = sq * (1 - c) + c;
-      const crawl = Math.sin(t * 5) * Math.min(1, speed / 0.8);
-      this.thL.rotation.x = 0.15 + crawl * 0.35;
-      this.thR.rotation.x = 0.15 - crawl * 0.35;
-      this.knL.rotation.x = 0.3 + Math.max(0, crawl) * 0.6;
-      this.knR.rotation.x = 0.3 + Math.max(0, -crawl) * 0.6;
-      this.gunPose.visible = c < 0.5;
-      // tay với ra trước (bò) / giơ lên cầu cứu
-      this.aim.rotation.set(0, 0, 0);
-      this.pose(this.shR, this.armR, this.handR, dead ? -0.3 : -2.6 + crawl * 0.5, dead ? 1.2 : 0.2);
-      this.pose(this.shL, this.armL, this.handL, dead ? -0.2 : -2.6 - crawl * 0.5, dead ? -1.2 : -0.2);
-      if (!dead && speed < 0.3) this.pose(this.shR, this.armR, this.handR, -2.9 + Math.sin(t * 3) * 0.25, 0.3, 0.38);
-    }
-    const sxz = 1 / Math.sqrt(sq);
-    this.chestG.scale.set(sxz, sq, sxz);
-
-    // ---- chớp mắt (tử trận thì nhắm hẳn) ----
+    // ---- chớp mắt (đường cong trơn; tử trận thì nhắm hẳn) ----
     const bl = (t * 0.27 + this.blinkOff) % 1;
-    const ey = dead ? 0.15 : bl < 0.035 ? 0.2 : 1.35;
+    const blink = bl < 0.045 ? Math.sin((bl / 0.045) * Math.PI) : 0;
+    const ey = lerp(1.35 - blink * 1.15, 0.15, deadK);
     for (const e of this.eyes) e.scale.y = ey;
-    this.lastY = P.y;
   }
 
   muzzleWorld(out: THREE.Vector3) {

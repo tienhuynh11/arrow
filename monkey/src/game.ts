@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { GameModel } from '@shared/monkey/client';
-import { CLASSES, MK_NO, MK_VUA, MONKEYS, WEAPONS, headY } from '@shared/monkey/content';
+import { CLASSES, MK_NO, MK_VUA, MONKEYS, headY, reloadTicks, weaponOf } from '@shared/monkey/content';
 import { PLAYER_SPAWNS, rayWorld } from '@shared/monkey/map';
 import {
   FX_BUILD, FX_EXPLODE, FX_HEAL, FX_PICK, FX_PLAYERHIT, FX_REPAIR, FX_ROAR, FX_SHOCK, FX_SLAM, FX_SPLAT, FX_STOMP,
@@ -134,20 +134,29 @@ export class Game {
         const cls = CLASSES[this.players.find((p) => p.idx === m.i)?.cls ?? 0];
         hud.feed(`${cls.q.icon} ${name(m.i)}: ${cls.q.name}!`, 'gold');
         this.avatars.get(m.i ?? -1)?.skill('ult');
+        if (cls.id === 'xathu' && m.i === this.me) {
+          // phát bắn thần của chính mình: server không gửi lại vệt đạn của mình → tự vẽ
+          this.avatars.get(this.me)?.muzzleWorld(tmpV);
+          const yaw = (this.model.pred.yaw / 65536) * Math.PI * 2;
+          const pt = (this.model.pred.pitch / 65536) * Math.PI * 2;
+          const d = 90;
+          tmpV2.set(tmpV.x + Math.sin(yaw) * Math.cos(pt) * d, tmpV.y + Math.sin(pt) * d, tmpV.z + Math.cos(yaw) * Math.cos(pt) * d);
+          this.s3.fx.tracer(tmpV.x, tmpV.y, tmpV.z, tmpV2.x, tmpV2.y, tmpV2.z, 0xc4b5fd, 0.18);
+        }
         A.sfxUlt();
         break;
       }
       case 'skill': {
         const av = this.avatars.get(m.i ?? -1);
         const id = CLASSES[this.players.find((p) => p.idx === m.i)?.cls ?? 0].id;
-        if (av) av.skill(m.s === 'g' ? (id === 'dausi' ? 'stomp' : id === 'kysu' ? 'build' : 'throw') : id === 'dausi' ? 'brace' : 'build');
+        if (av) av.skill(m.s === 'g' ? (id === 'dausi' ? 'stomp' : id === 'kysu' ? 'build' : 'throw') : id === 'dausi' || id === 'xathu' ? 'brace' : id === 'phaothu' ? 'throw' : id === 'caoboi' ? 'stomp' : 'build');
         break;
       }
       case 'buy':
         if (m.i === this.me) {
           A.sfxBuy();
-          hud.feed(m.s === 'weapon' ? `🔫 ${WEAPONS[m.v ?? 0].name}` : `❤️ Máu bậc ${m.v}`, 'gold');
-        } else hud.feed(`${name(m.i)} nâng ${m.s === 'weapon' ? WEAPONS[m.v ?? 0].short : 'máu'}`, '');
+          hud.feed(m.s === 'weapon' ? `🔫 ${weaponOf(this.model.pred.cls, m.v ?? 0).name}` : `❤️ Máu bậc ${m.v}`, 'gold');
+        } else hud.feed(`${name(m.i)} nâng ${m.s === 'weapon' ? weaponOf(this.players.find((p) => p.idx === m.i)?.cls ?? 0, m.v ?? 0).short : 'máu'}`, '');
         break;
       case 'nocash':
         A.sfxDeny();
@@ -240,10 +249,10 @@ export class Game {
       if (inf) a.setTier(inf.tier);
       if (p.idx === this.me) {
         const sp2 = Math.hypot(m.pred.vx, m.pred.vz);
-        const rl = m.pred.reloadT > 0 ? 1 - m.pred.reloadT / WEAPONS[m.pred.tier].reload : -1;
+        const rl = m.pred.reloadT > 0 ? 1 - m.pred.reloadT / reloadTicks(m.pred.cls, m.pred.tier) : -1;
         a.update({
           x: m.rx, y: m.ry, z: m.rz, yaw, pitch, dt, t: now / 1000, down, ads,
-          sprint: sp2 > 7, brace: m.pred.braceT > 0, rage: !!inf && inf.shield > 0,
+          sprint: sp2 > 7, brace: m.pred.braceT > 0 && CLASSES[m.pred.cls].id === 'dausi', rage: !!inf && inf.shield > 0,
           reviving: (this.inp.btn & B_USE) !== 0 && !!inf && (inf.flags & PF_REVIVING) !== 0, reload: rl,
         });
         a.setVisible(dist > 1.1);
@@ -251,8 +260,8 @@ export class Game {
         a.update({
           x: m.oX[p.idx], y: m.oY[p.idx], z: m.oZ[p.idx], yaw: m.oYaw[p.idx], pitch: m.oPitch[p.idx], dt, t: now / 1000,
           down: inf.flags & PF_DOWN_MASK, ads: (inf.flags & PF_ADS) !== 0, sprint: (inf.flags & PF_SPRINT) !== 0,
-          brace: (inf.flags & PF_BRACE) !== 0, rage: inf.shield > 0, reviving: (inf.flags & PF_REVIVING) !== 0,
-          reload: inf.reloadT > 0 ? 1 - inf.reloadT / WEAPONS[inf.tier].reload : -1,
+          brace: (inf.flags & PF_BRACE) !== 0 && CLASSES[p.cls].id === 'dausi', rage: inf.shield > 0, reviving: (inf.flags & PF_REVIVING) !== 0,
+          reload: inf.reloadT > 0 ? 1 - inf.reloadT / reloadTicks(p.cls, inf.tier) : -1,
         });
       }
     }
@@ -310,7 +319,7 @@ export class Game {
     for (const e of m.fx) {
       switch (e.k) {
         case 'fire': {
-          const w = WEAPONS[e.a];
+          const w = weaponOf(m.pred.cls, e.a);
           A.sfxGun(w.sound, 1, 0);
           meAv.kick();
           meAv.muzzleWorld(tmpV);
@@ -322,7 +331,7 @@ export class Game {
         case 'tracer': {
           meAv.muzzleWorld(tmpV);
           const tier = m.pred.tier;
-          if (WEAPONS[tier].splashR > 0) {
+          if (weaponOf(m.pred.cls, tier).splashR > 0) {
             const dx = e.x - tmpV.x, dy = e.y - tmpV.y, dz = e.z - tmpV.z;
             const d = Math.hypot(dx, dy, dz) || 1;
             fx.ownShells.push({ x: tmpV.x, y: tmpV.y, z: tmpV.z, dx: dx / d, dy: dy / d, dz: dz / d, dist: d, t: 0, boom: true });
@@ -384,7 +393,7 @@ export class Game {
           const d = e.x;
           tmpV2.set(tmpV.x + Math.sin(yaw) * Math.cos(pt) * d, tmpV.y + Math.sin(pt) * d, tmpV.z + Math.cos(yaw) * Math.cos(pt) * d);
           const inf = shooter < 100 ? m.info[shooter] : null;
-          const w = inf ? WEAPONS[inf.tier] : null;
+          const w = inf ? weaponOf(inf.cls, inf.tier) : null;
           if (!w || w.splashR === 0) fx.tracer(tmpV.x, tmpV.y, tmpV.z, tmpV2.x, tmpV2.y, tmpV2.z, shooter >= 100 ? 0x9cff9c : SHOT_COLORS[shooter & 3], 0.07);
           fx.muzzleFlash(tmpV, false, !!w && w.pellets > 1);
           const [vol, pan] = this.spatial(tmpV.x, tmpV.z);
@@ -395,7 +404,7 @@ export class Game {
           this.worldFx(e.a, e.x, e.z, e.b, e.c);
           break;
         case 'reload':
-          A.sfxReload(m.pred.tier);
+          A.sfxReload(weaponOf(m.pred.cls, m.pred.tier).pellets > 1 ? 2 : 0);
           break;
         case 'jump':
           A.sfxJump();

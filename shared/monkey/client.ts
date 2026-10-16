@@ -4,7 +4,7 @@
 //  - Đồng hồ hiển thị (renderTick) gửi kèm mỗi lệnh để server bù trễ khi bắn.
 
 import { AI_MS, DT, MAX_MONKEYS, TICK_HZ } from './config.js';
-import { CLASSES, HEAD_MUL, MONKEYS, WEAPONS, bodyR, bodyY, headR, headY, waveSpec } from './content.js';
+import { CLASSES, MONKEYS, bodyR, bodyY, headR, headY, waveSpec, weaponOf } from './content.js';
 import { rayWorld } from './map.js';
 import {
   EN_PICKUP,
@@ -172,6 +172,11 @@ export class GameModel {
   }
 
   /* ======================= ĐỒNG HỒ ======================= */
+  /** server vừa tạm dừng/chạy tiếp: tick nhảy so với đồng hồ thật → đồng bộ lại từ đầu */
+  resetClock() {
+    this.baseInit = false;
+  }
+
   private clockSample(tick: number, nowMs: number) {
     const sample = tick - nowMs / AI_MS;
     if (!this.baseInit) {
@@ -543,7 +548,9 @@ export class GameModel {
   /** bắn thử ở client lên khỉ đang hiển thị → vệt đạn + dấu trúng tức thì */
   private predictShot(c: Cmd) {
     const s = this.pred;
-    const w = WEAPONS[s.tier];
+    const w = weaponOf(s.cls, s.tier);
+    const cd = CLASSES[s.cls];
+    const mul = this.dmgMul * (s.braceT > 0 ? cd.buff.dmg : 1);
     shotOrigin(s, this.tmpO);
     const n = pelletDirs(s, c, this.me, this.tmpD);
     const ox = this.tmpO[0], oy = this.tmpO[1], oz = this.tmpO[2];
@@ -576,9 +583,9 @@ export class GameModel {
         this.predictedHits++;
         this.mFlash[hit] = 90;
         // ghi sát thương dự đoán (cùng công thức server) để biết khỉ "chắc đã chết" mà chưa kịp xác nhận
-        let dmg = w.dmg * this.dmgMul;
+        let dmg = w.dmg * mul;
         if (best > w.falloff) dmg *= 1 - 0.6 * Math.min(1, (best - w.falloff) / Math.max(1, w.range - w.falloff));
-        if (crit) dmg *= HEAD_MUL;
+        if (crit) dmg *= cd.headMul;
         const k = hit * PD_N + (this.pdHead[hit]++ % PD_N);
         this.pdT[k] = this.nowMs;
         this.pdV[k] = dmg + (w.splashR > 0 ? w.splashDmg : 0);

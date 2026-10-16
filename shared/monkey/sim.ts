@@ -3,7 +3,7 @@
 // client hoà giải (reconcile) bằng cách lấy trạng thái server rồi chạy lại các lệnh chưa được xác nhận.
 
 import { DT } from './config.js';
-import { CLASSES, WEAPONS } from './content.js';
+import { CLASSES, reloadTicks, weaponOf } from './content.js';
 import { collide, PLAYER_R } from './map.js';
 import { hash2, icos, isin, mulberry32 } from './math.js';
 
@@ -66,7 +66,7 @@ export interface PState {
 export function newState(cls: number, x: number, z: number): PState {
   return {
     x, z, y: 0, vx: 0, vz: 0, vy: 0, ground: 1, yaw: 0, pitch: 0,
-    tier: 0, ammo: WEAPONS[0].mag, fireCd: 0, reloadT: 0, braceT: 0, down: 0, cls,
+    tier: 0, ammo: weaponOf(cls, 0).mag, fireCd: 0, reloadT: 0, braceT: 0, down: 0, cls,
   };
 }
 
@@ -114,7 +114,8 @@ export function isSprinting(s: PState, c: Cmd) {
 export function step(s: PState, c: Cmd): number {
   let out = 0;
   const cls = CLASSES[s.cls];
-  const w = WEAPONS[s.tier];
+  const w = weaponOf(s.cls, s.tier);
+  const buffed = s.braceT > 0;
   s.yaw = c.yaw & 0xffff;
   let p = c.pitch;
   if (p > 13000) p = 13000;
@@ -143,7 +144,7 @@ export function step(s: PState, c: Cmd): number {
   else {
     if (sprint) speed *= SPRINT_MUL;
     else if (c.btn & B_ADS) speed *= ADS_MUL;
-    if (s.braceT > 0) speed *= 0.75;
+    if (buffed) speed *= cls.buff.slow;
   }
   const fx = isin(s.yaw);
   const fz = icos(s.yaw);
@@ -185,21 +186,22 @@ export function step(s: PState, c: Cmd): number {
     s.reloadT--;
     if (s.reloadT === 0) s.ammo = w.mag;
   }
+  const reload = reloadTicks(s.cls, s.tier);
   if ((c.btn & B_RELOAD) && s.reloadT === 0 && s.ammo < w.mag) {
-    s.reloadT = w.reload;
+    s.reloadT = reload;
     out |= F_RELOAD;
   }
   if ((c.btn & B_FIRE) && !sprint && s.reloadT === 0) {
     if (s.ammo > 0 && s.fireCd === 0) {
-      s.ammo--;
-      s.fireCd += w.interval;
+      if (!(buffed && cls.buff.freeAmmo)) s.ammo--;
+      s.fireCd += buffed ? Math.round(w.interval * cls.buff.fireMul) : w.interval;
       out |= F_FIRED;
       if (s.ammo === 0) {
-        s.reloadT = w.reload;
+        s.reloadT = reload;
         out |= F_RELOAD;
       }
     } else if (s.ammo === 0) {
-      s.reloadT = w.reload;
+      s.reloadT = reload;
       out |= F_RELOAD | F_EMPTY;
     }
   }
@@ -217,7 +219,7 @@ export function shotOrigin(s: PState, out: Float64Array) {
 
 /** hệ số tản theo tư thế */
 export function spreadOf(s: PState, c: Cmd) {
-  const w = WEAPONS[s.tier];
+  const w = weaponOf(s.cls, s.tier);
   let k = 1;
   if (c.btn & B_ADS) k *= 0.45;
   const sp2 = s.vx * s.vx + s.vz * s.vz;
@@ -231,7 +233,7 @@ export function spreadOf(s: PState, c: Cmd) {
  * Dùng PRNG seed theo (người chơi, seq) nên client và server ra cùng hướng.
  */
 export function pelletDirs(s: PState, c: Cmd, playerIdx: number, out: Float64Array): number {
-  const w = WEAPONS[s.tier];
+  const w = weaponOf(s.cls, s.tier);
   const spread = spreadOf(s, c);
   const sy = isin(s.yaw);
   const cy = icos(s.yaw);

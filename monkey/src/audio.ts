@@ -131,6 +131,16 @@ export function sfxGun(kind: string, vol = 1, pan = 0) {
       noiseBurst(o, 0.16, 'bandpass', 1400, 400, 1, 0.7);
       tone(o, 'sine', 160, 55, 0.12, 0.8);
       break;
+    case 'revolver':
+      noiseBurst(o, 0.16, 'bandpass', 2000, 500, 0.8, 1);
+      tone(o, 'sine', 150, 50, 0.16, 0.9);
+      noiseBurst(o, 0.04, 'highpass', 4200, 3000, 0.7, 0.35, 0.05);
+      break;
+    case 'sniper':
+      noiseBurst(o, 0.08, 'highpass', 3600, 2000, 0.7, 1);
+      noiseBurst(o, 0.45, 'lowpass', 1600, 120, 1, 1);
+      tone(o, 'sine', 110, 35, 0.4, 1);
+      break;
     case 'launcher':
       tone(o, 'sine', 140, 45, 0.28, 1);
       noiseBurst(o, 0.22, 'lowpass', 900, 150, 1, 0.9);

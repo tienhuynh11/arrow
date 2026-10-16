@@ -2,7 +2,7 @@
 // Chỉ đọc GameModel (đúng những gì một client thật nhìn thấy) rồi trả input như người chơi.
 
 import { GameModel } from '../../shared/monkey/client.js';
-import { CLASSES, HP_TIER_COST, MAX_HP_TIER, MAX_TIER, ULT_KILLS, WEAPONS, bodyY } from '../../shared/monkey/content.js';
+import { CLASSES, HP_TIER_COST, MAX_HP_TIER, MAX_TIER, ULT_KILLS, bodyY, weaponOf } from '../../shared/monkey/content.js';
 import { ARENA } from '../../shared/monkey/map.js';
 import { FX_SHOCK, PF_DOWN_MASK } from '../../shared/monkey/proto.js';
 import { B_FIRE, B_JUMP, B_RELOAD, B_SPRINT, B_USE, EYE_Y, P_C, P_G, P_Q, P_V, P_X } from '../../shared/monkey/sim.js';
@@ -86,7 +86,7 @@ export class BotBrain {
       this.yawRad += dyaw * 0.35 + (this.rng() - 0.5) * this.aimNoise;
       this.pitchRad += (tp - this.pitchRad) * 0.35 + (this.rng() - 0.5) * this.aimNoise * 0.5;
       const aimed = Math.abs(dyaw) < 0.12;
-      const w = WEAPONS[me?.tier ?? 0];
+      const w = weaponOf(me?.cls ?? 0, me?.tier ?? 0);
       if (aimed && d < w.range * 0.9 && !down) out.btn |= B_FIRE;
       // thả diều: lùi ra khi khỉ áp sát, đi ngang
       if (now - this.strafeAt > 1800 + this.rng() * 1500) { this.strafe = -this.strafe; this.strafeAt = now; }
@@ -104,7 +104,7 @@ export class BotBrain {
       // không thấy khỉ: về gần giữa sân
       const d = Math.hypot(x, z);
       if (d > 8) { wantX = -x / d; wantZ = -z / d; }
-      if (me && me.ammo < WEAPONS[me.tier].mag * 0.6) out.btn |= B_RELOAD;
+      if (me && me.ammo < weaponOf(me.cls, me.tier).mag * 0.6) out.btn |= B_RELOAD;
     }
     // né mép sân
     const edge = ARENA - 4;
@@ -150,7 +150,7 @@ export class BotBrain {
     // ---- mua sắm + kỹ năng ----
     if (me && !down && now - this.lastBuy > 700) {
       const cls = CLASSES[me.cls];
-      const wc = me.tier < MAX_TIER ? WEAPONS[me.tier + 1].cost : 1e9;
+      const wc = me.tier < MAX_TIER ? weaponOf(me.cls, me.tier + 1).cost : 1e9;
       const hc = me.hpTier < MAX_HP_TIER ? HP_TIER_COST[me.hpTier + 1] : 1e9;
       if (me.cash >= wc && (wc <= hc * 1.6 || me.cash >= wc + hc)) { out.btn |= P_V; this.lastBuy = now; }
       else if (me.cash >= hc && me.cash - hc > 40 && hc * 1.6 < wc) { out.btn |= P_C; this.lastBuy = now; }

@@ -27,7 +27,7 @@ import {
   headR,
   headY,
 } from '../../../shared/monkey/content.js';
-import { ARENA, BOXES, CIRCLES, PLAYER_R, SPAWNS, collide, losBlocked, rayWorld } from '../../../shared/monkey/map.js';
+import { ARENA, BOXES, CIRCLES, MAX_ARENA, PLAYER_R, SPAWNS, collide, losBlocked, rayWorld } from '../../../shared/monkey/map.js';
 import {
   EN_BARRICADE,
   EN_FLARE,
@@ -99,12 +99,13 @@ export interface Ent {
 }
 
 interface Shock { x: number; z: number; t0: number; hit: number; dmg: number }
-interface Boom { x: number; z: number; at: number; r: number; dmg: number; owner: number }
+/** vụ nổ hẹn giờ (không kích, pháo cối, bom choáng). stun: giây choáng khỉ trong bán kính */
+export interface Boom { x: number; z: number; at: number; r: number; dmg: number; owner: number; stun?: number }
 
 const CELL = 2; // ô spatial hash (m)
-const GRID = Math.ceil((ARENA * 2) / CELL) + 2;
+const GRID = Math.ceil((MAX_ARENA * 2) / CELL) + 2;
 const FF = 1; // ô flow field (m)
-const FN = Math.ceil((ARENA * 2) / FF);
+const FN = Math.ceil((MAX_ARENA * 2) / FF);
 const MAXP = 64;
 const NB = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 
@@ -509,9 +510,30 @@ export class MonkeyWorld {
       const b = this.booms[i];
       if (now >= b.at) {
         this.explode(b.x, b.z, b.r, b.dmg, b.owner, 0);
+        if (b.stun) this.stunArea(b.x, b.z, b.r, b.stun);
         this.booms.splice(i, 1);
       }
     }
+  }
+
+  /** choáng mọi khỉ (trừ Vua) trong bán kính r; cone>0: chỉ trong nón quanh hướng (fx,fz), cos nửa góc = cone */
+  stunArea(x: number, z: number, r: number, secs: number, fx = 0, fz = 0, cone = 0): number {
+    let n = 0;
+    for (let i = 0; i < MAX_MONKEYS; i++) {
+      if (!this.alive[i] || this.type[i] === MK_VUA) continue;
+      const dx = this.x[i] - x, dz = this.z[i] - z;
+      const rr = r + MONKEYS[this.type[i]].r;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > rr * rr) continue;
+      if (cone > 0) {
+        const d = Math.sqrt(d2) || 1;
+        if ((dx * fx + dz * fz) / d < cone) continue;
+      }
+      this.stT[i] = this.st[i] === ST_STUN ? Math.max(this.stT[i], secs) : secs;
+      this.st[i] = ST_STUN;
+      n++;
+    }
+    return n;
   }
 
   private airstrike(e: Ent) {
@@ -553,9 +575,10 @@ export class MonkeyWorld {
     const pad = 0.45;
     for (let j = 0; j < FN; j++) {
       for (let i = 0; i < FN; i++) {
-        const x = -ARENA + (i + 0.5) * FF;
-        const z = -ARENA + (j + 0.5) * FF;
-        let b = 0;
+        const x = -MAX_ARENA + (i + 0.5) * FF;
+        const z = -MAX_ARENA + (j + 0.5) * FF;
+        // ngoài sân của bản đồ hiện tại = chặn (lưới cấp phát theo sân lớn nhất)
+        let b = x < -ARENA + 0.3 || x > ARENA - 0.3 || z < -ARENA + 0.3 || z > ARENA - 0.3 ? 1 : 0;
         for (const c of CIRCLES) {
           const dx = x - c.x, dz = z - c.z;
           if (dx * dx + dz * dz < (c.r + pad) * (c.r + pad)) { b = 1; break; }
@@ -569,8 +592,8 @@ export class MonkeyWorld {
   }
 
   private cellOf(x: number, z: number) {
-    let i = Math.floor((x + ARENA) / FF);
-    let j = Math.floor((z + ARENA) / FF);
+    let i = Math.floor((x + MAX_ARENA) / FF);
+    let j = Math.floor((z + MAX_ARENA) / FF);
     if (i < 0) i = 0; else if (i >= FN) i = FN - 1;
     if (j < 0) j = 0; else if (j >= FN) j = FN - 1;
     return j * FN + i;
@@ -620,7 +643,7 @@ export class MonkeyWorld {
       if (this.ffDist[n] < best) { best = this.ffDist[n]; bi = ni; bj = nj; }
     }
     if (bi < 0) return false;
-    const tx = -ARENA + (bi + 0.5) * FF, tz = -ARENA + (bj + 0.5) * FF;
+    const tx = -MAX_ARENA + (bi + 0.5) * FF, tz = -MAX_ARENA + (bj + 0.5) * FF;
     const dx = tx - x, dz = tz - z;
     const d = Math.sqrt(dx * dx + dz * dz) || 1;
     this.fdir[0] = dx / d;
@@ -836,8 +859,8 @@ export class MonkeyWorld {
       this.kx[i] *= 0.75;
       this.kz[i] *= 0.75;
       // tách nhau (spatial hash)
-      const ci = Math.floor((this.x[i] + ARENA) / CELL) + 1;
-      const cj = Math.floor((this.z[i] + ARENA) / CELL) + 1;
+      const ci = Math.floor((this.x[i] + MAX_ARENA) / CELL) + 1;
+      const cj = Math.floor((this.z[i] + MAX_ARENA) / CELL) + 1;
       for (let oj = -1; oj <= 1; oj++) {
         for (let oi = -1; oi <= 1; oi++) {
           const gi = ci + oi, gj = cj + oj;
@@ -983,8 +1006,8 @@ export class MonkeyWorld {
     this.cellHead.fill(-1);
     for (let i = 0; i < MAX_MONKEYS; i++) {
       if (!this.alive[i]) continue;
-      let gi = Math.floor((this.x[i] + ARENA) / CELL) + 1;
-      let gj = Math.floor((this.z[i] + ARENA) / CELL) + 1;
+      let gi = Math.floor((this.x[i] + MAX_ARENA) / CELL) + 1;
+      let gj = Math.floor((this.z[i] + MAX_ARENA) / CELL) + 1;
       if (gi < 0) gi = 0; else if (gi >= GRID) gi = GRID - 1;
       if (gj < 0) gj = 0; else if (gj >= GRID) gj = GRID - 1;
       const c = gj * GRID + gi;

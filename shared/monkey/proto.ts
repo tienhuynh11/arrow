@@ -20,29 +20,34 @@ export interface EndStat { idx: number; name: string; cls: number; kills: number
 
 export type CMsg =
   | { t: 'ping'; c: number }
-  | { t: 'create'; name: string; cls: number; solo: boolean }
+  | { t: 'create'; name: string; cls: number; solo: boolean; /** id bản đồ hoặc 'random' */ map?: string }
   | { t: 'join'; code: string; name: string; cls: number }
   | { t: 'rejoin'; code: string; pid: string; token: string }
   | { t: 'leave' }
   | { t: 'cls'; cls: number }
   | { t: 'ready'; r: boolean }
   | { t: 'start' }
+  /** chủ phòng chọn bản đồ (id hoặc 'random') */
+  | { t: 'map'; id: string }
   | { t: 'buy'; item: 'weapon' | 'hp' }
   | { t: 'bready'; r: boolean }
   | { t: 'again' }
+  /** chơi đơn: tạm dừng thật (khỉ đứng im) */
+  | { t: 'pause'; p: boolean }
   | { t: 'lb' };
 
 export type SMsg =
   | { t: 'welcome'; st: number }
   | { t: 'pong'; c: number; st: number }
   | { t: 'joined'; code: string; pid: string; token: string; idx: number; solo: boolean }
-  | { t: 'room'; code: string; phase: 'lobby' | 'play' | 'over'; solo: boolean; host: number; players: LobbyPlayer[] }
-  | { t: 'start'; seed: number; players: { idx: number; name: string; cls: number }[]; tick: number }
+  | { t: 'room'; code: string; phase: 'lobby' | 'play' | 'over'; solo: boolean; host: number; players: LobbyPlayer[]; /** lựa chọn bản đồ trong sảnh: id hoặc 'random' */ map: string }
+  | { t: 'start'; seed: number; players: { idx: number; name: string; cls: number }[]; tick: number; /** id bản đồ đã chốt */ map: string }
   | { t: 'wave'; n: number; phase: 'fight' | 'break'; ends: number; total: number; boss: boolean; ready: number[] }
   | { t: 'ev'; k: string; i?: number; j?: number; v?: number; s?: string }
   | { t: 'over'; wave: number; score: number; kills: number; rank: number; secs: number; stats: EndStat[]; board: BoardEntry[] }
   | { t: 'lb'; solo: BoardEntry[]; team: BoardEntry[] }
   | { t: 'err'; m: string }
+  | { t: 'paused'; p: boolean }
   | { t: 'left' };
 
 /* ============================ NHỊ PHÂN ============================ */

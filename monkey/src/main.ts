@@ -2,7 +2,7 @@
 
 import './styles.css';
 import { GameModel } from '@shared/monkey/client';
-import { CLASSES, MK_CHAY, MK_DOT, MK_NAU, MK_NEM, MK_NO, MK_TRANG, ULT_KILLS, WEAPONS } from '@shared/monkey/content';
+import { CLASSES, MK_CHAY, MK_DOT, MK_NAU, MK_NEM, MK_NO, MK_TRANG, ULT_KILLS } from '@shared/monkey/content';
 import { CODE_LEN, GAME_TITLE, MAX_PLAYERS, NAME_MAX } from '@shared/monkey/config';
 import { ST_MOVE, ST_THROW, ST_WIND, type BoardEntry, type LobbyPlayer, type SMsg } from '@shared/monkey/proto';
 import * as A from './audio';
@@ -13,6 +13,7 @@ import { Fx } from './render/fx';
 import { Avatar } from './render/avatars';
 import { MonkeyRenderer } from './render/monkeys';
 import { Stage, blobTex as blobTexture, resolveQuality } from './render/scene';
+import { MAPS, MAP_RANDOM, isMapChoice, setActiveMap } from '@shared/monkey/map';
 import { keyLabel, onSettings, sessionGet, sessionSet, settings, store } from './settings';
 import { CLASS_ICON, clear, clsColor, clsIcon, fmt, h, timeStr, toast } from './ui/dom';
 import { openSettings } from './ui/settingsUi';
@@ -53,7 +54,10 @@ let name = store('monkey-name') ?? '';
 let myCls = Number(store('monkey-cls') ?? 0) || 0;
 if (!(myCls >= 0 && myCls < CLASSES.length)) myCls = 0;
 let screen: 'home' | 'lobby' | 'game' | 'over' = 'home';
-let room: { code: string; phase: string; solo: boolean; host: number; players: LobbyPlayer[] } | null = null;
+let room: { code: string; phase: string; solo: boolean; host: number; players: LobbyPlayer[]; map: string } | null = null;
+/** bản đồ muốn chơi (dùng khi tạo phòng / chơi đơn) */
+let myMap = store('monkey-map') ?? MAP_RANDOM;
+if (!isMapChoice(myMap)) myMap = MAP_RANDOM;
 let meIdx = -1;
 let game: Game | null = null;
 let lb: { solo: BoardEntry[]; team: BoardEntry[] } = { solo: [], team: [] };
@@ -99,7 +103,8 @@ net.onJson = (m) => {
       sessionSet('monkey-session', JSON.stringify({ code: m.code, pid: m.pid, token: m.token }));
       return;
     case 'room':
-      room = { code: m.code, phase: m.phase, solo: m.solo, host: m.host, players: m.players };
+      room = { code: m.code, phase: m.phase, solo: m.solo, host: m.host, players: m.players, map: m.map };
+      if (m.phase === 'lobby' && m.map !== MAP_RANDOM) stage.setMap(m.map); // xem trước bản đồ làm nền sảnh
       if (m.phase === 'lobby' && !m.solo && screen !== 'lobby') {
         endGame();
         screen = 'lobby';
@@ -108,7 +113,12 @@ net.onJson = (m) => {
       if (game) game.players.forEach(() => {});
       return;
     case 'start':
+      setActiveMap(m.map);
+      stage.setMap(m.map);
       startGame(m.players);
+      return;
+    case 'paused':
+      game?.model.resetClock();
       return;
     case 'over':
       lastOver = m;
@@ -140,7 +150,7 @@ function nameOk() {
   return true;
 }
 
-function classPicker(onPick: (c: number) => void, cur: number) {
+function characterPicker(onPick: (c: number) => void, cur: number) {
   const wrap = h('div');
   const grid = h('div', { class: 'classes' });
   const info = h('div', { class: 'clsinfo' });
@@ -154,10 +164,33 @@ function classPicker(onPick: (c: number) => void, cur: number) {
     info.append(
       h('b', null, `${c.name} — `), c.desc, h('br'),
       h('span', { class: 'k' }, '♥'), `${c.hp} máu · ${c.passive}`, h('br'),
-      h('span', { class: 'k' }, keyLabel(settings.keys.skillG)), `${c.g.icon} ${c.g.name} (${c.g.cost} xu) `,
-      h('span', { class: 'k' }, keyLabel(settings.keys.skillX)), `${c.x.icon} ${c.x.name} (${c.x.cost} xu) `,
-      h('span', { class: 'k' }, keyLabel(settings.keys.ult)), `${c.q.icon} ${c.q.name}`,
+      h('span', { class: 'k' }, '🔫'), c.weapons.map((w) => w.short).join(' → '), h('br'),
+      h('span', { class: 'k' }, keyLabel(settings.keys.skillG)), h('span', { title: c.g.desc }, `${c.g.icon} ${c.g.name} (${c.g.cost} xu) `),
+      h('span', { class: 'k' }, keyLabel(settings.keys.skillX)), h('span', { title: c.x.desc }, `${c.x.icon} ${c.x.name} (${c.x.cost} xu) `),
+      h('span', { class: 'k' }, keyLabel(settings.keys.ult)), h('span', { title: c.q.desc }, `${c.q.icon} ${c.q.name}`),
     );
+  };
+  draw();
+  wrap.append(grid, info);
+  return wrap;
+}
+
+/** chọn bản đồ: "Ngẫu nhiên" + từng bản đồ; editable = false → chỉ xem (người không phải chủ phòng) */
+function mapPicker(cur: string, editable: boolean, onPick: (id: string) => void) {
+  const wrap = h('div');
+  const grid = h('div', { class: `maps${editable ? '' : ' ro'}` });
+  const info = h('div', { class: 'mapinfo' });
+  const opts = [
+    { id: MAP_RANDOM, emoji: '🎲', name: 'Ngẫu nhiên', sub: 'bốc thăm', desc: 'Máy chủ bốc thăm một bản đồ khi bắt đầu trận.' },
+    ...MAPS.map((m) => ({ id: m.id, emoji: m.emoji, name: m.name, sub: `${m.arena * 2}×${m.arena * 2} m`, desc: m.desc })),
+  ];
+  const draw = () => {
+    clear(grid);
+    for (const o of opts) {
+      grid.append(h('button', { class: `mapc${o.id === cur ? ' on' : ''}`, title: o.desc, disabled: !editable && o.id !== cur, onclick: () => { if (!editable || o.id === cur) return; cur = o.id; onPick(o.id); A.sfxUi(); draw(); } }, h('i', null, o.emoji), h('b', null, o.name), h('span', null, o.sub)));
+    }
+    clear(info);
+    info.append((opts.find((o) => o.id === cur) ?? opts[0]).desc);
   };
   draw();
   wrap.append(grid, info);
@@ -209,14 +242,16 @@ function renderHome() {
   app.append(h('div', { class: 'home' },
     h('div', null,
       h('h1', { class: 'logo' }, 'SINH TỒN', h('small', null, 'BẦY KHỈ 🐒')),
-      h('p', { class: 'tag' }, 'Bắn súng sinh tồn co-op 1–4 người. Bầy khỉ ùa ra từ rừng mỗi đợt một đông — hạ khỉ kiếm xu, nâng cấp súng, dùng kỹ năng lớp và đỡ đồng đội dậy. Trụ được bao nhiêu đợt?'),
+      h('p', { class: 'tag' }, 'Bắn súng sinh tồn co-op 1–4 người. Bầy khỉ ùa ra từ rừng mỗi đợt một đông — hạ khỉ kiếm xu, nâng cấp súng, dùng kỹ năng nhân vật và đỡ đồng đội dậy. Trụ được bao nhiêu đợt?'),
       h('div', { class: 'card' },
         h('div', { class: 'field' }, h('label', null, 'Tên'), nameIn),
-        h('div', { class: 'field' }, h('label', null, 'Chọn lớp')),
-        classPicker((c) => { myCls = c; store('monkey-cls', String(c)); }, myCls),
+        h('div', { class: 'field' }, h('label', null, 'Chọn nhân vật')),
+        characterPicker((c) => { myCls = c; store('monkey-cls', String(c)); }, myCls),
+        h('div', { class: 'field' }, h('label', null, 'Bản đồ')),
+        mapPicker(myMap, true, (id) => { myMap = id; store('monkey-map', id); }),
         h('div', { class: 'row' },
-          h('button', { class: 'btn big grow', onclick: () => { A.initAudio(); if (nameOk()) net.send({ t: 'create', name: name.trim(), cls: myCls, solo: true }); } }, '▶ CHƠI MỘT MÌNH'),
-          h('button', { class: 'btn green big grow', onclick: () => { A.initAudio(); if (nameOk()) net.send({ t: 'create', name: name.trim(), cls: myCls, solo: false }); } }, '👥 TẠO PHÒNG')),
+          h('button', { class: 'btn big grow', onclick: () => { A.initAudio(); if (nameOk()) net.send({ t: 'create', name: name.trim(), cls: myCls, solo: true, map: myMap }); } }, '▶ CHƠI MỘT MÌNH'),
+          h('button', { class: 'btn green big grow', onclick: () => { A.initAudio(); if (nameOk()) net.send({ t: 'create', name: name.trim(), cls: myCls, solo: false, map: myMap }); } }, '👥 TẠO PHÒNG')),
         h('div', { class: 'row', style: 'margin-top:10px' },
           h('div', { class: 'grow', style: 'font-size:13px;color:var(--dim)' }, 'Có mã phòng của bạn bè?'),
           h('div', { class: 'join' }, codeIn, h('button', { class: 'btn ghost', onclick: join }, 'VÀO PHÒNG'))))),
@@ -266,7 +301,7 @@ function showHelp() {
     li('Bảng điểm · Tạm dừng', `${keyLabel(k.scores)} (giữ) · Esc`),
     li('Xoay camera bằng phím (dự phòng)', `${keyLabel(k.turnLeft)} ${keyLabel(k.turnRight)} ${keyLabel(k.lookUp)} ${keyLabel(k.lookDown)}`),
     h('p', { style: 'color:var(--dim);font-size:13px' }, 'Dùng touchpad trên laptop mà chạy (giữ W A S D) thì không xoay được camera? Đó là Windows tự khoá touchpad khi gõ phím: vào Cài đặt Windows → Bluetooth & thiết bị → Touchpad → Độ nhạy touchpad → "Nhạy nhất", hoặc dùng chuột rời, hoặc xoay bằng phím mũi tên.'),
-    h('p', { style: 'color:var(--dim);font-size:13px' }, `Tuyệt chiêu sạc đầy sau ${ULT_KILLS} con khỉ. Súng có 5 bậc: ${WEAPONS.map((w) => w.short).join(' → ')}.`)));
+    h('p', { style: 'color:var(--dim);font-size:13px' }, `Tuyệt chiêu sạc đầy sau ${ULT_KILLS} con khỉ. Mỗi nhân vật có dòng súng 5 bậc riêng (nâng bằng phím V).`)));
   app.append(root);
   modal(close);
 }
@@ -300,8 +335,10 @@ function renderLobby() {
       h('div', { class: 'grow' }),
       h('button', { class: 'btn ghost sm', onclick: () => { net.send({ t: 'leave' }); } }, '← Rời phòng')),
     slots,
-    h('div', { class: 'field' }, h('label', null, 'Lớp của bạn')),
-    classPicker((c) => { myCls = c; store('monkey-cls', String(c)); net.send({ t: 'cls', cls: c }); }, me?.cls ?? myCls),
+    h('div', { class: 'field' }, h('label', null, 'Nhân vật của bạn')),
+    characterPicker((c) => { myCls = c; store('monkey-cls', String(c)); net.send({ t: 'cls', cls: c }); }, me?.cls ?? myCls),
+    h('div', { class: 'field' }, h('label', null, isHost ? 'Bản đồ' : 'Bản đồ (chủ phòng chọn)')),
+    mapPicker(r.map, isHost, (id) => net.send({ t: 'map', id })),
     h('div', { class: 'row' },
       h('div', { class: 'grow', style: 'color:var(--dim);font-size:13px' },
         isHost ? (notReady.length ? `Đang chờ: ${notReady.map((p) => p.name).join(', ')}` : r.players.length === 1 ? 'Chơi một mình được — hoặc gửi mã cho bạn bè (tối đa 4 người).' : 'Mọi người đã sẵn sàng!') : 'Chủ phòng sẽ bắt đầu khi mọi người sẵn sàng.'),
@@ -418,7 +455,9 @@ function showPause() {
   if (pauseEl || !game) return;
   input.enabled = false;
   input.resetKeys();
+  if (room?.solo) net.send({ t: 'pause', p: true });
   const resume = () => {
+    if (room?.solo) net.send({ t: 'pause', p: false });
     pauseEl?.remove();
     pauseEl = null;
     document.removeEventListener('keydown', onEsc, true);
@@ -433,7 +472,7 @@ function showPause() {
   document.addEventListener('keydown', onEsc, true);
   pauseEl = h('div', { class: 'modal' }, h('div', { class: 'card', style: 'width:min(380px,100%);text-align:center' },
     h('h2', { style: 'justify-content:center' }, 'TẠM DỪNG'),
-    h('p', { style: 'color:var(--dim);margin-top:0' }, room?.solo ? 'Lưu ý: trận vẫn chạy, khỉ không chờ bạn!' : 'Trận vẫn tiếp diễn với đồng đội.'),
+    h('p', { style: 'color:var(--dim);margin-top:0' }, room?.solo ? 'Trận đã dừng lại — khỉ đứng im chờ bạn.' : 'Trận vẫn tiếp diễn với đồng đội (chơi nhiều người không dừng được).'),
     h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
       h('button', { class: 'btn green big', onclick: resume }, '▶ TIẾP TỤC'),
       h('button', { class: 'btn ghost', onclick: () => modal(openSettings(() => (modalClose = null))) }, '⚙ CÀI ĐẶT'),
@@ -579,9 +618,11 @@ if (SHOW !== null) {
   app.style.display = 'none';
   statusEl.style.display = 'none';
   const blob = blobTexture();
-  const avs = [0, 1, 2, 3].map((c) => {
-    const a = new Avatar(c, blob, c);
-    a.setTier([1, 3, 0, 2][c]);
+  // ?showcase=cast: cả 7 nhân vật đứng thành hàng
+  const cast = SHOW === 'cast';
+  const avs = (cast ? [0, 1, 2, 3, 4, 5, 6] : [0, 1, 2, 3]).map((c) => {
+    const a = new Avatar(c, blob, c % 4);
+    a.setTier(cast ? [3, 2, 4, 3, 2, 1, 0][c] : [1, 3, 0, 2][c]);
     stage.scene.add(a.root, a.blob);
     return a;
   });
@@ -596,7 +637,7 @@ if (SHOW !== null) {
     last = now;
     const mode = SHOW || 'all';
     avs.forEach((a, i) => {
-      const x = -3 + i * 2;
+      const x = cast ? -4.5 + i * 1.5 : -3 + i * 2;
       const z = 6.5;
       // mỗi người một tư thế: chạy ngang, chạy lùi, nạp đạn, ngắm bắn
       const run = mode === 'run';
@@ -606,7 +647,7 @@ if (SHOW !== null) {
         dt, t, down: mode === 'down' && i === 0 ? 1 : 0, ads: i === 2, sprint: false, brace: i === 3 && mode === 'skill',
         rage: false, reviving: mode === 'down' && i === 1, reload: i === 1 && mode !== 'down' ? (t * 0.5) % 1 : -1,
       });
-      if (mode === 'skill' && Math.floor(t * 10) % 25 === 0) a.skill((['throw', 'build', 'ult', 'stomp'] as const)[i]);
+      if (mode === 'skill' && Math.floor(t * 10) % 25 === 0) a.skill((['throw', 'build', 'ult', 'stomp'] as const)[i % 4]);
       if (Math.floor(t * 10) % 13 === 0) a.kick();
     });
     types.forEach((type, i) => {
@@ -627,6 +668,9 @@ if (SHOW !== null) {
     if (mode === 'side') {
       cam.position.set(-6.5, 1.1, 6.5);
       cam.lookAt(0, 0.9, 6.5);
+    } else if (mode === 'cast') {
+      cam.position.set(0, 2.6, 1.2);
+      cam.lookAt(0, 0.85, 6.5);
     } else if (mode === 'front') {
       cam.position.set(0, 1.25, 3.2);
       cam.lookAt(0, 0.95, 6.5);

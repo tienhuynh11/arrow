@@ -9,12 +9,12 @@ import {
   BREAK_SECS,
   CLASSES,
   FIRST_BREAK_SECS,
-  HEAD_MUL,
   HP_TIER_BONUS,
   HP_TIER_COST,
   MAX_HP_TIER,
   MAX_TIER,
   MK_DOT,
+  MK_NO,
   MK_VUA,
   MONKEYS,
   REVIVE_HP,
@@ -23,14 +23,15 @@ import {
   START_CASH,
   TEAM_SHARE,
   ULT_KILLS,
-  WEAPONS,
+  bodyY,
   bossHp,
   maxHpOf,
   waveBonus,
   waveSpec,
+  weaponOf,
   type WaveSpec,
 } from '../../../shared/monkey/content.js';
-import { PLAYER_SPAWNS, collide } from '../../../shared/monkey/map.js';
+import { MAPS, MAP_RANDOM, PLAYER_SPAWNS, collide, isMapChoice, rayWorld, mapById, setActiveMap, type MapDef } from '../../../shared/monkey/map.js';
 import { isin, icos } from '../../../shared/monkey/math.js';
 import {
   BIN_SNAP,
@@ -159,6 +160,10 @@ export class MonkeyRoom implements WorldHost {
   phase: 'lobby' | 'play' | 'over' = 'lobby';
   players: (MPlayer | null)[] = [null, null, null, null];
   host = 0;
+  /** lựa chọn bản đồ trong sảnh (id hoặc 'random') */
+  mapChoice: string = MAP_RANDOM;
+  /** bản đồ đã chốt cho ván hiện tại (đặt làm bản đồ hiện hành ở đầu mỗi tick / lệnh) */
+  mapDef: MapDef = MAPS[0];
   world: MonkeyWorld | null = null;
   private loop: NodeJS.Timeout | null = null;
   private w = new Writer(8192);
@@ -290,6 +295,13 @@ export class MonkeyRoom implements WorldHost {
     this.broadcastRoom();
   }
 
+  /** chủ phòng đổi bản đồ trong sảnh */
+  setMap(by: MPlayer, id: unknown) {
+    if (this.phase !== 'lobby' || by.idx !== this.host || !isMapChoice(id) || id === this.mapChoice) return;
+    this.mapChoice = id;
+    this.broadcastRoom();
+  }
+
   setReady(p: MPlayer, r: boolean) {
     if (this.phase !== 'lobby') return;
     p.ready = r;
@@ -303,7 +315,7 @@ export class MonkeyRoom implements WorldHost {
   }
 
   broadcastRoom() {
-    const m: SMsg = { t: 'room', code: this.code, phase: this.phase, solo: this.solo, host: this.host, players: this.lobbyPlayers() };
+    const m: SMsg = { t: 'room', code: this.code, phase: this.phase, solo: this.solo, host: this.host, players: this.lobbyPlayers(), map: this.mapChoice };
     this.broadcast(m);
   }
 
@@ -325,6 +337,12 @@ export class MonkeyRoom implements WorldHost {
 
   begin() {
     this.phase = 'play';
+    // chốt bản đồ (ngẫu nhiên được bốc ở đây) rồi đặt làm bản đồ hiện hành trước khi dựng thế giới
+    // MONKEY_MAP=lang ép bản đồ (chạy thử/chụp ảnh)
+    const forced = process.env.MONKEY_MAP;
+    const choice = forced && isMapChoice(forced) ? forced : this.mapChoice;
+    this.mapDef = choice === MAP_RANDOM ? MAPS[Math.floor(Math.random() * MAPS.length)] : mapById(choice);
+    setActiveMap(this.mapDef);
     this.world = new MonkeyWorld(this, (Math.random() * 0xffffffff) >>> 0);
     this.startedPlayers = Math.max(1, this.count);
     this.score = 0;
@@ -358,6 +376,7 @@ export class MonkeyRoom implements WorldHost {
     this.broadcastRoom();
     this.broadcast(this.startMsg());
     this.startBreak(FIRST_BREAK_SECS);
+    this.paused = false;
     this.nextTickAt = this.clock() + AI_MS;
     if (!this.manual) this.loop = setInterval(() => this.pump(), 10);
   }
@@ -368,6 +387,7 @@ export class MonkeyRoom implements WorldHost {
       seed: 0,
       players: this.players.filter((p): p is MPlayer => !!p).map((p) => ({ idx: p.idx, name: p.name, cls: p.cls })),
       tick: this.world?.tick ?? 0,
+      map: this.mapDef.id,
     };
   }
 
@@ -387,6 +407,10 @@ export class MonkeyRoom implements WorldHost {
   /** bơm tick cố định 20Hz (setInterval 10ms + bù trễ, không trôi) */
   private pump() {
     const now = this.clock();
+    if (this.paused) {
+      this.nextTickAt = now + AI_MS; // thế giới đứng yên, không dồn tick khi chạy tiếp
+      return;
+    }
     let n = 0;
     while (now >= this.nextTickAt && n < 4) {
       if (this.disposed || this.phase !== 'play' || !this.world) return;
@@ -487,6 +511,7 @@ export class MonkeyRoom implements WorldHost {
 
   private tick() {
     if (!this.world) return;
+    setActiveMap(this.mapDef); // nhiều phòng chung một tiến trình
     const t0 = performance.now();
     const w = this.world;
     w.update();
@@ -555,9 +580,20 @@ export class MonkeyRoom implements WorldHost {
     }
   }
 
+  /* ======================= TẠM DỪNG (chỉ chơi đơn) ======================= */
+  paused = false;
+  setPaused(on: boolean) {
+    if (!this.solo || this.phase !== 'play' || this.paused === on) return;
+    this.paused = on;
+    this.broadcast({ t: 'paused', p: on });
+    // hạn giờ đợt tính theo đồng hồ thật → gửi lại sau khi chạy tiếp
+    if (!on) this.broadcast(this.waveMsg());
+  }
+
   /* ======================= LỆNH NGƯỜI CHƠI ======================= */
   onCmds(p: MPlayer, cmds: Cmd[], n: number) {
-    if (this.phase !== 'play' || !this.world) return;
+    if (this.phase !== 'play' || !this.world || this.paused) return;
+    setActiveMap(this.mapDef);
     const now = this.clock();
     p.credit = Math.min(CMD_BURST, p.credit + ((now - p.creditAt) / 1000) * CMD_RATE);
     p.creditAt = now;
@@ -589,8 +625,9 @@ export class MonkeyRoom implements WorldHost {
 
   private fireShot(p: MPlayer, c: Cmd) {
     const w = this.world!;
-    const wd = WEAPONS[p.st.tier];
+    const wd = weaponOf(p.cls, p.st.tier);
     const cls = CLASSES[p.cls];
+    const mul = cls.dmgMul * (p.st.braceT > 0 ? cls.buff.dmg : 1);
     shotOrigin(p.st, this.org);
     const n = pelletDirs(p.st, c, p.idx, this.dirs);
     // thời điểm người bắn nhìn thấy: kẹp trong [now - LAG_COMP, now]
@@ -611,9 +648,9 @@ export class MonkeyRoom implements WorldHost {
       for (let h = 0; h < hits; h++) {
         const sl = w.raySlot[h];
         const dist = w.rayT[h];
-        let dmg = wd.dmg * cls.dmgMul;
+        let dmg = wd.dmg * mul;
         if (dist > wd.falloff) dmg *= 1 - 0.6 * Math.min(1, (dist - wd.falloff) / Math.max(1, wd.range - wd.falloff));
-        if (w.rayCrit[h]) dmg *= HEAD_MUL;
+        if (w.rayCrit[h]) dmg *= cls.headMul;
         if (h > 0) dmg *= 0.7; // xuyên giảm sát thương
         p.dmg += Math.min(dmg, Math.max(0, w.hp[sl]));
         w.damage(sl, dmg, p.idx, w.rayCrit[h], CAUSE_SHOT);
@@ -622,7 +659,7 @@ export class MonkeyRoom implements WorldHost {
         // pháo chuối: nổ tại điểm chạm
         const t = end;
         const ex = ox + dx * t, ez = oz + dz * t;
-        w.explode(ex, ez, wd.splashR, wd.splashDmg * cls.dmgMul, p.idx, 0);
+        w.explode(ex, ez, wd.splashR * cls.splashMul, wd.splashDmg * mul, p.idx, 0);
       }
     }
     w.addShot(p.idx, p.st.yaw, p.st.pitch, firstDist);
@@ -693,6 +730,55 @@ export class MonkeyRoom implements WorldHost {
         }
         break;
       }
+      case 'xathu': {
+        // bom choáng: nổ hẹn giờ tại điểm ngắm
+        this.aimGround(st, 22, this.tmp2);
+        w.booms.push({ x: this.tmp2[0], z: this.tmp2[1], at: w.tick + Math.round(0.6 * AI_HZ), r: 5, dmg: 40 * sm, owner: p.idx, stun: 2.5 });
+        break;
+      }
+      case 'phaothu': {
+        // bom chùm: 3 lựu đạn toả hình quạt
+        shotOrigin(st, this.org);
+        for (let k = -1; k <= 1; k++) {
+          aimDir((st.yaw + k * 2400) & 0xffff, Math.min(14000, st.pitch + 1800), this.dirs);
+          w.spawnProjectile(PJ_GRENADE, p.idx, this.org[0], this.org[1], this.org[2], this.dirs[0] * 16 + st.vx * 0.5, this.dirs[1] * 16 + 3, this.dirs[2] * 16 + st.vz * 0.5, 1.1, 90 * sm);
+        }
+        break;
+      }
+      case 'caoboi': {
+        // quạt súng: tự ngắm 6 khỉ gần nhất phía trước có tầm nhìn
+        const wd = weaponOf(p.cls, st.tier);
+        const per = wd.dmg * wd.pellets * cls.dmgMul * 2.2;
+        const fx = isin(st.yaw), fz = icos(st.yaw);
+        shotOrigin(st, this.org);
+        const ox = this.org[0], oy = this.org[1], oz = this.org[2];
+        const pick: number[] = [];
+        const pd: number[] = [];
+        for (let i = 0; i < w.alive.length; i++) {
+          if (!w.alive[i]) continue;
+          const dx = w.x[i] - st.x, dz = w.z[i] - st.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > 22 * 22 || dx * fx + dz * fz < 0) continue;
+          let k = pick.length;
+          if (k >= 6 && d2 >= pd[5]) continue;
+          if (k >= 6) { pick.pop(); pd.pop(); k = 5; }
+          while (k > 0 && pd[k - 1] > d2) k--;
+          pick.splice(k, 0, i);
+          pd.splice(k, 0, d2);
+        }
+        for (const i of pick) {
+          const ty = bodyY(w.type[i]);
+          const dx = w.x[i] - ox, dy = ty - oy, dz = w.z[i] - oz;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+          if (rayWorld(ox, oy, oz, dx / dist, dy / dist, dz / dist, dist) < dist - 0.6) continue; // bị che
+          const yaw16 = Math.round((Math.atan2(dx, dz) / (Math.PI * 2)) * 65536) & 0xffff;
+          const pitch16 = Math.round((Math.asin(dy / dist) / (Math.PI * 2)) * 65536);
+          w.addShot(p.idx, yaw16, pitch16, dist);
+          p.dmg += Math.min(per, Math.max(0, w.hp[i]));
+          w.damage(i, per, p.idx, 0, CAUSE_SHOT);
+        }
+        break;
+      }
     }
     this.broadcast({ t: 'ev', k: 'skill', i: p.idx, s: 'g' });
   }
@@ -731,10 +817,61 @@ export class MonkeyRoom implements WorldHost {
         st.braceT = 5 * TICK_HZ;
         break;
       }
+      case 'xathu': {
+        // mắt ưng: braceT = bắn không tốn đạn + tăng sát thương (xem ClassDef.buff)
+        st.braceT = 6 * TICK_HZ;
+        break;
+      }
+      case 'phaothu': {
+        // pháo cối: 5 quả rơi quanh điểm ngắm
+        this.aimGround(st, 30, this.tmp2);
+        const cx = this.tmp2[0], cz = this.tmp2[1];
+        const sm = w.skillMul;
+        for (let k = 0; k < 5; k++) {
+          const a = k * 1.2566 + w.rng() * 0.5;
+          const r = k === 0 ? 0 : 2.6;
+          collide(cx + Math.sin(a) * r, cz + Math.cos(a) * r, 0.2, this.tmp2);
+          w.booms.push({ x: this.tmp2[0], z: this.tmp2[1], at: w.tick + AI_HZ + k * 3, r: 3, dmg: 110 * sm, owner: p.idx });
+        }
+        break;
+      }
+      case 'caoboi': {
+        // hất cát: nón 8m (nửa góc ~50°) — sát thương, đẩy lùi, choáng 2 giây
+        const sm = w.skillMul;
+        w.addFx(FX_STOMP, st.x + fx * 2, st.z + fz * 2, 40, p.idx);
+        for (let i = 0; i < w.alive.length; i++) {
+          if (!w.alive[i]) continue;
+          const dx = w.x[i] - st.x, dz = w.z[i] - st.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > 64) continue;
+          const d = Math.sqrt(d2) || 1;
+          if ((dx * fx + dz * fz) / d < 0.64) continue;
+          w.kx[i] += (dx / d) * 9;
+          w.kz[i] += (dz / d) * 9;
+          p.dmg += 25 * sm;
+          w.damage(i, 25 * sm, p.idx, 0, CAUSE_SKILL);
+        }
+        w.stunArea(st.x, st.z, 8, 2, fx, fz, 0.64);
+        break;
+      }
     }
     p.cash -= cls.x.cost;
     p.cdX = w.tick + Math.round(cls.x.cd * AI_HZ);
     this.broadcast({ t: 'ev', k: 'skill', i: p.idx, s: 'x' });
+  }
+
+  /** điểm trên mặt đất theo hướng ngắm (tối đa maxD m ngang, dừng ở vật cản) */
+  private aimGround(st: PState, maxD: number, out: Float64Array) {
+    shotOrigin(st, this.org);
+    aimDir(st.yaw, st.pitch, this.dirs);
+    const ox = this.org[0], oy = this.org[1], oz = this.org[2];
+    const dx = this.dirs[0], dy = this.dirs[1], dz = this.dirs[2];
+    const hl = Math.sqrt(dx * dx + dz * dz) || 1;
+    let t = maxD / hl;
+    if (dy < -0.01) t = Math.min(t, oy / -dy);
+    t = Math.min(t, rayWorld(ox, oy, oz, dx, dy, dz, t));
+    t = Math.max(t - 0.4, 0);
+    collide(ox + dx * t, oz + dz * t, 0.3, out);
   }
 
   private turretPower(p: MPlayer) {
@@ -781,6 +918,37 @@ export class MonkeyRoom implements WorldHost {
         }
         w.addFx(5, st.x, st.z, 1, p.idx);
         break;
+      case 'xathu': {
+        // phát bắn thần: một tia xuyên tối đa 16 khỉ tới khi chạm vật cản
+        shotOrigin(st, this.org);
+        aimDir(st.yaw, st.pitch, this.dirs);
+        const ox = this.org[0], oy = this.org[1], oz = this.org[2];
+        const hits = w.traceRewind(ox, oy, oz, this.dirs[0], this.dirs[1], this.dirs[2], 160, w.tick, 16);
+        for (let h = 0; h < hits; h++) {
+          const sl = w.raySlot[h];
+          const dmg = 900 * sm * (w.rayCrit[h] ? 1.5 : 1);
+          p.dmg += Math.min(dmg, Math.max(0, w.hp[sl]));
+          w.damage(sl, dmg, p.idx, w.rayCrit[h], CAUSE_SKILL);
+        }
+        w.addShot(p.idx, st.yaw, st.pitch, Math.min(255, w.rayObs));
+        break;
+      }
+      case 'phaothu': {
+        // mưa pháo: 20 quả rải trong 4 giây quanh người
+        for (let k = 0; k < 20; k++) {
+          const a = w.rng() * Math.PI * 2;
+          const r = 2 + Math.sqrt(w.rng()) * 14;
+          collide(st.x + Math.sin(a) * r, st.z + Math.cos(a) * r, 0.2, this.tmp2);
+          w.booms.push({ x: this.tmp2[0], z: this.tmp2[1], at: w.tick + 6 + k * 4, r: 3.6, dmg: 200 * sm, owner: p.idx });
+        }
+        w.addFx(5, st.x, st.z, 1, p.idx);
+        break;
+      }
+      case 'caoboi':
+        // thần tốc: braceT = bắn nhanh ×2,5, không tốn đạn, +20% sát thương (xem ClassDef.buff)
+        st.braceT = 8 * TICK_HZ;
+        st.fireCd = 0;
+        break;
     }
     this.broadcast({ t: 'ev', k: 'ult', i: p.idx });
   }
@@ -789,11 +957,11 @@ export class MonkeyRoom implements WorldHost {
     if (this.phase !== 'play' || p.st.down) return;
     if (item === 'weapon') {
       if (p.st.tier >= MAX_TIER) return;
-      const cost = WEAPONS[p.st.tier + 1].cost;
+      const cost = weaponOf(p.cls, p.st.tier + 1).cost;
       if (p.cash < cost) return p.send({ t: 'ev', k: 'nocash', v: cost });
       p.cash -= cost;
       p.st.tier++;
-      p.st.ammo = WEAPONS[p.st.tier].mag;
+      p.st.ammo = weaponOf(p.cls, p.st.tier).mag;
       p.st.reloadT = 0;
       p.st.fireCd = 0;
       this.broadcast({ t: 'ev', k: 'buy', i: p.idx, s: 'weapon', v: p.st.tier });
@@ -846,7 +1014,8 @@ export class MonkeyRoom implements WorldHost {
     if (!p || !w || p.st.down || this.wPhase !== PH_FIGHT) return;
     const cls = CLASSES[p.cls];
     let d = dmg * (1 - cls.armor);
-    if (p.st.braceT > 0) d *= 0.55;
+    if (p.st.braceT > 0) d *= 1 - cls.buff.armor;
+    if (kind === MK_NO && cls.id === 'phaothu') d *= 0.7; // pháo thủ kháng nổ
     if (p.rageUntil > w.tick) d *= 0.5;
     if (p.shield > 0) {
       const a = Math.min(p.shield, d);

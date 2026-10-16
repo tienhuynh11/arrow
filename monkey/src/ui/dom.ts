@@ -42,7 +42,7 @@ export function toast(msg: string, ok = false) {
   toastTimer = window.setTimeout(() => toastEl && (toastEl.style.display = 'none'), 2600);
 }
 
-export const CLASS_ICON = ['🎖️', '⛑️', '🔧', '🛡️'];
+export const CLASS_ICON = ['🎖️', '⛑️', '🔧', '🛡️', '🎯', '💥', '🤠'];
 
 export function clsColor(cls: number) {
   return `#${CLASSES[cls].color.toString(16).padStart(6, '0')}`;

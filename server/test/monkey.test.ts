@@ -6,10 +6,10 @@ process.env.MONKEY_DATA_DIR = mkdtempSync(join(tmpdir(), 'monkey-test-'));
 
 import { GameModel } from '../../shared/monkey/client.js';
 import { HIST, LAG_COMP_TICKS } from '../../shared/monkey/config.js';
-import { CLASSES, HP_TIER_COST, MK_NAU, MONKEYS, TEAM_SHARE, ULT_KILLS, WEAPONS, waveSpec } from '../../shared/monkey/content.js';
+import { CLASSES, HP_TIER_COST, MAX_TIER, MK_NAU, MONKEYS, TEAM_SHARE, ULT_KILLS, reloadTicks, waveSpec, weaponOf } from '../../shared/monkey/content.js';
 import { ARENA, BOXES, CIRCLES, PLAYER_R } from '../../shared/monkey/map.js';
 import { SnapData, Writer, decodeCmds, decodeSnap, encodeCmds, BIN_SNAP } from '../../shared/monkey/proto.js';
-import { B_FIRE, B_USE, P_V, copyState, newState, pelletDirs, step, type Cmd } from '../../shared/monkey/sim.js';
+import { B_FIRE, B_USE, P_G, P_Q, P_V, P_X, copyState, newState, pelletDirs, step, type Cmd } from '../../shared/monkey/sim.js';
 import { MonkeyRoom, type MConn } from '../src/monkey/room.js';
 import { MonkeyWorld, type WorldHost } from '../src/monkey/world.js';
 import { runSim } from './monkeySim.js';
@@ -43,7 +43,7 @@ console.log('\n[1] Mô phỏng người chơi xác định + va chạm');
   ok(same, '6000 bước ngẫu nhiên: hai bản sao ra cùng bit');
   ok(!inside, 'không bao giờ lọt vào vật cản hay ra ngoài sân');
   // tản đạn xác định + trong nón
-  const s = newState(0, 0, 0);
+  const s = newState(2, 0, 0); // kỹ sư bậc 2 = súng săn
   s.tier = 2;
   s.yaw = 12345;
   s.pitch = 1000;
@@ -54,17 +54,17 @@ console.log('\n[1] Mô phỏng người chơi xác định + va chạm');
   let eq = true, inCone = true;
   for (let i = 0; i < 30; i++) if (d1[i] !== d2[i]) eq = false;
   const fx = Math.sin((12345 / 65536) * Math.PI * 2) * Math.cos((1000 / 65536) * Math.PI * 2);
-  for (let k = 0; k < WEAPONS[2].pellets; k++) {
+  for (let k = 0; k < weaponOf(2, 2).pellets; k++) {
     const dot = d1[k * 3] * fx + d1[k * 3 + 1] * Math.sin((1000 / 65536) * Math.PI * 2) + d1[k * 3 + 2] * Math.cos((12345 / 65536) * Math.PI * 2) * Math.cos((1000 / 65536) * Math.PI * 2);
-    if (Math.acos(Math.min(1, dot)) > WEAPONS[2].spread * 1.05 + 0.01) inCone = false;
+    if (Math.acos(Math.min(1, dot)) > weaponOf(2, 2).spread * 1.05 + 0.01) inCone = false;
   }
   ok(eq && inCone, 'tản đạn súng săn: client/server cùng hướng, nằm trong nón tản');
   // nhịp bắn + nạp đạn
   const w = newState(0, 0, 0);
   let shots = 0;
   for (let i = 1; i <= 600; i++) if (step(w, mkCmd(i, { btn: B_FIRE })) & 1) shots++;
-  const per = 6000 / WEAPONS[0].interval;
-  const expect = (10 / ((WEAPONS[0].mag / per) + WEAPONS[0].reload / 60)) * WEAPONS[0].mag;
+  const per = 6000 / weaponOf(0, 0).interval;
+  const expect = (10 / ((weaponOf(0, 0).mag / per) + weaponOf(0, 0).reload / 60)) * weaponOf(0, 0).mag;
   ok(Math.abs(shots - expect) < 6, `súng lục 10 giây giữ cò: ${shots} phát (lý thuyết ≈${expect.toFixed(0)}, gồm thời gian nạp)`);
 }
 
@@ -235,12 +235,12 @@ console.log('\n[6] Kinh tế, tuyệt chiêu, đỡ dậy');
   ok(room.start(a) === null && room.phase === 'play', 'chủ phòng bắt đầu khi mọi người sẵn sàng');
   const w = room.world!;
   // mua súng
-  a.cash = WEAPONS[1].cost - 1;
+  a.cash = weaponOf(0, 1).cost - 1;
   room.buy(a, 'weapon');
-  ok(a.st.tier === 0 && a.cash === WEAPONS[1].cost - 1, 'thiếu xu: không mua được');
-  a.cash = WEAPONS[1].cost + 5;
+  ok(a.st.tier === 0 && a.cash === weaponOf(0, 1).cost - 1, 'thiếu xu: không mua được');
+  a.cash = weaponOf(0, 1).cost + 5;
   room.buy(a, 'weapon');
-  ok(a.st.tier === 1 && a.cash === 5 && a.st.ammo === WEAPONS[1].mag, 'đủ xu: lên bậc súng, trừ đúng giá, đầy băng');
+  ok(a.st.tier === 1 && a.cash === 5 && a.st.ammo === weaponOf(0, 1).mag, 'đủ xu: lên bậc súng, trừ đúng giá, đầy băng');
   a.cash = HP_TIER_COST[1];
   const mhp = a.maxHp;
   room.buy(a, 'hp');
@@ -315,6 +315,72 @@ console.log('\n[6b] Phòng bỏ trống tự huỷ, không làm sập tiến tr�
     room.onCmds(a, [mkCmd(1)], 1);
   } catch (e) { threw = true; console.log(e); }
   ok(!threw && room.disposed && room.world === null, 'không ai kết nối 60 giây → phòng tự huỷ, gọi tiếp không lỗi');
+}
+
+/* ---------------- 6c. nhân vật: dòng súng + kỹ năng ---------------- */
+console.log('\n[6c] Nhân vật: dòng súng riêng + kỹ năng G/X/Q');
+{
+  let linesOk = true;
+  for (let c = 0; c < CLASSES.length; c++) {
+    const ws = CLASSES[c].weapons;
+    if (ws.length !== MAX_TIER + 1 || ws[0].cost !== 0) linesOk = false;
+    for (let t = 1; t < ws.length; t++) if (!(ws[t].cost > ws[t - 1].cost)) linesOk = false;
+    if (weaponOf(c, 99) !== ws[MAX_TIER] || weaponOf(c, -1) !== ws[0]) linesOk = false;
+  }
+  ok(CLASSES.length === 7 && linesOk, '7 nhân vật, mỗi người đúng 5 bậc súng, bậc 0 miễn phí, giá tăng dần');
+  const ids = CLASSES.map((c) => c.id).join(',');
+  ok(ids === 'chienbinh,ysi,kysu,dausi,xathu,phaothu,caoboi', `thứ tự id cố định: ${ids}`);
+  // cao bồi nạp nhanh hơn: bắn hết băng rồi đếm tick nạp
+  const cb = newState(6, 0, 0);
+  ok(reloadTicks(6, 0) < weaponOf(6, 0).reload, 'cao bồi nạp đạn nhanh hơn');
+  cb.braceT = 120;
+  let shots = 0;
+  for (let i = 1; i <= 60; i++) if (step(cb, mkCmd(i, { btn: B_FIRE })) & 1) shots++;
+  ok(shots > 6 && cb.ammo === weaponOf(6, 0).mag, `cao bồi THẦN TỐC: ${shots} phát/giây, không tốn đạn`);
+
+  for (let c = 0; c < CLASSES.length; c++) {
+    const room = new MonkeyRoom('SK' + c, false);
+    room.manual = true;
+    let now = 1000;
+    room.clock = () => now;
+    const a = room.add('A', c, { sent: 0, send() {}, close() {} });
+    room.start(a);
+    const w = room.world!;
+    room.wPhase = 1;
+    let threw = false;
+    let seq = 1;
+    const spawnPack = () => {
+      for (let k = 0; k < 8; k++) w.spawn(MK_NAU, a.st.x + (k - 3.5) * 0.9, a.st.z + 6 + (k % 2), 3, 1, 0.01);
+    };
+    // sát thương thật lên khỉ (kể cả nổ, vốn không cộng vào a.dmg)
+    const press = (btn: number, ticks = 30) => {
+      const hp0 = Float64Array.from(w.hp), al0 = Uint8Array.from(w.alive);
+      now += 20;
+      room.onCmds(a, [mkCmd(seq++, { btn, pitch: -2000 })], 1);
+      for (let i = 0; i < ticks; i++) room.step();
+      let d = 0;
+      for (let i = 0; i < al0.length; i++) if (al0[i]) d += hp0[i] - (w.alive[i] ? w.hp[i] : 0);
+      return d;
+    };
+    try {
+      a.cash = 99999;
+      spawnPack();
+      const g = press(P_G);
+      a.cash = 99999;
+      spawnPack();
+      const x = press(P_X);
+      a.ultKills = ULT_KILLS;
+      spawnPack();
+      const q = press(P_Q, 100);
+      if (CLASSES[c].id === 'xathu' || CLASSES[c].id === 'phaothu' || CLASSES[c].id === 'caoboi') {
+        const id = CLASSES[c].id;
+        const xOk = id === 'xathu' ? a.st.braceT > 0 || x >= 0 : x > 0;
+        const qOk = id === 'caoboi' ? a.st.braceT > 0 : q > 0;
+        ok(g > 0 && xOk && qOk && a.ultKills < ULT_KILLS, `${CLASSES[c].name}: G ${Math.round(g)} · X ${Math.round(x)} · Q ${Math.round(q)} sát thương`);
+      }
+    } catch (e) { threw = true; console.log(e); }
+    if (threw) ok(false, `${CLASSES[c].name}: kỹ năng ném lỗi`);
+  }
 }
 
 /* ---------------- 7. đợt 1–3 dễ ---------------- */

@@ -158,6 +158,9 @@ body.ingame .status { display: none; }
 @keyframes rise { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-18px); opacity: 0; } }
 
 .gun { position: absolute; right: 18px; bottom: 16px; text-align: right; }
+.gun .gp { height: 46px; margin-bottom: 2px; display: flex; justify-content: flex-end; }
+.gun .gp svg { height: 46px; width: 92px; filter: drop-shadow(0 2px 4px rgba(0,0,0,.7)); }
+body.touchmode .gun .gp { justify-content: center; }
 .gun .nm { font-weight: 900; font-size: 14px; letter-spacing: .06em; text-shadow: 0 2px 6px #000; }
 .gun .am { font-family: var(--display); font-size: 44px; line-height: 1; text-shadow: 0 3px 10px #000; }
 .gun .am small { font-size: 20px; color: var(--dim); }
@@ -259,10 +262,44 @@ body.ingame .status { display: none; }
 .sensprev { display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--dim); }
 
 /* ---------- cửa hàng ---------- */
+.shop .card { width: min(1040px, 100%); }
 .shop .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-.item { background: rgba(0,0,0,.3); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 6px; border: 2px solid transparent; }
+.shop .grid.guns { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.shop .grid.hps { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.shop h3 small { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.item { background: rgba(0,0,0,.3); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 6px; border: 2px solid transparent; position: relative; }
 .item.owned { opacity: .55; }
 .item.next { border-color: var(--banana); }
+.kk { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 5px; background: rgba(255,255,255,.14); box-shadow: inset 0 -2px 0 rgba(0,0,0,.35); font-weight: 900; font-size: 11px; letter-spacing: 0; color: var(--text); text-align: center; }
+.btn .kk { background: rgba(0,0,0,.18); color: inherit; }
+/* thẻ hình ảnh */
+.item .pic { height: 78px; margin: -2px -4px 0; border-radius: 9px; display: grid; place-items: center; background: radial-gradient(ellipse at 50% 60%, color-mix(in srgb, var(--wc, #ffd23f) 38%, transparent), transparent 70%), rgba(255,255,255,.03); }
+.item .pic svg { width: 100%; max-width: 150px; height: 74px; filter: drop-shadow(0 3px 3px rgba(0,0,0,.45)); }
+.item .tier { position: absolute; top: 8px; left: 10px; z-index: 1; font-family: var(--display); font-size: 13px; color: var(--banana); text-shadow: 0 2px 3px #000; }
+.item .tag { font-size: 11.5px; color: var(--dim); font-weight: 700; margin-top: -4px; }
+.item .rl2 { font-size: 11px; color: var(--dim); }
+.wcard.using { opacity: 1; border-color: var(--leaf); box-shadow: 0 0 0 1px rgba(94,226,125,.25), 0 0 18px rgba(94,226,125,.15); }
+.wcard.owned:not(.using), .hcard.owned { opacity: .6; }
+.item.locked { opacity: .78; }
+.item.locked .pic svg { filter: grayscale(.85) brightness(.75) drop-shadow(0 3px 3px rgba(0,0,0,.45)); }
+.item.next.afford { box-shadow: 0 0 0 1px rgba(255,210,63,.3), 0 0 22px rgba(255,210,63,.18); }
+.hcard .pic { --wc: #ef4444; }
+.scard .pic { --wc: #5ab4ff; }
+.stats { display: flex; flex-direction: column; gap: 3px; }
+.sb { display: grid; grid-template-columns: 62px 1fr 52px; align-items: center; gap: 6px; font-size: 11px; }
+.sb .l { color: var(--dim); font-weight: 700; }
+.sb .t { position: relative; height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); }
+.sb .t .f { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--wc, var(--banana)); filter: brightness(1.25) saturate(1.2); }
+.sb .t .c { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: #fff; border-radius: 1px; box-shadow: 0 0 3px #000; }
+.sb .v { text-align: right; font-weight: 800; white-space: nowrap; }
+.sb .v em { font-style: normal; font-size: 9px; margin-left: 2px; }
+.sb .v em.up { color: var(--leaf); }
+.sb .v em.dn { color: var(--red); }
+.item .foot { margin-top: auto; padding-top: 4px; font-weight: 900; font-size: 12.5px; }
+.item .foot.ok { color: var(--leaf); }
+.item .foot.lock { color: var(--dim); font-weight: 700; font-size: 11.5px; }
+.item .foot .btn { width: 100%; }
+.item .foot .need { font-size: 11px; color: #ffb3b3; font-weight: 700; margin-top: 4px; text-align: center; }
 .item .ti { font-weight: 900; }
 .item .st2 { font-size: 12px; color: var(--dim); line-height: 1.5; }
 .item .pr2 { font-weight: 900; color: var(--banana); }
@@ -328,3 +365,16 @@ body.touchmode .feed { top: 150px !important; }
   .announce.show { animation-duration: 1.6s; }
   .tm.down, .sk.ready { animation: none; }
 }
+
+/* ---- chọn bản đồ ---- */
+.maps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 6px 0 6px; }
+.mapc { border-radius: 12px; padding: 8px 6px 7px; text-align: center; background: rgba(0, 0, 0, 0.3); border: 2px solid transparent; transition: transform 0.1s; }
+.mapc:not(:disabled):hover { transform: translateY(-2px); }
+.mapc.on { border-color: var(--banana); background: rgba(255, 210, 63, 0.12); }
+.mapc i { display: block; font-style: normal; font-size: 22px; line-height: 1.2; }
+.mapc b { display: block; font-size: 12px; letter-spacing: 0.03em; }
+.mapc span { display: block; font-size: 10.5px; color: var(--dim); }
+.maps.ro .mapc { cursor: default; }
+.maps.ro .mapc:not(.on) { opacity: 0.4; }
+.mapinfo { font-size: 12.5px; color: var(--dim); margin-bottom: 12px; min-height: 17px; }
+@media (max-width: 560px) { .maps { grid-template-columns: repeat(2, 1fr); } }
