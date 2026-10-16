@@ -297,6 +297,26 @@ console.log('\n[6] Kinh tế, tuyệt chiêu, đỡ dậy');
   void CLASSES;
 }
 
+/* ---------------- 6b. phòng bỏ trống ---------------- */
+console.log('\n[6b] Phòng bỏ trống tự huỷ, không làm sập tiến trình');
+{
+  const room = new MonkeyRoom('EMPTY', false);
+  let now = 5000;
+  room.clock = () => now;
+  const a = room.add('A', 0, { sent: 0, send() {}, close() {} });
+  room.start(a);
+  room.disconnected(a);
+  let threw = false;
+  try {
+    for (let i = 0; i < 1300; i++) { now += 50; (room as any).pump(); }
+    room.step();
+    room.setBreakReady(a, true);
+    room.buy(a, 'weapon');
+    room.onCmds(a, [mkCmd(1)], 1);
+  } catch (e) { threw = true; console.log(e); }
+  ok(!threw && room.disposed && room.world === null, 'không ai kết nối 60 giây → phòng tự huỷ, gọi tiếp không lỗi');
+}
+
 /* ---------------- 7. đợt 1–3 dễ ---------------- */
 console.log('\n[7] Độ khó đầu game (bot chơi một mình)');
 {

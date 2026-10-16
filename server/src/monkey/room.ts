@@ -389,10 +389,17 @@ export class MonkeyRoom implements WorldHost {
     const now = this.clock();
     let n = 0;
     while (now >= this.nextTickAt && n < 4) {
+      if (this.disposed || this.phase !== 'play' || !this.world) return;
       this.nextTickAt += AI_MS;
-      this.tick();
+      try {
+        this.tick();
+      } catch (e) {
+        // lỗi trong một phòng không được làm sập cả tiến trình (minigame chạy chung)
+        console.error('[monkey] lỗi tick phòng', this.code, e);
+        this.dispose();
+        return;
+      }
       n++;
-      if (this.phase !== 'play') return;
     }
     if (now - this.nextTickAt > 1000) this.nextTickAt = now + AI_MS; // máy bị treo lâu: bỏ nhịp
   }
@@ -479,8 +486,9 @@ export class MonkeyRoom implements WorldHost {
   }
 
   private tick() {
+    if (!this.world) return;
     const t0 = performance.now();
-    const w = this.world!;
+    const w = this.world;
     w.update();
     const tick = w.tick;
     const spec = this.spec;
@@ -1031,6 +1039,7 @@ export class MonkeyRoom implements WorldHost {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.phase = 'over';
     this.stopLoop();
     this.world?.reset();
     this.world = null;

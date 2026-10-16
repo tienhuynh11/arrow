@@ -106,7 +106,13 @@ wss.on('connection', (ws: WebSocket) => {
       if (!s.room || !s.player) return;
       const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
       const n = decodeCmds(v, cmdBuf);
-      if (n > 0) s.room.onCmds(s.player, cmdBuf, n);
+      if (n > 0) {
+        try {
+          s.room.onCmds(s.player, cmdBuf, n);
+        } catch (e) {
+          console.error('[monkey] lỗi xử lý lệnh', e);
+        }
+      }
       return;
     }
     if (s.jsonTokens < 1) return;
@@ -118,7 +124,11 @@ wss.on('connection', (ws: WebSocket) => {
       return;
     }
     if (!m || typeof m.t !== 'string') return;
-    handle(s, m, send);
+    try {
+      handle(s, m, send);
+    } catch (e) {
+      console.error('[monkey] lỗi xử lý tin nhắn', m.t, e);
+    }
   });
   ws.on('close', () => {
     if (s.room && s.player) s.room.disconnected(s.player);

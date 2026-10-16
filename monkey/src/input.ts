@@ -81,7 +81,17 @@ export class Input {
     if (this.touch) return;
     try {
       const r = (this.canvas as any).requestPointerLock({ unadjustedMovement: true });
-      if (r && typeof r.catch === 'function') r.catch(() => this.canvas.requestPointerLock());
+      if (r && typeof r.catch === 'function') {
+        r.catch(() => {
+          // trình duyệt không hỗ trợ unadjustedMovement / chưa cho phép: thử lại kiểu thường, nuốt lỗi
+          try {
+            const r2 = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+            r2?.catch?.(() => {});
+          } catch {
+            /* bỏ qua */
+          }
+        });
+      }
     } catch {
       try {
         this.canvas.requestPointerLock();

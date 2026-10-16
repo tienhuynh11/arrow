@@ -312,6 +312,17 @@ body.ingame .status { display: none; }
 }
 @media (pointer: coarse) {
   .skills { display: none; }
+  /* cảm ứng: dời HUD súng xuống giữa đáy để nhường hai cụm nút bên phải/trái */
+  .gun { top: auto !important; right: auto !important; left: 50%; bottom: 6px !important; transform: translateX(-50%) scale(.72) !important; transform-origin: bottom center !important; text-align: center; }
+  .gun .rl { margin: 6px auto 0; }
+  .gun .up { display: none; }
+  .radar { width: 92px !important; height: 92px !important; }
+  .net { top: 108px !important; }
+  .fps { top: 122px; }
+  .feed { top: 150px !important; }
+}
+@media (max-width: 860px) {
+  .status { top: 6px; bottom: auto; right: 10px; left: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   .announce.show { animation-duration: 1.6s; }
