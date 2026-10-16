@@ -2,6 +2,7 @@
 // Mọi con số cân bằng nằm ở đây để server/client/bài test cùng đọc một nguồn.
 
 import { TICK_HZ } from './config.js';
+import type { Modifier } from './progression.js';
 
 /* ======================= VŨ KHÍ (mỗi nhân vật một dòng súng riêng, nâng bậc bằng phím V) ======================= */
 export type WeaponModel = 'pistol' | 'revolver' | 'smg' | 'shotgun' | 'rifle' | 'lmg' | 'sniper' | 'launcher';
@@ -346,9 +347,21 @@ function crowdMul(p: number) {
   return p <= 4 ? 0.65 + 0.35 * p : 2.05 + 0.2 * (p - 4);
 }
 
-export function waveSpec(n: number, players: number): WaveSpec {
+/** tham số ải đưa vào waveSpec (vô tận: không truyền) — StageDef thoả kiểu này */
+export interface WaveStage {
+  /** hệ số độ khó (máu + sát thương khỉ) */
+  diff: number;
+  mods: readonly Modifier[];
+}
+/** hệ số máu khỉ thêm của ải (dùng cả cho boss) */
+export function stageHpMul(stage?: WaveStage) {
+  if (!stage) return 1;
+  return stage.diff * (stage.mods.includes('tough') ? 1.4 : 1);
+}
+
+export function waveSpec(n: number, players: number, stage?: WaveStage): WaveSpec {
   const p = Math.max(1, Math.min(PLAYER_MUL.length, players));
-  const boss = n % 5 === 0;
+  const boss = stage?.mods.includes('bossRush') ? n % 2 === 0 : n % 5 === 0;
   let total = Math.round((6 + n * 4 + n * n * 0.3) * PLAYER_MUL[p - 1]);
   if (boss) total = Math.round(total * 0.6);
   const maxAlive = Math.min(MAX_ALIVE, Math.round((10 + n * 2.6) * crowdMul(p)));
@@ -366,14 +379,25 @@ export function waveSpec(n: number, players: number): WaveSpec {
   if (n >= 6) w[MK_NO] = 0.6 + n * 0.18;
   if (n >= 8) w[MK_TRANG] = 0.5 + n * 0.15;
   if (n >= 7) w[MK_DOT] = 0.2 + n * 0.06;
-  return { n, total, maxAlive, every, hpMul, dmgMul, spdMul, boss, weights: w };
+  if (!stage) return { n, total, maxAlive, every, hpMul, dmgMul, spdMul, boss, weights: w };
+  // ---- ải: độ khó + luật đặc biệt (xác định, server/client cùng tính) ----
+  if (stage.mods.includes('explosiveOnly')) {
+    w.fill(0);
+    w[MK_NO] = 10;
+  }
+  return {
+    n, total, maxAlive, every, boss, weights: w,
+    hpMul: hpMul * stageHpMul(stage),
+    dmgMul: dmgMul * stage.diff,
+    spdMul: spdMul * (stage.mods.includes('fast') ? 1.25 : 1),
+  };
 }
 
 /** máu boss theo số người + đợt */
-export function bossHp(n: number, players: number) {
+export function bossHp(n: number, players: number, stage?: WaveStage) {
   players = Math.max(1, Math.min(PLAYER_MUL.length, players));
   // boss đầu tiên (đợt 5) nhẹ hơn để người mới làm quen
-  return Math.round(MONKEYS[MK_VUA].hp * (players === 1 ? 0.75 : 1 + 0.6 * (players - 1)) * (1 + 0.45 * (n / 5 - 1)) * (n <= 5 ? 0.7 : 1));
+  return Math.round(MONKEYS[MK_VUA].hp * (players === 1 ? 0.75 : 1 + 0.6 * (players - 1)) * (1 + 0.45 * (n / 5 - 1)) * (n <= 5 ? 0.7 : 1) * stageHpMul(stage));
 }
 
 /** nghỉ giữa 2 đợt (giây). Cả đội bấm SẴN SÀNG thì rút còn 3 giây */

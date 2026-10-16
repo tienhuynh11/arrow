@@ -336,6 +336,35 @@ export function sfxUlt() {
   noiseBurst(o, 0.5, 'bandpass', 500, 4000, 1, 0.3);
 }
 
+/** vung dao: tiếng gió vút + chút kim loại */
+export function sfxWhoosh(vol = 1, pan = 0) {
+  if (!voice(0.35)) return;
+  const o = out(0.45 * vol, pan);
+  noiseBurst(o, 0.22, 'bandpass', 900, 3800, 1.4, 0.9);
+  noiseBurst(o, 0.12, 'highpass', 6000, 4000, 1, 0.25, 0.05);
+  tone(o, 'triangle', 1800, 2600, 0.08, 0.08, 0.06);
+}
+
+/** đồ rớt hiện ra (màn thắng) — độ hiếm cao hơn thì vang hơn */
+export function sfxLoot(rarity: number) {
+  if (!voice(0.9)) return;
+  const o = out(0.32 + rarity * 0.06);
+  const base = [660, 784, 988, 1175][Math.max(0, Math.min(3, rarity))];
+  tone(o, 'sine', base, base * 1.01, 0.35, 0.4);
+  tone(o, 'sine', base * 1.5, base * 1.5, 0.45, 0.3, 0.07);
+  if (rarity >= 2) tone(o, 'triangle', base * 2, base * 2.02, 0.6, 0.22, 0.14, 0.02);
+  if (rarity >= 3) noiseBurst(o, 0.6, 'highpass', 7000, 5000, 1, 0.25, 0.1);
+}
+
+/** sao sáng lên */
+export function sfxStar(i: number) {
+  if (!voice(0.5)) return;
+  const f = [880, 1109, 1319][Math.max(0, Math.min(2, i))];
+  const o = out(0.35);
+  tone(o, 'square', f, f, 0.08, 0.2);
+  tone(o, 'sine', f * 2, f * 2, 0.3, 0.25, 0.04);
+}
+
 export function sfxUi() {
   if (!voice(0.1)) return;
   tone(out(0.2), 'sine', 900, 1200, 0.05, 0.4);

@@ -3,6 +3,7 @@
 // Khỉ + kinh tế + đợt: vòng 20Hz; snapshot nhị phân mã hoá một lần, gửi chung cả phòng.
 
 import { randomUUID } from 'node:crypto';
+import type { RunReward } from '../../../shared/monkey/api.js';
 import { AI_HZ, AI_MS, CHAT_MAX, LAG_COMP_TICKS, MAX_PLAYERS, TICK_HZ } from '../../../shared/monkey/config.js';
 import {
   BLEED_SECS,
@@ -57,10 +58,11 @@ import {
   PJ_GRENADE,
   ST_STUN,
   Writer,
-  type BoardEntry,
   type EndStat,
   type LobbyPlayer,
+  type RoomMode,
   type SMsg,
+  type StartPlayer,
 } from '../../../shared/monkey/proto.js';
 import {
   B_ADS,
@@ -68,6 +70,7 @@ import {
   F_FIRED,
   P_C,
   P_G,
+  P_K,
   P_Q,
   P_V,
   P_X,
@@ -80,8 +83,38 @@ import {
   type Cmd,
   type PState,
 } from '../../../shared/monkey/sim.js';
+import {
+  BASE_KNIFE_DMG,
+  EVENT_STAGES,
+  STAGES,
+  STAGE_BY_ID,
+  rollDrops,
+  simModsOf,
+  skillCostMul,
+  skillPower,
+  stageUnlocked,
+  type Loadout,
+  type SkillKey,
+  type StageDef,
+  type Stats,
+} from '../../../shared/monkey/progression.js';
+import { getStore } from './db/index.js';
+import { cryptoRng } from './db/rules.js';
+import type { RunResult, Store } from './db/store.js';
 import { submitRun, topRuns } from './leaderboard.js';
 import { CAUSE_SHOT, CAUSE_SKILL, MonkeyWorld, type WorldHost } from './world.js';
+
+/** dao: tầm (m, tính tới mép thân khỉ), nửa góc nón, hồi chiêu (giây), góc coi là "sau lưng" */
+export const KNIFE_RANGE = 2.2;
+export const KNIFE_HALF_DEG = 50;
+export const KNIFE_CD = 0.6;
+export const KNIFE_BACK_DEG = 120;
+/** chờ ghi kết quả trận tối đa bao lâu trước khi gửi tổng kết (ms) */
+export const REWARD_WAIT_MS = 4000;
+const NO_STATS: Stats = {};
+const NO_CLEARED: ReadonlySet<string> = new Set();
+const ALL_STAGES: StageDef[] = [...STAGES, ...EVENT_STAGES];
+const guestReward = (idx: number): RunReward => ({ idx, reward: null, levelUps: 0, newLevel: 0, firstClear: false });
 
 export interface MConn {
   send(data: string | Uint8Array): void;
@@ -139,13 +172,42 @@ export class MPlayer {
   /** số lệnh đã chạy (đo kiểm chống tăng tốc) */
   cmdsRun = 0;
   statHits = 0;
+  /* ---- tài khoản (khách: accountId undefined) ---- */
+  accountId?: number;
+  level = 0;
+  /** trang bị đã nạp sẵn (null = khách / chưa tải xong → mặc định) */
+  loadout: Loadout | null = null;
+  /** nhân vật mà loadout được tải cho (cấp kỹ năng theo nhân vật) */
+  loadoutCls = -1;
+  cleared: ReadonlySet<string> = NO_CLEARED;
+  /** đang tải dữ liệu tài khoản */
+  loading: Promise<void> | null = null;
+  fetchSeq = 0;
+  /** dao: được chém lại từ tick AI này */
+  knifeAt = 0;
 
-  constructor(idx: number, name: string, cls: number, conn: MConn) {
+  constructor(idx: number, name: string, cls: number, conn: MConn, accountId?: number) {
     this.idx = idx;
     this.name = name;
     this.cls = cls;
     this.conn = conn;
+    this.accountId = accountId;
     this.st = newState(cls, 0, 0);
+  }
+
+  get guest() {
+    return this.accountId === undefined;
+  }
+  /** chỉ số đồ đã chặn trần */
+  get stats(): Stats {
+    return this.loadout?.stats ?? NO_STATS;
+  }
+  stat(k: keyof Stats): number {
+    return this.loadout?.stats[k] ?? 0;
+  }
+  /** cấp kỹ năng (1..5) của nhân vật đang chơi */
+  skillLv(k: SkillKey): number {
+    return this.loadout && this.loadoutCls === this.cls ? this.loadout.skills[k] ?? 1 : 1;
   }
 
   send(m: SMsg) {
@@ -196,9 +258,28 @@ export class MonkeyRoom implements WorldHost {
   /** đo kiểm (test): kết quả từng viên đạn ở server */
   onPellet: ((idx: number, seq: number, k: number, slot: number, vt: number) => void) | null = null;
 
-  constructor(code: string, solo: boolean) {
+  /** chế độ: vô tận / vượt ải */
+  mode: RoomMode = 'endless';
+  /** ải đang chọn trong sảnh (mode 'stage') */
+  stageId: string = STAGES[0].id;
+  /** ải của ván đang chơi (null = vô tận) */
+  stageDef: StageDef | null = null;
+  /** đợt đầu tiên của ván (ải: startWave; vô tận: 1 hoặc MONKEY_START_WAVE) */
+  firstWave = 1;
+  /** tăng mỗi ván — kết quả ghi DB về muộn của ván cũ không được gửi nhầm */
+  runId = 0;
+  /** promise ghi kết quả ván gần nhất (test chờ) */
+  settling: Promise<void> | null = null;
+  private _store: Store | null;
+
+  constructor(code: string, solo: boolean, store?: Store) {
     this.code = code;
     this.solo = solo;
+    this._store = store ?? null;
+  }
+
+  get store(): Store {
+    return this._store ?? getStore();
   }
 
   /* ======================= SẢNH ======================= */
@@ -213,21 +294,124 @@ export class MonkeyRoom implements WorldHost {
     return n;
   }
 
-  canJoin(): string | null {
+  canJoin(guest = false): string | null {
     if (this.solo) return 'Phòng chơi đơn';
+    if (guest && this.mode === 'stage') return 'Phòng vượt ải chỉ dành cho người đã đăng nhập';
     if (this.phase !== 'lobby') return 'Phòng đang chơi';
     if (this.count >= MAX_PLAYERS) return `Phòng đã đủ ${MAX_PLAYERS} người`;
     return null;
   }
 
-  add(name: string, cls: number, conn: MConn): MPlayer {
+  add(name: string, cls: number, conn: MConn, accountId?: number): MPlayer {
     const idx = this.players.findIndex((p) => !p);
-    const p = new MPlayer(idx, name, cls, conn);
+    const p = new MPlayer(idx, name, cls, conn, accountId);
     this.players[idx] = p;
     if (this.count === 1) this.host = idx;
     p.send({ t: 'joined', code: this.code, pid: p.pid, token: p.token, idx, solo: this.solo });
+    this.prefetch(p, true);
     this.broadcastRoom();
     return p;
+  }
+
+  /** nạp nền trang bị (+ ải đã qua, cấp nếu profile) của người có tài khoản; xong thì tính lại ải chơi được */
+  prefetch(p: MPlayer, profile: boolean): Promise<void> | null {
+    if (p.accountId === undefined) return null;
+    const id = p.accountId;
+    const cls = p.cls;
+    const seq = ++p.fetchSeq;
+    const st = this.store;
+    const jobs: Promise<unknown>[] = [
+      st.loadout(id, cls).then((l) => {
+        if (p.fetchSeq === seq) { p.loadout = l; p.loadoutCls = cls; }
+      }),
+    ];
+    if (profile) {
+      jobs.push(st.clearedStages(id).then((c) => { p.cleared = c; }));
+      jobs.push(st.me(id, new Date()).then((m) => { p.level = m.profile.level; }));
+    }
+    const job: Promise<void> = Promise.all(jobs)
+      .then(() => undefined, (e) => console.warn('[monkey] không tải được dữ liệu người chơi', id, (e as Error).message))
+      .finally(() => {
+        if (p.loading === job) p.loading = null;
+        if (this.players[p.idx] !== p || this.disposed) return;
+        if (this.phase === 'lobby') this.fixStage();
+        this.broadcastRoom();
+      });
+    p.loading = job;
+    return job;
+  }
+
+  /** chờ mọi người tải xong dữ liệu tài khoản (tối đa ms) */
+  async whenLoaded(ms = REWARD_WAIT_MS): Promise<void> {
+    const ps = this.players.filter((q): q is MPlayer => !!q?.loading).map((q) => q.loading!);
+    if (!ps.length) return;
+    let t: NodeJS.Timeout | undefined;
+    await Promise.race([Promise.all(ps), new Promise<void>((r) => { t = setTimeout(r, ms); t.unref?.(); })]);
+    if (t) clearTimeout(t);
+  }
+
+  get loadingAny() {
+    return this.players.some((q) => !!q?.loading);
+  }
+
+  /** ải mọi thành viên đều đã mở (khách coi như chưa qua ải nào) */
+  playableStages(): string[] {
+    const ps = this.players.filter((q): q is MPlayer => !!q);
+    return ALL_STAGES.filter((st) => ps.every((q) => stageUnlocked(st.id, q.cleared))).map((st) => st.id);
+  }
+
+  /** ải đang chọn không còn hợp lệ (người mới vào chưa mở) → lùi về ải xa nhất mọi người cùng chơi được */
+  private fixStage() {
+    if (this.loadingAny) return;
+    const ok = this.playableStages();
+    if (ok.includes(this.stageId)) return;
+    const chain = ok.filter((id) => !STAGE_BY_ID[id]?.event);
+    this.stageId = chain[chain.length - 1] ?? STAGES[0].id;
+  }
+
+  /** chủ phòng đổi chế độ; trả lỗi (tiếng Việt) hoặc null */
+  setMode(by: MPlayer, mode: unknown): string | null {
+    if (this.phase !== 'lobby' || by.idx !== this.host) return 'Chỉ chủ phòng mới đổi được chế độ';
+    if (mode !== 'endless' && mode !== 'stage') return 'Chế độ không hợp lệ';
+    if (mode === 'stage' && this.players.some((q) => q?.guest)) return 'Mọi người trong phòng phải đăng nhập mới chơi vượt ải được';
+    if (mode === this.mode) return null;
+    this.mode = mode;
+    if (mode === 'stage') this.fixStage();
+    this.broadcastRoom();
+    return null;
+  }
+
+  /** chủ phòng chọn ải (phải nằm trong giao các ải đã mở) */
+  setStage(by: MPlayer, id: unknown): string | null {
+    if (this.phase !== 'lobby' || by.idx !== this.host) return 'Chỉ chủ phòng mới chọn được ải';
+    if (typeof id !== 'string' || !STAGE_BY_ID[id]) return 'Ải không tồn tại';
+    if (!this.playableStages().includes(id)) return 'Có người trong phòng chưa mở ải này';
+    if (id === this.stageId) return null;
+    this.stageId = id;
+    this.broadcastRoom();
+    return null;
+  }
+
+  /** kiểm tra điều kiện vào trận (dữ liệu đã tải; ải: mọi người đăng nhập + đều đã mở ải) */
+  private stageCheck(): string | null {
+    if (this.loadingAny) return 'Đang tải dữ liệu người chơi, thử lại sau giây lát';
+    if (this.mode !== 'stage') return null;
+    if (this.players.some((q) => q?.guest)) return 'Mọi người trong phòng phải đăng nhập mới chơi vượt ải được';
+    if (!STAGE_BY_ID[this.stageId] || !this.playableStages().includes(this.stageId)) return 'Có người trong phòng chưa mở ải này';
+    return null;
+  }
+
+  /** chơi đơn: vào trận ngay khi đã tải xong dữ liệu tài khoản (đồng bộ nếu không cần chờ) */
+  beginSolo(onErr: (m: string) => void) {
+    const go = () => {
+      if (this.disposed || this.phase !== 'lobby') return;
+      for (const q of this.players) if (q?.loading) q.loading = null; // quá hạn chờ: dùng mặc định
+      const err = this.stageCheck();
+      if (err) return onErr(err);
+      this.begin();
+    };
+    if (!this.loadingAny) return go();
+    void this.whenLoaded().then(go);
   }
 
   rejoin(pid: string, token: string, conn: MConn): MPlayer | null {
@@ -293,7 +477,9 @@ export class MonkeyRoom implements WorldHost {
   setClass(p: MPlayer, cls: number) {
     if (this.phase !== 'lobby') return;
     if (!(cls >= 0 && cls < CLASSES.length)) return;
+    if (p.cls === (cls | 0)) return;
     p.cls = cls | 0;
+    this.prefetch(p, false);
     this.broadcastRoom();
   }
 
@@ -312,12 +498,14 @@ export class MonkeyRoom implements WorldHost {
 
   lobbyPlayers(): LobbyPlayer[] {
     const out: LobbyPlayer[] = [];
-    for (const p of this.players) if (p) out.push({ idx: p.idx, name: p.name, cls: p.cls, ready: p.ready, on: !!p.conn });
+    for (const p of this.players) if (p) out.push({ idx: p.idx, name: p.name, cls: p.cls, ready: p.ready, on: !!p.conn, guest: p.guest, level: p.guest ? undefined : p.level });
     return out;
   }
 
   broadcastRoom() {
-    const m: SMsg = { t: 'room', code: this.code, phase: this.phase, solo: this.solo, host: this.host, players: this.lobbyPlayers(), map: this.mapChoice };
+    const m: SMsg = { t: 'room', code: this.code, phase: this.phase, solo: this.solo, host: this.host, players: this.lobbyPlayers(), map: this.mapChoice,
+      mode: this.mode, stage: this.stageId, stages: this.playableStages(),
+    };
     this.broadcast(m);
   }
 
@@ -333,37 +521,48 @@ export class MonkeyRoom implements WorldHost {
     for (const p of this.players) if (p && p.idx !== this.host && p.conn && !p.ready) return 'Còn người chưa sẵn sàng';
     // bỏ người đã rời trong sảnh
     for (const p of this.players) if (p && !p.conn) this.players[p.idx] = null;
+    const err = this.stageCheck();
+    if (err) return err;
     this.begin();
     return null;
   }
 
   begin() {
     this.phase = 'play';
+    this.runId++;
+    this.stageDef = this.mode === 'stage' ? STAGE_BY_ID[this.stageId] ?? null : null;
+    const sd = this.stageDef;
     // chốt bản đồ (ngẫu nhiên được bốc ở đây) rồi đặt làm bản đồ hiện hành trước khi dựng thế giới
-    // MONKEY_MAP=lang ép bản đồ (chạy thử/chụp ảnh)
+    // MONKEY_MAP=lang ép bản đồ (chạy thử/chụp ảnh); ải luôn dùng bản đồ của ải
     const forced = process.env.MONKEY_MAP;
-    const choice = forced && isMapChoice(forced) ? forced : this.mapChoice;
+    const choice = sd ? sd.map : forced && isMapChoice(forced) ? forced : this.mapChoice;
     this.mapDef = choice === MAP_RANDOM ? MAPS[Math.floor(Math.random() * MAPS.length)] : mapById(choice);
     setActiveMap(this.mapDef);
     this.world = new MonkeyWorld(this, (Math.random() * 0xffffffff) >>> 0);
     this.startedPlayers = Math.max(1, this.count);
     this.score = 0;
     // chỉ để chạy thử/chụp ảnh: MONKEY_START_WAVE=8 bắt đầu thẳng từ đợt 8 (kèm xu tương ứng)
-    const sw = Math.max(1, Math.min(60, Number(process.env.MONKEY_START_WAVE) || 1));
+    // ải: bắt đầu từ startWave của ải (cùng công thức xu như MONKEY_START_WAVE)
+    const sw = sd ? Math.max(1, sd.startWave) : Math.max(1, Math.min(60, Number(process.env.MONKEY_START_WAVE) || 1));
+    this.firstWave = sw;
     this.wave = sw - 1;
     this.startedAt = this.clock();
     for (const p of this.players) {
       if (!p) continue;
       const sp = PLAYER_SPAWNS[p.idx];
-      p.st = newState(p.cls, sp.x, sp.z);
+      // đổi nhân vật mà kỹ năng chưa kịp tải lại → cấp kỹ năng mặc định
+      if (p.loadout && p.loadoutCls !== p.cls) p.loadout = { ...p.loadout, skills: { g: 1, x: 1, q: 1 } };
+      if (p.loadout) p.loadoutCls = p.cls;
+      p.st = newState(p.cls, sp.x, sp.z, simModsOf(p.loadout));
       p.st.yaw = (Math.round((Math.atan2(sp.x, sp.z) / (Math.PI * 2)) * 65536) & 0xffff);
       p.hpTier = 0;
-      p.maxHp = maxHpOf(p.cls, 0);
+      p.maxHp = this.maxHpFor(p);
       p.hp = p.maxHp;
       p.shield = 0;
       p.cash = START_CASH + (sw - 1) * 180;
       p.kills = p.ultKills = p.dmg = p.revives = p.earned = p.downs = 0;
       p.cdG = p.cdX = 0;
+      p.knifeAt = 0;
       p.ack = 0;
       p.credit = CMD_BURST;
       p.creditAt = this.clock();
@@ -384,13 +583,29 @@ export class MonkeyRoom implements WorldHost {
   }
 
   private startMsg(): SMsg {
+    const sd = this.stageDef;
     return {
       t: 'start',
       seed: 0,
-      players: this.players.filter((p): p is MPlayer => !!p).map((p) => ({ idx: p.idx, name: p.name, cls: p.cls })),
+      players: this.players.filter((p): p is MPlayer => !!p).map((p): StartPlayer => ({ idx: p.idx, name: p.name, cls: p.cls, mods: p.st.mods, look: p.loadout?.look ?? {} })),
       tick: this.world?.tick ?? 0,
       map: this.mapDef.id,
+      mode: sd ? 'stage' : 'endless',
+      ...(sd ? { stage: sd.id, waves: sd.waves, mods: sd.mods } : {}),
     };
+  }
+
+  /** máu tối đa = nhân vật + bậc máu đã mua + đồ */
+  private maxHpFor(p: MPlayer) {
+    return maxHpOf(p.cls, p.hpTier) + Math.round(p.stat('hp'));
+  }
+
+  /** cộng xu kiếm được (có hệ số cashGain của đồ) */
+  private gain(p: MPlayer, amount: number) {
+    const cg = p.stat('cashGain');
+    const a = cg > 0 ? Math.round(amount * (1 + cg)) : amount;
+    p.cash += a;
+    p.earned += a;
   }
 
   private waveMsg(): SMsg {
@@ -443,27 +658,37 @@ export class MonkeyRoom implements WorldHost {
     this.wave++;
     this.wPhase = PH_FIGHT;
     const alivePlayers = Math.max(1, this.players.filter((p) => p && (p.conn || p.st.down === 0)).length);
-    this.spec = waveSpec(this.wave, alivePlayers);
+    const sd = this.stageDef ?? undefined;
+    this.spec = waveSpec(this.wave, alivePlayers, sd);
     this.toSpawn = this.spec.total;
     this.spawnAcc = this.spec.every; // thả con đầu ngay
     w.skillMul = 1 + 0.09 * (this.wave - 1);
     w.bossSummon = this.wave <= 5 ? 3 : this.wave <= 10 ? 4 : 5;
     if (this.spec.boss) {
       w.pickSpawn(this.tmp2);
-      const s = w.spawn(MK_VUA, this.tmp2[0], this.tmp2[1], 1, this.spec.dmgMul, 1, bossHp(this.wave, alivePlayers));
+      const s = w.spawn(MK_VUA, this.tmp2[0], this.tmp2[1], 1, this.spec.dmgMul, 1, bossHp(this.wave, alivePlayers, sd));
       if (s >= 0) this.broadcast({ t: 'ev', k: 'boss', v: this.wave });
     }
     this.broadcast(this.waveMsg());
   }
 
+  /** đợt cuối của ải (số tuyệt đối) */
+  get lastWave() {
+    return this.stageDef ? this.firstWave + this.stageDef.waves - 1 : Infinity;
+  }
+
   private waveCleared() {
+    // ải: vừa xong đợt cuối → thắng (tính sao trước khi hồi sinh người gục)
+    if (this.stageDef && this.wave >= this.lastWave) {
+      this.stageVictory();
+      return;
+    }
     // chơi một mình không được chia xu từ đồng đội → thưởng đợt cao hơn
     const bonus = Math.round(waveBonus(this.wave) * (this.solo ? 1.5 : 1));
     this.score += bonus * 2;
     for (const p of this.players) {
       if (!p) continue;
-      p.cash += bonus;
-      p.earned += bonus;
+      this.gain(p, bonus);
       if (p.st.down === 1) this.revive(p, -1, REVIVE_HP);
       else if (p.st.down === 2) {
         const sp = PLAYER_SPAWNS[p.idx];
@@ -548,7 +773,10 @@ export class MonkeyRoom implements WorldHost {
         else break;
       }
       if (this.spawnAcc > spec.every * 2) this.spawnAcc = spec.every * 2;
-      if (this.toSpawn === 0 && w.count === 0) this.waveCleared();
+      if (this.toSpawn === 0 && w.count === 0) {
+        this.waveCleared();
+        if (this.phase !== 'play') return; // vượt ải: thế giới đã giải phóng
+      }
     }
 
     // ---- người chơi ----
@@ -635,6 +863,7 @@ export class MonkeyRoom implements WorldHost {
       if (c.btn & P_Q) this.useQ(p);
       if (c.btn & P_V) this.buy(p, 'weapon');
       if (c.btn & P_C) this.buy(p, 'hp');
+      if (c.btn & P_K) this.knife(p, c);
       if (c.btn & B_USE) this.tryRevive(p, w.tick);
     }
   }
@@ -643,14 +872,11 @@ export class MonkeyRoom implements WorldHost {
     const w = this.world!;
     const wd = weaponOf(p.cls, p.st.tier);
     const cls = CLASSES[p.cls];
-    const mul = cls.dmgMul * (p.st.braceT > 0 ? cls.buff.dmg : 1);
+    const mul = cls.dmgMul * (p.st.braceT > 0 ? cls.buff.dmg : 1) * (1 + p.stat('dmg'));
+    const headMul = cls.headMul * (1 + p.stat('headDmg'));
     shotOrigin(p.st, this.org);
     const n = pelletDirs(p.st, c, p.idx, this.dirs);
-    // thời điểm người bắn nhìn thấy: kẹp trong [now - LAG_COMP, now]
-    let vt = c.vt / 16;
-    const now = w.tick;
-    if (!(vt <= now)) vt = now;
-    if (vt < now - LAG_COMP_TICKS) vt = now - LAG_COMP_TICKS;
+    const vt = this.viewTick(c);
     const ox = this.org[0], oy = this.org[1], oz = this.org[2];
     let firstDist = wd.range;
     for (let k = 0; k < n; k++) {
@@ -666,7 +892,7 @@ export class MonkeyRoom implements WorldHost {
         const dist = w.rayT[h];
         let dmg = wd.dmg * mul;
         if (dist > wd.falloff) dmg *= 1 - 0.6 * Math.min(1, (dist - wd.falloff) / Math.max(1, wd.range - wd.falloff));
-        if (w.rayCrit[h]) dmg *= cls.headMul;
+        if (w.rayCrit[h]) dmg *= headMul;
         if (h > 0) dmg *= 0.7; // xuyên giảm sát thương
         p.dmg += Math.min(dmg, Math.max(0, w.hp[sl]));
         w.damage(sl, dmg, p.idx, w.rayCrit[h], CAUSE_SHOT);
@@ -681,6 +907,47 @@ export class MonkeyRoom implements WorldHost {
     w.addShot(p.idx, p.st.yaw, p.st.pitch, firstDist);
   }
 
+  /** thời điểm người chơi nhìn thấy khỉ (lệnh c): kẹp trong [now - LAG_COMP, now] */
+  private viewTick(c: Cmd) {
+    const now = this.world!.tick;
+    let vt = c.vt / 16;
+    if (!(vt <= now)) vt = now;
+    if (vt < now - LAG_COMP_TICKS) vt = now - LAG_COMP_TICKS;
+    return vt;
+  }
+
+  /* ======================= DAO (phím F) ======================= */
+  private knifeSlots: number[] = [];
+  /** chém nón trước mặt, bù trễ như bắn; sau lưng khỉ ×2. Trả số khỉ trúng (-1 = đang hồi) */
+  knife(p: MPlayer, c: Cmd): number {
+    const w = this.world!;
+    if (p.st.down !== 0 || w.tick < p.knifeAt) return -1;
+    p.knifeAt = w.tick + Math.round(KNIFE_CD * AI_HZ);
+    const st = p.st;
+    const fx = isin(st.yaw), fz = icos(st.yaw);
+    const n = w.meleeCone(st.x, st.y, st.z, fx, fz, KNIFE_RANGE, Math.cos((KNIFE_HALF_DEG * Math.PI) / 180), this.viewTick(c), 4);
+    const kd = p.stat('knifeDmg');
+    const base = (kd > 0 ? kd : BASE_KNIFE_DMG) * (1 + p.stat('dmg'));
+    const backCos = Math.cos((KNIFE_BACK_DEG * Math.PI) / 180);
+    const sl = this.knifeSlots;
+    sl.length = 0;
+    for (let h = 0; h < n; h++) sl.push(w.raySlot[h]);
+    let backs = 0;
+    for (const i of sl) {
+      if (!w.alive[i]) continue;
+      // góc giữa hướng khỉ nhìn và hướng từ khỉ tới người chém > 120° → đâm sau lưng
+      const ax = st.x - w.x[i], az = st.z - w.z[i];
+      const al = Math.sqrt(ax * ax + az * az) || 1;
+      const back = (Math.sin(w.yaw[i]) * ax + Math.cos(w.yaw[i]) * az) / al < backCos;
+      if (back) backs++;
+      const dmg = base * (back ? 2 : 1);
+      p.dmg += Math.min(dmg, Math.max(0, w.hp[i]));
+      w.damage(i, dmg, p.idx, back ? 1 : 0, CAUSE_SKILL);
+    }
+    this.broadcast({ t: 'ev', k: 'knife', i: p.idx, v: n, j: backs });
+    return n;
+  }
+
   /* ======================= KỸ NĂNG ======================= */
   private canSkill(p: MPlayer, cdUntil: number, cost: number): boolean {
     const w = this.world!;
@@ -692,13 +959,28 @@ export class MonkeyRoom implements WorldHost {
     return true;
   }
 
+  /** giá xu kỹ năng theo cấp kỹ năng của người chơi */
+  skillCost(p: MPlayer, k: 'g' | 'x') {
+    return Math.round(CLASSES[p.cls][k].cost * skillCostMul(p.skillLv(k)));
+  }
+  /** hồi chiêu (tick AI) theo cấp kỹ năng */
+  private skillCd(p: MPlayer, k: 'g' | 'x') {
+    return Math.round(CLASSES[p.cls][k].cd * skillCostMul(p.skillLv(k)) * AI_HZ);
+  }
+  /** số khỉ cần hạ để sạc tuyệt chiêu (Q) theo cấp kỹ năng */
+  ultNeed(p: MPlayer) {
+    return Math.max(1, Math.round(ULT_KILLS * skillCostMul(p.skillLv('q'))));
+  }
+
   private useG(p: MPlayer) {
     const w = this.world!;
     const cls = CLASSES[p.cls];
-    if (!this.canSkill(p, p.cdG, cls.g.cost)) return;
-    p.cash -= cls.g.cost;
-    p.cdG = w.tick + Math.round(cls.g.cd * AI_HZ);
-    const sm = w.skillMul;
+    const cost = this.skillCost(p, 'g');
+    if (!this.canSkill(p, p.cdG, cost)) return;
+    p.cash -= cost;
+    p.cdG = w.tick + this.skillCd(p, 'g');
+    const pw = skillPower(p.skillLv('g'));
+    const sm = w.skillMul * pw;
     const st = p.st;
     switch (cls.id) {
       case 'chienbinh': {
@@ -749,7 +1031,7 @@ export class MonkeyRoom implements WorldHost {
       case 'xathu': {
         // bom choáng: nổ hẹn giờ tại điểm ngắm
         this.aimGround(st, 22, this.tmp2);
-        w.booms.push({ x: this.tmp2[0], z: this.tmp2[1], at: w.tick + Math.round(0.6 * AI_HZ), r: 5, dmg: 40 * sm, owner: p.idx, stun: 2.5 });
+        w.booms.push({ x: this.tmp2[0], z: this.tmp2[1], at: w.tick + Math.round(0.6 * AI_HZ), r: 5, dmg: 40 * sm, owner: p.idx, stun: 2.5 * pw });
         break;
       }
       case 'phaothu': {
@@ -802,19 +1084,21 @@ export class MonkeyRoom implements WorldHost {
   private useX(p: MPlayer) {
     const w = this.world!;
     const cls = CLASSES[p.cls];
-    if (!this.canSkill(p, p.cdX, cls.x.cost)) return;
+    const cost = this.skillCost(p, 'x');
+    if (!this.canSkill(p, p.cdX, cost)) return;
+    const pw = skillPower(p.skillLv('x'));
     const st = p.st;
     const fx = isin(st.yaw), fz = icos(st.yaw);
     const yawRad = (st.yaw / 65536) * Math.PI * 2;
     switch (cls.id) {
       case 'chienbinh': {
         collide(st.x + fx * 2.6, st.z + fz * 2.6, 0.3, this.tmp2);
-        w.addEnt(EN_BARRICADE, p.idx, this.tmp2[0], this.tmp2[1], yawRad, 30);
+        w.addEnt(EN_BARRICADE, p.idx, this.tmp2[0], this.tmp2[1], yawRad, 30 * pw);
         w.addFx(FX_BUILD, this.tmp2[0], this.tmp2[1], EN_BARRICADE, 0);
         break;
       }
       case 'ysi': {
-        w.addEnt(EN_POD, p.idx, st.x, st.z, 0, 12);
+        w.addEnt(EN_POD, p.idx, st.x, st.z, 0, 12 * pw);
         w.addFx(FX_BUILD, st.x, st.z, EN_POD, 0);
         break;
       }
@@ -825,24 +1109,24 @@ export class MonkeyRoom implements WorldHost {
           w.ents.splice(w.ents.indexOf(old), 1);
         }
         collide(st.x + fx * 1.6, st.z + fz * 1.6, 0.5, this.tmp2);
-        w.addEnt(EN_TURRET, p.idx, this.tmp2[0], this.tmp2[1], yawRad, 45, this.turretPower(p));
+        w.addEnt(EN_TURRET, p.idx, this.tmp2[0], this.tmp2[1], yawRad, 45 * pw, this.turretPower(p) * pw);
         w.addFx(FX_BUILD, this.tmp2[0], this.tmp2[1], EN_TURRET, 0);
         break;
       }
       case 'dausi': {
-        st.braceT = 5 * TICK_HZ;
+        st.braceT = Math.round(5 * TICK_HZ * pw);
         break;
       }
       case 'xathu': {
         // mắt ưng: braceT = bắn không tốn đạn + tăng sát thương (xem ClassDef.buff)
-        st.braceT = 6 * TICK_HZ;
+        st.braceT = Math.round(6 * TICK_HZ * pw);
         break;
       }
       case 'phaothu': {
         // pháo cối: 5 quả rơi quanh điểm ngắm
         this.aimGround(st, 30, this.tmp2);
         const cx = this.tmp2[0], cz = this.tmp2[1];
-        const sm = w.skillMul;
+        const sm = w.skillMul * pw;
         for (let k = 0; k < 5; k++) {
           const a = k * 1.2566 + w.rng() * 0.5;
           const r = k === 0 ? 0 : 2.6;
@@ -853,7 +1137,7 @@ export class MonkeyRoom implements WorldHost {
       }
       case 'caoboi': {
         // hất cát: nón 8m (nửa góc ~50°) — sát thương, đẩy lùi, choáng 2 giây
-        const sm = w.skillMul;
+        const sm = w.skillMul * pw;
         w.addFx(FX_STOMP, st.x + fx * 2, st.z + fz * 2, 40, p.idx);
         for (let i = 0; i < w.alive.length; i++) {
           if (!w.alive[i]) continue;
@@ -867,12 +1151,12 @@ export class MonkeyRoom implements WorldHost {
           p.dmg += 25 * sm;
           w.damage(i, 25 * sm, p.idx, 0, CAUSE_SKILL);
         }
-        w.stunArea(st.x, st.z, 8, 2, fx, fz, 0.64);
+        w.stunArea(st.x, st.z, 8, 2 * pw, fx, fz, 0.64);
         break;
       }
     }
-    p.cash -= cls.x.cost;
-    p.cdX = w.tick + Math.round(cls.x.cd * AI_HZ);
+    p.cash -= cost;
+    p.cdX = w.tick + this.skillCd(p, 'x');
     this.broadcast({ t: 'ev', k: 'skill', i: p.idx, s: 'x' });
   }
 
@@ -896,11 +1180,12 @@ export class MonkeyRoom implements WorldHost {
 
   private useQ(p: MPlayer) {
     const w = this.world!;
-    if (p.ultKills < ULT_KILLS) return;
+    if (p.ultKills < this.ultNeed(p)) return;
     p.ultKills = 0;
     const st = p.st;
     const cls = CLASSES[p.cls];
-    const sm = w.skillMul;
+    const pw = skillPower(p.skillLv('q'));
+    const sm = w.skillMul * pw;
     const yawRad = (st.yaw / 65536) * Math.PI * 2;
     switch (cls.id) {
       case 'chienbinh':
@@ -915,18 +1200,18 @@ export class MonkeyRoom implements WorldHost {
         }
         break;
       case 'kysu': {
-        w.overclockUntil[p.idx] = w.tick + 12 * AI_HZ;
+        w.overclockUntil[p.idx] = w.tick + Math.round(12 * AI_HZ * pw);
         const fx = isin(st.yaw), fz = icos(st.yaw);
         collide(st.x - fx * 1.4, st.z - fz * 1.4, 0.5, this.tmp2);
         // trụ miễn phí (power âm = không tính vào giới hạn 2 trụ)
-        const e = w.addEnt(EN_TURRET, p.idx, this.tmp2[0], this.tmp2[1], yawRad, 20, this.turretPower(p));
+        const e = w.addEnt(EN_TURRET, p.idx, this.tmp2[0], this.tmp2[1], yawRad, 20 * pw, this.turretPower(p) * pw);
         e.born = -1; // trụ miễn phí: không tính vào giới hạn 2 trụ
         w.addFx(FX_BUILD, this.tmp2[0], this.tmp2[1], EN_TURRET, 1);
         break;
       }
       case 'dausi':
-        p.tauntUntil = w.tick + 8 * AI_HZ;
-        p.rageUntil = w.tick + 8 * AI_HZ;
+        p.tauntUntil = w.tick + Math.round(8 * AI_HZ * pw);
+        p.rageUntil = w.tick + Math.round(8 * AI_HZ * pw);
         p.shield = 100;
         for (let i = 0; i < w.alive.length; i++) {
           if (!w.alive[i]) continue;
@@ -962,7 +1247,7 @@ export class MonkeyRoom implements WorldHost {
       }
       case 'caoboi':
         // thần tốc: braceT = bắn nhanh ×2,5, không tốn đạn, +20% sát thương (xem ClassDef.buff)
-        st.braceT = 8 * TICK_HZ;
+        st.braceT = Math.round(8 * TICK_HZ * pw);
         st.fireCd = 0;
         break;
     }
@@ -971,6 +1256,10 @@ export class MonkeyRoom implements WorldHost {
 
   buy(p: MPlayer, item: 'weapon' | 'hp') {
     if (this.phase !== 'play' || p.st.down) return;
+    const mods = this.stageDef?.mods;
+    if (mods && (mods.includes('noShop') || (item === 'weapon' && mods.includes('pistolOnly')))) {
+      return p.send({ t: 'ev', k: 'noshop', s: item });
+    }
     if (item === 'weapon') {
       if (p.st.tier >= MAX_TIER) return;
       const cost = weaponOf(p.cls, p.st.tier + 1).cost;
@@ -987,7 +1276,7 @@ export class MonkeyRoom implements WorldHost {
       if (p.cash < cost) return p.send({ t: 'ev', k: 'nocash', v: cost });
       p.cash -= cost;
       p.hpTier++;
-      p.maxHp = maxHpOf(p.cls, p.hpTier);
+      p.maxHp = this.maxHpFor(p);
       p.hp = Math.min(p.maxHp, p.hp + HP_TIER_BONUS + 20);
       this.broadcast({ t: 'ev', k: 'buy', i: p.idx, s: 'hp', v: p.hpTier });
     }
@@ -1009,8 +1298,7 @@ export class MonkeyRoom implements WorldHost {
     if (best.reviveProg >= 1) {
       this.revive(best, p.idx, REVIVE_HP);
       p.revives++;
-      p.cash += 25;
-      p.earned += 25;
+      this.gain(p, 25);
     }
   }
 
@@ -1029,7 +1317,7 @@ export class MonkeyRoom implements WorldHost {
     const w = this.world;
     if (!p || !w || p.st.down || this.wPhase !== PH_FIGHT) return;
     const cls = CLASSES[p.cls];
-    let d = dmg * (1 - cls.armor);
+    let d = dmg * (1 - cls.armor) * (1 - p.stat('armor'));
     if (p.st.braceT > 0) d *= 1 - cls.buff.armor;
     if (kind === MK_NO && cls.id === 'phaothu') d *= 0.7; // pháo thủ kháng nổ
     if (p.rageUntil > w.tick) d *= 0.5;
@@ -1058,14 +1346,13 @@ export class MonkeyRoom implements WorldHost {
     const w = this.world!;
     this.score += def.reward;
     if (type === MK_VUA) {
-      for (const p of this.players) if (p) { p.cash += def.reward; p.earned += def.reward; }
+      for (const p of this.players) if (p) this.gain(p, def.reward);
       this.broadcast({ t: 'ev', k: 'bossdown', i: killer });
     } else if (killer >= 0 && killer < MAX_PLAYERS) {
       const share = Math.round(def.reward * teamShare(this.count));
       for (const p of this.players) {
         if (!p) continue;
-        if (p.idx === killer) { p.cash += def.reward; p.earned += def.reward; }
-        else { p.cash += share; p.earned += share; }
+        this.gain(p, p.idx === killer ? def.reward : share);
       }
     }
     const k = killer >= 0 && killer < MAX_PLAYERS ? this.players[killer] : null;
@@ -1090,7 +1377,7 @@ export class MonkeyRoom implements WorldHost {
       this.heal(idx, p.maxHp * 0.3);
     } else {
       // túi xu chia cả đội
-      for (const q of this.players) if (q) { q.cash += 50; q.earned += 50; }
+      for (const q of this.players) if (q) this.gain(q, 50);
     }
   }
 
@@ -1138,7 +1425,7 @@ export class MonkeyRoom implements WorldHost {
       w.u16(st.braceT);
       w.u8(Math.max(0, Math.min(255, Math.ceil((p.cdG - world.tick) / 2))));
       w.u8(Math.max(0, Math.min(255, Math.ceil((p.cdX - world.tick) / 2))));
-      w.u8(Math.min(255, Math.floor((p.ultKills / ULT_KILLS) * 255)));
+      w.u8(Math.min(255, Math.floor((p.ultKills / this.ultNeed(p)) * 255)));
       w.u8(Math.min(255, Math.floor(p.reviveProg * 255)));
       w.u8(st.down === 1 ? Math.max(0, Math.ceil((p.bleedUntil - world.tick) / AI_HZ)) : 0);
       w.u32(Math.floor(p.cash));
@@ -1172,34 +1459,134 @@ export class MonkeyRoom implements WorldHost {
   }
 
   /* ======================= KẾT THÚC ======================= */
-  private gameOver() {
-    const secs = Math.round((this.clock() - this.startedAt) / 1000);
-    const ps = this.players.filter((p): p is MPlayer => !!p);
-    const kills = ps.reduce((a, p) => a + p.kills, 0);
-    const entry: BoardEntry = {
-      names: ps.map((p) => p.name),
-      cls: ps.map((p) => p.cls),
-      wave: this.wave,
-      score: Math.round(this.score),
-      kills,
-      players: this.startedPlayers,
-      at: this.clock(),
-    };
-    const rank = this.wave > 0 ? submitRun(entry) : 0;
-    const stats: EndStat[] = ps.map((p) => ({
+  private endStats(ps: MPlayer[]): EndStat[] {
+    return ps.map((p) => ({
       idx: p.idx, name: p.name, cls: p.cls, kills: p.kills, dmg: Math.round(p.dmg), revives: p.revives, earned: Math.round(p.earned), downs: p.downs,
     }));
+  }
+
+  /** ghi kết quả một người có tài khoản (khách → reward null); không bao giờ reject */
+  private recordFor(p: MPlayer, r: Omit<RunResult, 'accountId' | 'kills'>): Promise<RunReward> {
+    if (p.accountId === undefined) return Promise.resolve(guestReward(p.idx));
+    const run: RunResult = { ...r, accountId: p.accountId, kills: p.kills };
+    return this.store.recordRun(run, new Date(this.clock())).then(
+      (res) => {
+        p.level = res.newLevel;
+        if (r.won && r.stage !== 'endless' && !p.cleared.has(r.stage)) p.cleared = new Set([...p.cleared, r.stage]);
+        // thưởng lần đầu qua ải do Store cộng — gộp vào để client hiển thị
+        const fr = res.firstClear ? STAGE_BY_ID[r.stage]?.first : undefined;
+        return {
+          idx: p.idx,
+          reward: {
+            gold: (r.reward.gold ?? 0) + (fr?.gold ?? 0),
+            xp: (r.reward.xp ?? 0) + (fr?.xp ?? 0),
+            shards: (r.reward.shards ?? 0) + (fr?.shards ?? 0),
+            books: (r.reward.books ?? 0) + (fr?.books ?? 0),
+            items: res.items.map((it) => ({ uid: it.uid, itemId: it.itemId, rarity: it.rarity, subs: it.subs })),
+            ...(fr?.unlockChar !== undefined ? { unlockChar: fr.unlockChar } : {}),
+          },
+          levelUps: res.levelUps,
+          newLevel: res.newLevel,
+          firstClear: res.firstClear,
+        };
+      },
+      (e) => {
+        console.warn('[monkey] không ghi được kết quả trận', p.accountId, (e as Error).message);
+        return guestReward(p.idx);
+      },
+    );
+  }
+
+  /**
+   * Chờ các lần ghi (tối đa REWARD_WAIT_MS) rồi gửi tin tổng kết; lần nào chưa xong thì gửi reward null.
+   * Không có ai đăng nhập → gửi ngay (đồng bộ).
+   */
+  private sendAfter(jobs: Promise<RunReward>[], ps: MPlayer[], mk: (rewards: RunReward[]) => SMsg) {
+    const run = this.runId;
+    if (!jobs.length || ps.every((p) => p.guest)) {
+      this.broadcast(mk(ps.map((p) => guestReward(p.idx))));
+      this.settling = Promise.all(jobs).then(() => undefined);
+      return;
+    }
+    const got: (RunReward | null)[] = ps.map(() => null);
+    const each = jobs.map((j, k) => j.then((r) => { got[k] = r; }));
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((res) => { timer = setTimeout(res, REWARD_WAIT_MS); timer.unref?.(); });
+    this.settling = Promise.race([Promise.all(each).then(() => undefined), timeout]).then(() => {
+      if (timer) clearTimeout(timer);
+      if (this.disposed || this.runId !== run) return;
+      this.broadcast(mk(got.map((r, k) => r ?? guestReward(ps[k].idx))));
+    });
+  }
+
+  /** dọn trận: dừng vòng lặp, chuyển 'over', giải phóng thế giới */
+  private finishRun() {
     this.stopLoop();
     this.phase = 'over';
     this.wPhase = PH_OVER;
-    this.broadcast({
-      t: 'over', wave: this.wave, score: entry.score, kills, rank, secs, stats,
-      board: topRuns(this.startedPlayers <= 1, 10),
-    });
     this.broadcastRoom();
     // giải phóng thế giới (bộ nhớ) ngay khi hết ván
     this.world?.reset();
     this.world = null;
+  }
+
+  /** vượt ải: tính sao, tung đồ cho từng người, ghi DB (nền), gửi 'victory' */
+  private stageVictory() {
+    const sd = this.stageDef!;
+    const secs = Math.round((this.clock() - this.startedAt) / 1000);
+    const ps = this.players.filter((p): p is MPlayer => !!p);
+    let hp = 0, max = 0, downs = 0;
+    for (const p of ps) {
+      hp += p.st.down ? 0 : Math.max(0, p.hp);
+      max += p.maxHp;
+      downs += p.downs;
+    }
+    const stars = 1 + (max > 0 && hp >= max * 0.5 ? 1 : 0) + (downs === 0 && secs <= sd.star3Secs ? 1 : 0);
+    const kills = ps.reduce((a, p) => a + p.kills, 0);
+    const score = Math.round(this.score);
+    const stats = this.endStats(ps);
+    const wave = this.wave;
+    const jobs = ps.map((p) =>
+      this.recordFor(p, {
+        stage: sd.id, won: true, stars, wave, secs, score,
+        reward: p.guest ? {} : rollDrops(sd.drops, p.stat('luck'), stars, this.rng),
+      }),
+    );
+    submitRun(this.store, { stage: sd.id, solo: this.startedPlayers <= 1, names: ps.map((p) => p.name), cls: ps.map((p) => p.cls), wave, score, kills, secs }, this.clock());
+    this.broadcast({ t: 'ev', k: 'clear', v: wave, j: 0 });
+    this.finishRun();
+    this.sendAfter(jobs, ps, (rewards) => ({ t: 'victory', stage: sd.id, stars, secs, wave, rewards, stats, score, kills }));
+    if (this.online === 0) this.dispose();
+  }
+
+  /** nguồn ngẫu nhiên cho rớt đồ (crypto; test có thể thay) */
+  rng: () => number = cryptoRng;
+
+  private gameOver() {
+    const secs = Math.round((this.clock() - this.startedAt) / 1000);
+    const ps = this.players.filter((p): p is MPlayer => !!p);
+    const kills = ps.reduce((a, p) => a + p.kills, 0);
+    const score = Math.round(this.score);
+    const sd = this.stageDef;
+    const stage = sd ? sd.id : 'endless';
+    let rank = 0;
+    if (!sd && this.wave > 0) {
+      rank = submitRun(this.store, { stage, solo: this.startedPlayers <= 1, names: ps.map((p) => p.name), cls: ps.map((p) => p.cls), wave: this.wave, score, kills, secs }, this.clock()).rank;
+    }
+    const stats = this.endStats(ps);
+    // thưởng an ủi: theo số đợt đã vượt trong ván này
+    const cleared = Math.max(0, this.wave - this.firstWave);
+    const jobs = ps.map((p) =>
+      this.recordFor(p, { stage, won: false, stars: 0, wave: this.wave, secs, score, reward: { gold: 15 * cleared, xp: 20 * cleared } }),
+    );
+    const wave = this.wave;
+    const board = topRuns(this.store, this.startedPlayers <= 1, 10);
+    this.finishRun();
+    this.sendAfter(jobs, ps, (rewards) => ({
+      t: 'over', wave, score, kills, rank, secs, stats, board,
+      ...(ps.some((p) => !p.guest) ? { rewards } : {}),
+      ...(sd ? { stage: sd.id } : {}),
+    }));
     // không còn ai xem tổng kết → giải tán phòng luôn
     if (this.online === 0) this.dispose();
   }

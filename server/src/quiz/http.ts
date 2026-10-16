@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { HttpError, createAdminCheck, json, parseJson, readBody } from '../http/util.js';
 import { extname, join } from 'node:path';
 import {
   MEDIA_DIR,
@@ -34,80 +35,9 @@ const MAX_UPLOAD = 25 * 1024 * 1024;
 const MAX_IMPORT = 120 * 1024 * 1024;
 const MAX_MEDIA_TOTAL = 500 * 1024 * 1024;
 
-class HttpError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-  }
-}
-
 // ---- xác thực admin ----
-const FAILS = new Map<string, { n: number; reset: number }>();
-const FAIL_LIMIT = 10;
-const FAIL_WINDOW = 60_000;
-
-function clientIp(req: IncomingMessage): string {
-  const xf = req.headers['x-forwarded-for'];
-  const first = (Array.isArray(xf) ? xf[0] : xf)?.split(',')[0]?.trim();
-  return first || req.socket.remoteAddress || '?';
-}
-
-function sameKey(a: string, b: string): boolean {
-  const ha = createHash('sha256').update(a).digest();
-  const hb = createHash('sha256').update(b).digest();
-  return timingSafeEqual(ha, hb);
-}
-
-function checkAdmin(req: IncomingMessage): { status: number; message: string } | null {
-  let expected = process.env.QUIZ_ADMIN_KEY;
-  if (!expected) {
-    if (process.env.NODE_ENV === 'production') return { status: 403, message: 'Admin đã tắt' };
-    expected = 'dev';
-  }
-  const ip = clientIp(req);
-  const now = Date.now();
-  const rec = FAILS.get(ip);
-  if (rec && now < rec.reset && rec.n >= FAIL_LIMIT) return { status: 429, message: 'Sai khoá quá nhiều lần, thử lại sau' };
-  const h = req.headers['x-admin-key'];
-  const given = Array.isArray(h) ? h[0] : h;
-  if (typeof given === 'string' && sameKey(given, expected)) return null;
-  if (!rec || now >= rec.reset) FAILS.set(ip, { n: 1, reset: now + FAIL_WINDOW });
-  else rec.n += 1;
-  if (FAILS.size > 5000) for (const [k, v] of FAILS) if (now >= v.reset) FAILS.delete(k);
-  return { status: 403, message: 'Sai khoá admin' };
-}
-
-function json(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(JSON.stringify(body));
-}
-
-function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const len = Number(req.headers['content-length'] ?? 0);
-    if (len > limit) return reject(new HttpError(413, 'Dữ liệu quá lớn'));
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on('data', (c: Buffer) => {
-      size += c.length;
-      if (size > limit) {
-        reject(new HttpError(413, 'Dữ liệu quá lớn'));
-        req.destroy();
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
-
-function parseJson(buf: Buffer): any {
-  try {
-    return JSON.parse(buf.toString('utf8'));
-  } catch {
-    throw new HttpError(400, 'JSON không hợp lệ');
-  }
-}
+// không đặt QUIZ_ADMIN_KEY: chạy local dùng khoá 'dev', production thì tắt admin
+const checkAdmin = createAdminCheck(() => process.env.QUIZ_ADMIN_KEY || (process.env.NODE_ENV === 'production' ? null : 'dev'));
 
 // ---- media ----
 function serveMedia(req: IncomingMessage, res: ServerResponse, name: string) {

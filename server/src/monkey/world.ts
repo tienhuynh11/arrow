@@ -1112,6 +1112,42 @@ export class MonkeyWorld {
     return n;
   }
 
+  /**
+   * Chém cận chiến bù trễ: khỉ trong nón (tầm tính tới mép thân, nửa góc acos(cosHalf)) quanh (x,z) hướng (fx,fz)
+   * ở thời điểm vt; không xuyên vật cản. Ghi raySlot/rayT (khoảng cách), gần trước; trả số khỉ trúng.
+   */
+  meleeCone(x: number, y: number, z: number, fx: number, fz: number, range: number, cosHalf: number, vt: number, maxHits: number) {
+    let n = 0;
+    const lim = Math.min(16, maxHits);
+    for (let i = 0; i < MAX_MONKEYS; i++) {
+      if (!this.alive[i]) continue;
+      if (!this.rewound(i, vt)) continue;
+      const dx = this.rw[0] - x, dz = this.rw[1] - z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      const t = this.type[i];
+      if (d - bodyR(t) > range) continue;
+      if (d > bodyR(t) && (dx * fx + dz * fz) / d < cosHalf) continue;
+      if (d > 0.3) {
+        const oy = y + 1.1;
+        const dy = bodyY(t) - oy;
+        const l = Math.sqrt(d * d + dy * dy);
+        if (rayWorld(x, oy, z, dx / l, dy / l, dz / l, l) < l - bodyR(t) - 0.05) continue;
+      }
+      if (n < lim) n++;
+      else if (d >= this.rayT[n - 1]) continue;
+      let k = n - 1;
+      while (k > 0 && this.rayT[k - 1] > d) {
+        this.rayT[k] = this.rayT[k - 1];
+        this.raySlot[k] = this.raySlot[k - 1];
+        k--;
+      }
+      this.rayT[k] = d;
+      this.raySlot[k] = i;
+    }
+    this.rayN = n;
+    return n;
+  }
+
   static readonly HEAD_MUL = HEAD_MUL;
   static readonly LAG_TICKS = LAG_COMP_TICKS;
 

@@ -82,6 +82,18 @@ export class Net {
     ws.onerror = () => ws.close();
   }
 
+  /** đóng kết nối để nối lại từ đầu (ví dụ sau khi đăng xuất: bỏ tài khoản gắn với phiên WS) */
+  reconnect() {
+    const ws = this.ws;
+    if (!ws) return this.connect();
+    this.queue.length = 0;
+    try {
+      ws.close();
+    } catch {
+      /* đã đóng */
+    }
+  }
+
   private scheduleRetry() {
     this.retry++;
     setTimeout(() => this.connect(), Math.min(5000, 600 * this.retry));

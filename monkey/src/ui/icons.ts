@@ -3,6 +3,7 @@
 
 import { MAX_TIER, weaponOf } from '@shared/monkey/content';
 import type { WeaponDef, WeaponModel } from '@shared/monkey/content';
+import type { ItemDef, Slot } from '@shared/monkey/progression';
 
 export type GunModel = WeaponModel;
 
@@ -182,4 +183,148 @@ export function svgEl(svg: string, cls = 'pic'): HTMLElement {
   el.className = cls;
   el.innerHTML = svg;
   return el;
+}
+
+/* ======================= ĐỒ ĐẠC (mũ, giáp, súng, dao, trang phục) ======================= */
+// viewBox 64x64, vật thể nằm giữa; khung độ hiếm do CSS (.itile --rc) vẽ.
+
+function wrapSq(inner: string, defs: string, cls: string) {
+  return `<svg class="${cls}" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>${defs}</defs>`
+    + `<g stroke="${OL}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">${inner}</g></svg>`;
+}
+const gloss = (d: string) => `<path d="${d}" fill="none" stroke="#fff" stroke-opacity=".5" stroke-width="2.2"/>`;
+const shadeN = (n: number, f: number) => parseInt(shade(n, f).slice(1), 16);
+
+function helmetArt(kind: string, B: string, c: number, a: number) {
+  switch (kind) {
+    case 'nonla':
+      return `<path d="M4 42 L32 10 L60 42 Q32 50 4 42 Z" fill="${B}"/>`
+        + `<path d="M12 37 L32 14 M20 40 L32 14 M32 44 L32 14 M44 40 L32 14 M52 37 L32 14" stroke-width="1" opacity=".45"/>`
+        + `<path d="M14 44 Q22 56 32 54 Q42 56 50 44" fill="none" stroke="#7c2d12" stroke-width="2"/>`
+        + gloss('M20 30 L30 18');
+    case 'knight':
+      return `<path d="M14 46 L14 26 Q14 8 32 8 Q50 8 50 26 L50 46 Q32 54 14 46 Z" fill="${B}"/>`
+        + `<rect x="18" y="26" width="28" height="5" rx="1.5" fill="${OL}"/>`
+        + `<path d="M32 33 V48 M26 36 v8 M38 36 v8" stroke-width="1.5" opacity=".7"/>`
+        + `<path d="M32 8 Q40 0 50 4 Q42 6 38 12" fill="${hex(a)}"/>`
+        + gloss('M19 22 Q20 13 28 11');
+    case 'hunter':
+      return `<path d="M8 40 Q32 32 56 40 Q58 46 48 44 L16 44 Q6 46 8 40 Z" fill="${shade(c, -0.25)}"/>`
+        + `<path d="M15 40 Q14 16 32 14 Q50 16 49 40 Z" fill="${B}"/>`
+        + `<path d="M15 34 Q32 30 49 34 L49 38 Q32 34 15 38 Z" fill="#3b2414"/>`
+        + `<path d="M44 34 Q56 14 60 8 Q56 22 48 34 Z" fill="#dc2626"/>`
+        + gloss('M21 28 Q22 20 30 18');
+    case 'banana':
+      return `<ellipse cx="32" cy="48" rx="24" ry="5" fill="${shade(c, -0.3)}"/>`
+        + `<path d="M10 46 Q8 22 26 12 Q40 6 50 14 Q38 14 32 22 Q26 32 30 47 Z" fill="${B}"/>`
+        + `<path d="M30 47 Q40 30 56 30 Q54 42 44 47 Z" fill="${shade(c, -0.15)}"/>`
+        + `<path d="M48 14 L54 8 L56 12 Z" fill="#5b3a1e"/>`
+        + gloss('M14 36 Q14 22 26 15');
+    case 'helmet':
+    default:
+      return `<path d="M8 42 Q8 12 32 12 Q56 12 56 42 Z" fill="${B}"/>`
+        + `<path d="M4 42 H60 Q60 48 54 48 H10 Q4 48 4 42 Z" fill="${shade(c, -0.3)}"/>`
+        + `<path d="M14 34 h36" stroke-width="1.2" opacity=".5"/>`
+        + `<rect x="27" y="22" width="10" height="7" rx="2" fill="${shade(c, -0.4)}"/>`
+        + gloss('M15 30 Q16 19 27 16');
+  }
+}
+
+function armorArt(kind: string, B: string, c: number) {
+  const body = `<path d="M18 8 L26 12 Q32 15 38 12 L46 8 L58 18 L52 28 L48 26 L48 56 L16 56 L16 26 L12 28 L6 18 Z" fill="${B}"/>`;
+  switch (kind) {
+    case 'plate':
+      return body
+        + `<path d="M4 16 Q12 4 22 10 L18 24 Q8 26 4 16 Z" fill="${shade(c, 0.2)}"/><path d="M60 16 Q52 4 42 10 L46 24 Q56 26 60 16 Z" fill="${shade(c, 0.2)}"/>`
+        + `<path d="M20 30 Q32 36 44 30 M20 40 Q32 46 44 40 M20 50 Q32 54 44 50" fill="none" stroke-width="1.4" opacity=".6"/>`
+        + `<circle cx="24" cy="24" r="1.6" fill="${OL}"/><circle cx="40" cy="24" r="1.6" fill="${OL}"/>`
+        + gloss('M22 22 Q32 26 42 22');
+    case 'bamboo':
+      return body
+        + `<path d="M22 18 V56 M28 18 V56 M34 18 V56 M40 18 V56" stroke-width="1.3" opacity=".55"/>`
+        + `<path d="M16 30 H48 M16 44 H48" stroke="#5b3a1e" stroke-width="2.5"/>`
+        + gloss('M19 22 V34');
+    case 'leather':
+      return body
+        + `<path d="M32 15 V56" stroke-width="1.5"/>`
+        + `<path d="M19 28 h9 M19 33 h9 M36 28 h9 M36 33 h9" stroke-dasharray="2 2" stroke-width="1.2" opacity=".7"/>`
+        + `<rect x="16" y="44" width="32" height="5" fill="#3b2414"/><rect x="29" y="43" width="6" height="7" rx="1" fill="#d4a017"/>`
+        + gloss('M20 20 Q24 18 28 20');
+    case 'vest':
+    default:
+      return body
+        + `<rect x="19" y="32" width="10" height="9" rx="1.5" fill="${shade(c, -0.25)}"/><rect x="35" y="32" width="10" height="9" rx="1.5" fill="${shade(c, -0.25)}"/>`
+        + `<path d="M32 15 V56" stroke-width="1.2" opacity=".6"/>`
+        + gloss('M20 22 Q24 19 28 21');
+  }
+}
+
+function knifeArt(kind: string, a: number, id: string) {
+  const blade = `url(#${id}k)`;
+  const handle = kind === 'bamboo' ? '#65a30d' : kind === 'machete' ? hex(a || 0x7c2d12) : '#3b2414';
+  let bladePath: string;
+  switch (kind) {
+    case 'machete':
+      bladePath = `<path d="M24 38 L52 8 Q60 6 58 16 L30 44 Z" fill="${blade}"/>`;
+      break;
+    case 'fire':
+      bladePath = `<path d="M24 38 Q34 22 50 8 Q46 18 54 14 Q46 28 30 44 Z" fill="${blade}"/>`
+        + `<path d="M36 28 Q44 18 50 12" fill="none" stroke="${hex(a || 0xfde047)}" stroke-width="2" opacity=".9"/>`;
+      break;
+    case 'bamboo':
+      bladePath = `<path d="M25 37 L54 8 L57 11 L28 40 Z" fill="${blade}"/>`
+        + `<path d="M34 28 l3 3 M42 20 l3 3 M50 12 l2 2" stroke-width="1.4"/>`;
+      break;
+    case 'dagger':
+    default:
+      bladePath = `<path d="M26 36 L52 10 L54 12 L30 40 Z" fill="${blade}"/><path d="M28 38 L52 11" stroke-width="1" opacity=".5"/>`;
+  }
+  return bladePath
+    + `<path d="M18 34 L32 48" stroke-width="5"/><path d="M19 35 L31 47" stroke-width="3" stroke="#d4a017"/>`
+    + `<path d="M10 54 L24 40" stroke-width="8"/><path d="M11 53 L23 41" stroke-width="5.5" stroke="${handle}"/>`
+    + `<circle cx="9" cy="55" r="3" fill="#d4a017"/>`;
+}
+
+function skinArt(B: string, a: number) {
+  return `<path d="M20 8 Q32 14 44 8 L60 18 L54 30 L48 27 L48 56 L16 56 L16 27 L10 30 L4 18 Z" fill="${B}"/>`
+    + `<path d="M16 34 H48 M16 40 H48" stroke="${hex(a)}" stroke-width="3"/>`
+    + `<path d="M24 9 Q32 18 40 9" fill="none" stroke="${hex(a)}" stroke-width="2"/>`
+    + gloss('M20 22 Q24 19 28 21');
+}
+
+/** SVG một món đồ theo ItemDef.look (màu = look.color) */
+export function itemSvg(def: ItemDef | undefined, cls = 'itpic'): string {
+  if (!def) return wrapSq(`<text x="32" y="42" text-anchor="middle" font-size="28" stroke="none" fill="#fff">?</text>`, '', cls);
+  const id = `it${++uid}`;
+  const c = def.look.color;
+  const a = def.look.accent ?? shadeN(c, -0.4);
+  const defs = `<linearGradient id="${id}b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${shade(c, 0.4)}"/><stop offset=".55" stop-color="${hex(c)}"/><stop offset="1" stop-color="${shade(c, -0.4)}"/></linearGradient>`
+    + `<linearGradient id="${id}k" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="${shade(c, -0.3)}"/><stop offset=".5" stop-color="${shade(c, 0.5)}"/><stop offset="1" stop-color="#ffffff"/></linearGradient>`;
+  const B = `url(#${id}b)`;
+  const shadow = `<ellipse cx="32" cy="59" rx="20" ry="2.4" fill="#000" fill-opacity=".35" stroke="none"/>`;
+  switch (def.slot) {
+    case 'helmet':
+      return wrapSq(shadow + helmetArt(def.look.kind, B, c, a), defs, cls);
+    case 'armor':
+      return wrapSq(shadow + armorArt(def.look.kind, B, c), defs, cls);
+    case 'knife':
+      return wrapSq(shadow + knifeArt(def.look.kind, def.look.accent ?? 0, id), defs, cls);
+    case 'skin':
+      return wrapSq(shadow + skinArt(B, a), defs, cls);
+    case 'gun': {
+      const body = gunBody('rifle', `url(#${id}b)`, `url(#${id}m)`, `url(#${id}w)`, hex(a));
+      return `<svg class="${cls}" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>${gradDefs(id, c)}</defs>${shadow}`
+        + `<g transform="translate(2 18) scale(.5)" stroke="${OL}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">${body}</g></svg>`;
+    }
+  }
+  return wrapSq('', '', cls);
+}
+
+/** ô trống của một slot (bóng mờ) */
+export function slotGhostSvg(slot: Slot, cls = 'itpic ghost'): string {
+  const ghost: Record<Slot, ItemDef['look']> = {
+    helmet: { kind: 'helmet', color: 0x6b7280 }, armor: { kind: 'vest', color: 0x6b7280 }, gun: { kind: 'gun', color: 0x6b7280 },
+    knife: { kind: 'dagger', color: 0x6b7280 }, skin: { kind: 'skin', color: 0x6b7280, accent: 0x4b5563 },
+  };
+  return itemSvg({ id: 'ghost', slot, name: '', desc: '', minR: 0, maxR: 0, base: {}, subPool: [], look: ghost[slot] }, cls);
 }

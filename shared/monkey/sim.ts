@@ -6,6 +6,7 @@ import { DT } from './config.js';
 import { CLASSES, reloadTicks, weaponOf } from './content.js';
 import { collide, PLAYER_R } from './map.js';
 import { hash2, icos, isin, mulberry32 } from './math.js';
+import { NO_MODS, type SimMods } from './progression.js';
 
 /* nút giữ */
 export const B_FIRE = 1;
@@ -20,6 +21,8 @@ export const P_X = 128;
 export const P_Q = 256;
 export const P_V = 512;
 export const P_C = 1024;
+/** chém dao (phím F) */
+export const P_K = 2048;
 
 export interface Cmd {
   seq: number;
@@ -61,12 +64,14 @@ export interface PState {
   /** 0 sống, 1 gục, 2 chết */
   down: number;
   cls: number;
+  /** chỉ số đồ ảnh hưởng mô phỏng (tốc chạy, tốc bắn, nạp đạn) — giữ nguyên suốt trận */
+  mods: SimMods;
 }
 
-export function newState(cls: number, x: number, z: number): PState {
+export function newState(cls: number, x: number, z: number, mods: SimMods = NO_MODS): PState {
   return {
     x, z, y: 0, vx: 0, vz: 0, vy: 0, ground: 1, yaw: 0, pitch: 0,
-    tier: 0, ammo: weaponOf(cls, 0).mag, fireCd: 0, reloadT: 0, braceT: 0, down: 0, cls,
+    tier: 0, ammo: weaponOf(cls, 0).mag, fireCd: 0, reloadT: 0, braceT: 0, down: 0, cls, mods,
   };
 }
 
@@ -74,6 +79,7 @@ export function copyState(dst: PState, s: PState) {
   dst.x = s.x; dst.z = s.z; dst.y = s.y; dst.vx = s.vx; dst.vz = s.vz; dst.vy = s.vy;
   dst.ground = s.ground; dst.yaw = s.yaw; dst.pitch = s.pitch; dst.tier = s.tier; dst.ammo = s.ammo;
   dst.fireCd = s.fireCd; dst.reloadT = s.reloadT; dst.braceT = s.braceT; dst.down = s.down; dst.cls = s.cls;
+  dst.mods = s.mods;
   return dst;
 }
 
@@ -137,7 +143,7 @@ export function step(s: PState, c: Cmd): number {
     ix *= inv;
     iz *= inv;
   }
-  let speed = cls.speed;
+  let speed = cls.speed * (1 + s.mods.speed);
   const sprint = isSprinting(s, c);
   if (s.down === 1) speed = CRAWL_SPEED;
   else if (s.down === 2) speed = 0;
@@ -186,7 +192,7 @@ export function step(s: PState, c: Cmd): number {
     s.reloadT--;
     if (s.reloadT === 0) s.ammo = w.mag;
   }
-  const reload = reloadTicks(s.cls, s.tier);
+  const reload = s.mods.reload ? Math.max(1, Math.round(reloadTicks(s.cls, s.tier) * (1 - s.mods.reload))) : reloadTicks(s.cls, s.tier);
   if ((c.btn & B_RELOAD) && s.reloadT === 0 && s.ammo < w.mag) {
     s.reloadT = reload;
     out |= F_RELOAD;
@@ -194,7 +200,8 @@ export function step(s: PState, c: Cmd): number {
   if ((c.btn & B_FIRE) && !sprint && s.reloadT === 0) {
     if (s.ammo > 0 && s.fireCd === 0) {
       if (!(buffed && cls.buff.freeAmmo)) s.ammo--;
-      s.fireCd += buffed ? Math.round(w.interval * cls.buff.fireMul) : w.interval;
+      const iv = buffed ? Math.round(w.interval * cls.buff.fireMul) : w.interval;
+      s.fireCd += s.mods.fireRate ? Math.round(iv / (1 + s.mods.fireRate)) : iv;
       out |= F_FIRED;
       if (s.ammo === 0) {
         s.reloadT = reload;

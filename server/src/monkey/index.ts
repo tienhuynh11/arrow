@@ -11,9 +11,13 @@ import { CLASSES } from '../../../shared/monkey/content.js';
 import { CODE_ALPHABET, CODE_LEN, MONKEY_BASE, MONKEY_WS_PATH, NAME_MAX } from '../../../shared/monkey/config.js';
 import { decodeCmds, type CMsg, type SMsg } from '../../../shared/monkey/proto.js';
 import type { Cmd } from '../../../shared/monkey/sim.js';
-import { topRuns } from './leaderboard.js';
+import { refreshBoard } from './leaderboard.js';
+import { getStore } from './db/index.js';
+import { STAGE_BY_ID } from '../../../shared/monkey/progression.js';
 import { MonkeyRoom, type MConn, type MPlayer } from './room.js';
 import { isMapChoice } from '../../../shared/monkey/map.js';
+import { resolveAccount } from './accounts.js';
+import { setOnlineCounter } from './api.js';
 
 const MAX_ROOMS = 40;
 const rooms = new Map<string, MonkeyRoom>();
@@ -66,7 +70,18 @@ interface Session {
   jsonTokens: number;
   binTokens: number;
   at: number;
+  /** tài khoản đã gắn qua {t:'auth'} (null = khách) */
+  accountId: number | null;
+  username: string | null;
 }
+
+/** tài khoản của phiên WS (null = khách) — dùng khi xử lý create/join */
+export function sessionAccount(s: { accountId: number | null; username: string | null }): { accountId: number; username: string } | null {
+  return s.accountId !== null && s.username !== null ? { accountId: s.accountId, username: s.username } : null;
+}
+
+let onlineConns = 0;
+setOnlineCounter(() => onlineConns);
 
 const cmdBuf: Cmd[] = [];
 for (let i = 0; i < 16; i++) cmdBuf.push({ seq: 0, mx: 0, mz: 0, yaw: 0, pitch: 0, btn: 0, vt: 0 });
@@ -91,7 +106,8 @@ wss.on('connection', (ws: WebSocket) => {
       ws.close();
     },
   };
-  const s: Session = { conn, room: null, player: null, jsonTokens: 20, binTokens: 60, at: Date.now() };
+  const s: Session = { conn, room: null, player: null, jsonTokens: 20, binTokens: 60, at: Date.now(), accountId: null, username: null };
+  onlineConns++;
   const send = (m: SMsg) => conn.send(JSON.stringify(m));
   send({ t: 'welcome', st: Date.now() });
 
@@ -132,6 +148,7 @@ wss.on('connection', (ws: WebSocket) => {
     }
   });
   ws.on('close', () => {
+    onlineConns--;
     if (s.room && s.player) s.room.disconnected(s.player);
     s.room = null;
     s.player = null;
@@ -145,26 +162,56 @@ function handle(s: Session, m: CMsg, send: (m: SMsg) => void) {
       send({ t: 'pong', c: Number(m.c) || 0, st: Date.now() });
       return;
     case 'lb':
-      send({ t: 'lb', solo: topRuns(true, 15), team: topRuns(false, 15) });
+      refreshBoard(getStore())
+        .then((b) => send({ t: 'lb', solo: b.solo, team: b.team }))
+        .catch(() => send({ t: 'lb', solo: [], team: [] }));
+      return;
+    case 'auth':
+      if (s.room) return send({ t: 'err', m: 'Rời phòng trước khi đổi tài khoản' });
+      resolveAccount(m.token)
+        .then((acc) => {
+          if (!acc) {
+            s.accountId = null;
+            s.username = null;
+            return send({ t: 'err', m: 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại' });
+          }
+          s.accountId = acc.accountId;
+          s.username = acc.username;
+          send({ t: 'authed', username: acc.username, accountId: acc.accountId });
+        })
+        .catch((e) => {
+          console.error('[monkey] lỗi xác thực WS', e instanceof Error ? e.message : e);
+          send({ t: 'err', m: 'Không xác thực được tài khoản, thử lại sau' });
+        });
       return;
     case 'create': {
       if (s.room && s.player) s.room.leave(s.player);
+      const acc = sessionAccount(s);
+      const stageMode = m.mode === 'stage';
+      if (stageMode && !acc) return send({ t: 'err', m: 'Vượt ải cần đăng nhập — khách chỉ chơi được chế độ vô tận' });
+      if (stageMode && (typeof m.stage !== 'string' || !STAGE_BY_ID[m.stage])) return send({ t: 'err', m: 'Ải không tồn tại' });
       const room = createRoom(!!m.solo);
       if (!room) return send({ t: 'err', m: 'Máy chủ đang đầy phòng, thử lại sau' });
       if (isMapChoice(m.map)) room.mapChoice = m.map;
+      if (stageMode) {
+        room.mode = 'stage';
+        room.stageId = m.stage as string;
+      }
       s.room = room;
-      s.player = room.add(sanitizeName(m.name), sanitizeCls(m.cls), s.conn);
-      if (room.solo) room.begin();
+      s.player = room.add(acc ? acc.username : sanitizeName(m.name), sanitizeCls(m.cls), s.conn, acc?.accountId);
+      // chơi đơn: vào trận khi đã tải xong trang bị (ải: kiểm tra đã mở ải)
+      if (room.solo) room.beginSolo((err) => send({ t: 'err', m: err }));
       return;
     }
     case 'join': {
       const room = rooms.get(sanitizeCode(m.code));
       if (!room || room.disposed) return send({ t: 'err', m: 'Không tìm thấy phòng' });
-      const why = room.canJoin();
+      const acc = sessionAccount(s);
+      const why = room.canJoin(!acc);
       if (why) return send({ t: 'err', m: why });
       if (s.room && s.player) s.room.leave(s.player);
       s.room = room;
-      s.player = room.add(sanitizeName(m.name), sanitizeCls(m.cls), s.conn);
+      s.player = room.add(acc ? acc.username : sanitizeName(m.name), sanitizeCls(m.cls), s.conn, acc?.accountId);
       return;
     }
     case 'rejoin': {
@@ -210,6 +257,16 @@ function handle(s: Session, m: CMsg, send: (m: SMsg) => void) {
     case 'map':
       room.setMap(p, m.id);
       return;
+    case 'mode': {
+      const err = room.setMode(p, m.mode);
+      if (err) send({ t: 'err', m: err });
+      return;
+    }
+    case 'stage': {
+      const err = room.setStage(p, m.stage);
+      if (err) send({ t: 'err', m: err });
+      return;
+    }
     case 'pause':
       room.setPaused(!!m.p);
       return;

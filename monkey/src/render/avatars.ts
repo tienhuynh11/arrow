@@ -9,6 +9,10 @@
 import * as THREE from 'three';
 import { CLASSES, weaponOf, type WeaponModel } from '@shared/monkey/content';
 import { PLAYER_COLORS } from '../ui/dom';
+import { ITEM_BY_ID, type ItemDef, type Slot } from '@shared/monkey/progression';
+
+/** ngoại hình đồ đang mặc: id món theo ô (từ Loadout.look) */
+export type AvatarLook = Partial<Record<Slot, string>>;
 
 /** màu da theo idx người chơi (10 tông, đủ MAX_PLAYERS) */
 const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0xd1a17a, 0xa86b3c, 0x6b3e1f, 0xf3d2b3, 0xb98060];
@@ -376,11 +380,25 @@ export class Avatar {
   /** chi tiết nhỏ ẩn được khi ở xa (LOD rẻ) */
   private small: THREE.Object3D[] = [];
   private detail = true;
+  /** đồ đang mặc (mũ/giáp/dao/súng/trang phục) */
+  private gear: Partial<Record<Slot, ItemDef>> = {};
+  /** dao: bao bên hông + dao cầm tay (chỉ hiện khi chém) */
+  private sheath: THREE.Object3D | null = null;
+  private handKnife: THREE.Object3D | null = null;
+  private slashT = 0;
+  private slashDur = 0.32;
 
-  constructor(cls: number, blobTexture: THREE.Texture, idx = 0) {
+  constructor(cls: number, blobTexture: THREE.Texture, idx = 0, look?: AvatarLook | null) {
     this.cls = cls;
     this.look = classLook(cls);
-    const { id, color } = this.look;
+    for (const [slot, itemId] of Object.entries(look ?? {}) as [Slot, string][]) {
+      const def = itemId ? ITEM_BY_ID[itemId] : undefined;
+      if (def && def.slot === slot) this.gear[slot] = def;
+    }
+    const skinDef = this.gear.skin;
+    const id = this.look.id;
+    // trang phục: đổi màu thân (+ tay áo theo màu phụ)
+    const color = skinDef ? skinDef.look.color : this.look.color;
     this.blinkOff = idx * 0.31 + cls * 0.17;
     const skin = mat(SKINS[idx % SKINS.length], { rough: 0.6 });
     const body = mat(color, { rough: 0.55 });
@@ -392,6 +410,7 @@ export class Avatar {
     const red = mat(0xe11d48, { basic: true });
     const bulk = id === 'dausi';
     let [sleeveC, gloveC] = ARMS[id] ?? [shade(color, 0.5), 0x2a2a2e];
+    if (skinDef?.look.accent !== undefined) sleeveC = skinDef.look.accent;
     if (colDist(sleeveC, color) < 0.35) sleeveC = shade(color, 0.5);
     if (colDist(gloveC, sleeveC) < 0.35) gloveC = colDist(sleeveC, 0xffffff) > 1.2 ? 0xf5f5f4 : 0x1f2937;
 
@@ -508,6 +527,7 @@ export class Avatar {
       const roll = mesh(cylY(0.09, 0.09, 0.44, 12), mat(0xd6c7a1, { rough: 0.95 }), this.chestG, 0, BODY_Y + 0.22, -0.37);
       roll.rotation.z = Math.PI / 2;
     }
+    if (this.gear.armor) this.armorPiece(this.gear.armor, front, bulk);
     if (packCol !== null) {
       const pack = mesh(box(0.32, 0.34, 0.15), mat(packCol, { rough: 0.9 }), this.chestG, 0, BODY_Y + 0.1, -0.37);
       pack.rotation.x = 0.06;
@@ -530,7 +550,7 @@ export class Avatar {
     }
     const mouth = mesh(G('smile', () => new THREE.TorusGeometry(0.05, 0.012, 6, 14, Math.PI)), ink, this.headG, 0, -0.085, 0.368, false);
     mouth.rotation.z = Math.PI;
-    this.headG.add(this.hat(id));
+    this.headG.add(this.gear.helmet ? this.helmetModel(this.gear.helmet) : this.hat(id));
 
     // ---- tay "sợi mì" hai khúc + súng ----
     this.aim.position.set(0, AIM_Y, 0);
@@ -557,6 +577,7 @@ export class Avatar {
     this.setArm(this.armL, UA, FA);
     this.setArm(this.armR, UA, FA);
     this.aim.add(this.gunPose);
+    this.buildKnife();
 
     // khiên gồng mình / cuồng nộ
     const shellGeo = G('shell', () => new THREE.SphereGeometry(1, 20, 14));
@@ -697,12 +718,17 @@ export class Avatar {
     this.tier = tier;
     if (this.gun) this.gunPose.remove(this.gun.g);
     const w = weaponLook(this.cls, tier);
-    this.gun = gunModel(w.model, w.color);
+    this.gun = gunModel(w.model, this.gear.gun ? this.gear.gun.look.color : w.color);
     this.gunPose.add(this.gun.g);
   }
 
   kick() {
     this.recoil = 1;
+  }
+
+  /** chém dao (hoạt cảnh ~0.32 s: rút dao tay trái, vung ngang trước mặt) */
+  slash() {
+    this.slashT = this.slashDur;
   }
 
   /** trúng đòn từ hướng (sx, sz) */
@@ -790,6 +816,7 @@ export class Avatar {
     this.recoil = Math.max(0, this.recoil - dt * 7);
     this.hitT = Math.max(0, this.hitT - dt * 3.5);
     if (this.skillT > 0) this.skillT = Math.max(0, this.skillT - dt);
+    if (this.slashT > 0) this.slashT = Math.max(0, this.slashT - dt);
     // ---- trên không / đáp đất (trộn dần, không bật) ----
     const air = P.y > 0.04 && !P.down;
     if (this.wasAir && !air) this.landT = 1;
@@ -915,6 +942,12 @@ export class Avatar {
       const u = Math.sin((1 - this.skillT / this.skillDur) * Math.PI);
       hdx -= 0.3 * u;
       sq += 0.08 * u;
+    }
+    // chém dao: vặn thân theo nhát chém
+    if (this.slashT > 0 && !P.down) {
+      const sp = Math.sin((1 - this.slashT / this.slashDur) * Math.PI);
+      crz += sp * 0.12;
+      crx += sp * 0.12;
     }
     // nghiêng đầu nhẹ khi đứng yên cho sinh động
     hdz += Math.sin(t * 0.9 + this.blinkOff * 7) * 0.04 * (1 - run);
@@ -1056,7 +1089,18 @@ export class Avatar {
       cl.lerp(this.tmpE.set(-0.62, 0.0, 0.05), deadK);
       Tl.lerp(cl, crawl);
     }
-    const KA = kk(30);
+    // chém dao: tay trái vung ngang từ vai phải ra trước sang trái
+    const slashing = this.slashT > 0 && !P.down;
+    if (slashing) {
+      const p = 1 - this.slashT / this.slashDur;
+      const e = smooth01(p * 1.25);
+      const w = p < 0.8 ? 1 : (1 - p) / 0.2;
+      const a = lerp(-0.9, 1.3, e); // góc quét (rad), 0 = thẳng trước
+      Tl.lerp(this.tmpB.set(-Math.sin(a) * 0.5, -0.05 - e * 0.12, 0.18 + Math.cos(a) * 0.32), clamp(w, 0, 1));
+    }
+    if (this.handKnife) this.handKnife.visible = slashing;
+    if (this.sheath) this.sheath.visible = !slashing;
+    const KA = kk(slashing ? 60 : 30);
     Tr.set(d(C_TR, Tr.x, KA), d(C_TR + 1, Tr.y, KA), d(C_TR + 2, Tr.z, KA));
     Tl.set(d(C_TL, Tl.x, KA), d(C_TL + 1, Tl.y, KA), d(C_TL + 2, Tl.z, KA));
     this.ik(this.armR, Tr);
@@ -1069,6 +1113,125 @@ export class Avatar {
     const ey = lerp(1.35 - blink * 1.15, 0.15, deadK);
     for (const e of this.eyes) e.scale.y = ey;
   }
+
+  /** mũ từ kho đồ (thay mũ theo lớp), gốc = tâm đầu */
+  private helmetModel(def: ItemDef): THREE.Object3D {
+    const g = new THREE.Group();
+    const c = def.look.color;
+    const acc = def.look.accent ?? shade(c, 0.6);
+    const dome = (r: number, arc: number) => G(`dome${r},${arc}`, () => new THREE.SphereGeometry(r, 20, 10, 0, Math.PI * 2, 0, arc));
+    switch (def.look.kind) {
+      case 'nonla': {
+        // nón lá: chóp nón rộng + vành + quai
+        const nm = mat(c, { rough: 0.85 }).clone();
+        nm.side = THREE.DoubleSide;
+        mesh(G('nonla', () => new THREE.ConeGeometry(0.56, 0.36, 24, 1, true)), nm, g, 0, 0.36, 0);
+        mesh(G('nonlaRim', () => new THREE.TorusGeometry(0.555, 0.014, 5, 28)), mat(shade(c, 0.75), { rough: 0.85 }), g, 0, 0.185, 0).rotation.x = Math.PI / 2;
+        const strap = mesh(G('nonlaStrap', () => new THREE.TorusGeometry(0.3, 0.012, 4, 20, Math.PI)), mat(0x7c2d12), g, 0, 0.0, 0.05);
+        strap.rotation.set(0, Math.PI / 2, Math.PI);
+        break;
+      }
+      case 'knight': {
+        const steel = mat(c, { metal: 0.6, rough: 0.35 });
+        mesh(dome(0.385, Math.PI / 1.6), steel, g, 0, 0.0, -0.01).scale.set(1.04, 1.1, 1.06);
+        mesh(box(0.42, 0.045, 0.06), mat(0x111827, { basic: true }), g, 0, 0.07, 0.36, false); // khe nhìn
+        mesh(box(0.035, 0.22, 0.04), steel, g, 0, -0.06, 0.38);
+        const plume = mesh(G('plume', () => new THREE.CapsuleGeometry(0.05, 0.3, 4, 8)), mat(acc, { rough: 0.9 }), g, 0, 0.42, -0.08);
+        plume.rotation.x = 1.1;
+        break;
+      }
+      case 'hunter': {
+        mesh(dome(0.372, Math.PI / 2.1), mat(c, { rough: 0.85 }), g, 0, 0.03, -0.01).scale.set(1.03, 0.98, 1.06);
+        mesh(G('hbrim', () => new THREE.CylinderGeometry(0.5, 0.5, 0.025, 24)), mat(shade(c, 0.8), { rough: 0.8 }), g, 0, 0.08, 0.0);
+        mesh(G('hband2', () => new THREE.TorusGeometry(0.372, 0.03, 6, 24)), mat(0x3b2414), g, 0, 0.11, -0.01).rotation.x = Math.PI / 2;
+        const feather = mesh(box(0.035, 0.3, 0.07), mat(0xdc2626, { rough: 0.8 }), g, 0.3, 0.26, -0.05);
+        feather.rotation.set(-0.3, 0, -0.5);
+        break;
+      }
+      case 'banana': {
+        // mũ chuối vàng: nền mũ + quả chuối cong vắt ngang đầu + cuống
+        mesh(dome(0.375, Math.PI / 3), mat(shade(c, 0.85), { rough: 0.6 }), g, 0, 0.06, 0);
+        const ban = mesh(G('bananaHat', () => new THREE.TorusGeometry(0.34, 0.11, 10, 20, Math.PI * 1.1)), mat(c, { rough: 0.5, emissive: 0x332200 }), g, 0, 0.2, 0);
+        ban.rotation.set(0, Math.PI / 2, -0.25);
+        mesh(G('bananaTip', () => new THREE.ConeGeometry(0.04, 0.1, 6)), mat(0x5b3a1e), g, 0, 0.5, 0.08).rotation.x = 0.5;
+        break;
+      }
+      case 'helmet':
+      default: {
+        mesh(dome(0.385, Math.PI / 2), mat(c, { rough: 0.75 }), g, 0, 0.04, -0.01).scale.set(1.05, 0.9, 1.08);
+        mesh(G('rim', () => new THREE.TorusGeometry(0.375, 0.022, 6, 24)), mat(shade(c, 0.6)), g, 0, 0.045, -0.01).rotation.x = Math.PI / 2;
+        mesh(box(0.12, 0.06, 0.03), mat(shade(c, 0.5)), g, 0, 0.25, 0.32).rotation.x = -0.6;
+      }
+    }
+    return g;
+  }
+
+  /** giáp từ kho đồ: miếng ngực + vai theo kiểu */
+  private armorPiece(def: ItemDef, front: number, bulk: boolean) {
+    const c = def.look.color;
+    const k = bulk ? 1.08 : 1;
+    const kind = def.look.kind;
+    const m = mat(c, kind === 'plate' ? { metal: 0.55, rough: 0.35 } : { rough: 0.8 }).clone();
+    m.side = THREE.DoubleSide;
+    const chest = mesh(G('armChest', () => new THREE.CylinderGeometry(0.36, 0.35, 0.3, 20, 1, true, -1.15, 2.3)), m, this.chestG, 0, BODY_Y + 0.04, 0);
+    chest.scale.set(k, 1, k);
+    if (kind === 'plate' || kind === 'leather' || kind === 'bamboo') {
+      const padM = kind === 'plate' ? mat(c, { metal: 0.55, rough: 0.35 }) : mat(shade(c, 0.85), { rough: 0.8 });
+      for (const sx of [-1, 1]) {
+        const p = mesh(G('pad', () => new THREE.SphereGeometry(0.16, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2)), padM, this.chestG, 0.31 * sx * k, BODY_Y + 0.2, 0.02);
+        p.scale.set(kind === 'plate' ? 1.15 : 0.95, 0.75, 1.05);
+        p.rotation.z = -0.35 * sx;
+      }
+    }
+    if (kind === 'bamboo') {
+      const dark = mat(0x5b3a1e, { rough: 0.9 });
+      for (const y of [-0.06, 0.12]) mesh(box(0.42, 0.025, 0.03), dark, this.chestG, 0, BODY_Y + y, front + 0.02);
+    } else if (kind === 'plate') {
+      mesh(box(0.2, 0.14, 0.03), mat(shade(c, 1.15), { metal: 0.6, rough: 0.3 }), this.chestG, 0, BODY_Y + 0.08, front + 0.025);
+    } else if (kind === 'vest') {
+      for (const x of [-0.1, 0.1]) mesh(box(0.1, 0.09, 0.04), mat(shade(c, 0.75), { rough: 0.9 }), this.chestG, x, BODY_Y - 0.02, front + 0.02);
+    } else if (kind === 'leather') {
+      mesh(box(0.05, 0.3, 0.03), mat(0x3b2414), this.chestG, 0.08, BODY_Y + 0.05, front + 0.02).rotation.z = 0.5;
+    }
+  }
+
+  /** dao: bao dao bên hông trái + dao cầm tay (ẩn tới khi chém) */
+  private buildKnife() {
+    const def = this.gear.knife;
+    const c = def ? def.look.color : 0xd1d5db;
+    const kind = def?.look.kind ?? 'dagger';
+    const len = kind === 'machete' ? 0.3 : kind === 'bamboo' ? 0.32 : 0.22;
+    const bladeM = mat(c, kind === 'bamboo' ? { rough: 0.7 } : { metal: 0.7, rough: 0.25, emissive: kind === 'fire' ? 0x7c2d12 : 0 });
+    const handleM = mat(kind === 'bamboo' ? 0x65a30d : def?.look.accent ?? 0x3b2414, { rough: 0.8 });
+    const guardM = mat(0xd4a017, { metal: 0.6, rough: 0.4 });
+    const make = () => {
+      const k = new THREE.Group();
+      mesh(box(0.035, 0.09, 0.035), handleM, k, 0, -0.045, 0);
+      mesh(box(0.07, 0.018, 0.04), guardM, k, 0, -0.095, 0);
+      const bl = mesh(box(0.012, len, kind === 'machete' ? 0.06 : 0.04), bladeM, k, 0, -0.1 - len / 2, 0);
+      bl.castShadow = false;
+      return k;
+    };
+    // bao dao bên hông trái (cán chĩa lên)
+    const sh = new THREE.Group();
+    sh.position.set(-0.35, BODY_Y - 0.2, 0.05);
+    sh.rotation.set(0.2, 0, -0.35);
+    this.chestG.add(sh);
+    mesh(box(0.06, len * 0.9, 0.05), mat(0x3b2414, { rough: 0.85 }), sh, 0, -len * 0.45, 0);
+    const sk = make();
+    sk.position.y = 0.11;
+    sk.rotation.x = Math.PI;
+    sh.add(sk);
+    this.sheath = sk;
+    // dao trong tay trái: lưỡi chĩa theo cẳng tay ra ngoài nắm tay
+    const hk = make();
+    hk.position.set(0, 0.02, 0.03);
+    hk.rotation.x = 0.4;
+    this.armL.hand.add(hk);
+    hk.visible = false;
+    this.handKnife = hk;
+  }
+
 
   muzzleWorld(out: THREE.Vector3) {
     this.root.updateMatrixWorld(true);

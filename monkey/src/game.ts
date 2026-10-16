@@ -8,11 +8,11 @@ import {
   FX_BUILD, FX_EXPLODE, FX_HEAL, FX_PICK, FX_PLAYERHIT, FX_REPAIR, FX_ROAR, FX_SHOCK, FX_SLAM, FX_SPLAT, FX_STOMP,
   PF_ADS, PF_BRACE, PF_DOWN_MASK, PF_REVIVING, PF_SPRINT, SnapData, decodeSnap, type SMsg,
 } from '@shared/monkey/proto';
-import { B_USE, EYE_Y, P_G, P_Q, P_X, SHOULDER, type Cmd } from '@shared/monkey/sim';
+import { B_USE, EYE_Y, P_G, P_K, P_Q, P_X, SHOULDER, type Cmd } from '@shared/monkey/sim';
 import * as A from './audio';
 import { Input } from './input';
 import { net } from './net';
-import { Avatar } from './render/avatars';
+import { Avatar, type AvatarLook } from './render/avatars';
 import { Fx } from './render/fx';
 import { MonkeyRenderer } from './render/monkeys';
 import { blobTex, type Stage } from './render/scene';
@@ -58,20 +58,24 @@ export class Game {
   overlay = false;
   private fpsDt = 0.016;
   private wasDown = 0;
+  /** lần chém dao gần nhất của mình (hoạt cảnh cục bộ ngay khi bấm, khớp hồi chiêu ~0.6 s của server) */
+  private knifeAt = 0;
 
   constructor(private s3: Shared3D, readonly input: Input, players: HudPlayer[], me: number) {
     this.players = players;
     this.me = me;
     const meP = players.find((p) => p.idx === me)!;
     const sp = PLAYER_SPAWNS[me] ?? PLAYER_SPAWNS[0];
-    this.model = new GameModel(me, meP.cls, sp.x, sp.z);
+    // chỉ số đồ (tin start players[i].mods) phải vào mô phỏng dự đoán, nếu không client lệch server
+    this.model = new GameModel(me, meP.cls, sp.x, sp.z, (meP as { mods?: import('@shared/monkey/progression').SimMods }).mods);
     input.yaw = Math.atan2(sp.x, sp.z);
     input.pitch = -0.12;
     this.hud = new Hud();
     this.hud.setPlayers(players, me);
     document.getElementById('app')!.prepend(this.hud.root);
     for (const p of players) {
-      const a = new Avatar(p.cls, this.blobT, p.idx);
+      // ngoại hình đồ đang mặc (tin start players[i].look)
+      const a = new Avatar(p.cls, this.blobT, p.idx, (p as { look?: AvatarLook }).look);
       a.setTier(0);
       this.avatars.set(p.idx, a);
       s3.stage.scene.add(a.root, a.blob);
@@ -161,6 +165,19 @@ export class Game {
           hud.feed(m.s === 'weapon' ? `🔫 ${weaponOf(this.model.pred.cls, m.v ?? 0).name}` : `❤️ Máu bậc ${m.v}`, 'gold');
         } else hud.feed(`${name(m.i)} nâng ${m.s === 'weapon' ? weaponOf(this.players.find((p) => p.idx === m.i)?.cls ?? 0, m.v ?? 0).short : 'máu'}`, '');
         break;
+      case 'knife':
+        // người khác chém (của mình đã vẽ ngay lúc bấm)
+        if (m.i !== undefined && m.i !== this.me) {
+          this.avatars.get(m.i)?.slash();
+          const [vol, pan] = this.spatial(this.model.oX[m.i], this.model.oZ[m.i]);
+          A.sfxWhoosh(vol, pan);
+        }
+        if (m.i === this.me && (m.v ?? 0) > 0) hud.feed(m.j ? `🔪 Đâm lén ×2! (${m.v} trúng)` : `🔪 Chém trúng ${m.v}`, 'gold');
+        break;
+      case 'noshop':
+        A.sfxDeny();
+        toast('🚫 Ải này không cho nâng cấp giữa trận');
+        break;
       case 'nocash':
         A.sfxDeny();
         toast(`Thiếu xu — cần ${m.v} xu`);
@@ -201,6 +218,11 @@ export class Game {
       input.pitch -= back * 0.6;
     }
     this.cmds.length = 0;
+    if ((this.inp.btn & P_K) && !down && now - this.knifeAt > 600) {
+      this.knifeAt = now;
+      this.avatars.get(this.me)?.slash();
+      A.sfxWhoosh(1, 0);
+    }
     m.frame(now, this.inp.mx, this.inp.mz, this.inp.yaw, this.inp.pitch, this.inp.btn, this.cmds);
     if (this.cmds.length) {
       this.lastCmd = this.cmds[this.cmds.length - 1];
@@ -526,6 +548,11 @@ export class Game {
   }
 
   /** nút kỹ năng trên màn hình cảm ứng */
+  /** nút dao trên màn hình cảm ứng */
+  pressKnife() {
+    this.input.press(P_K);
+  }
+
   pressSkill(which: 'g' | 'x' | 'q') {
     this.input.press(which === 'g' ? P_G : which === 'x' ? P_X : P_Q);
   }

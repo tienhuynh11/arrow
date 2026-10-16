@@ -5,9 +5,15 @@
 
 import { MAX_PLAYERS } from './config.js';
 import type { Cmd } from './sim.js';
+import type { Loadout, Modifier, SimMods } from './progression.js';
+import type { RunReward } from './api.js';
 
 /* ============================ JSON ============================ */
-export interface LobbyPlayer { idx: number; name: string; cls: number; ready: boolean; on: boolean }
+export interface LobbyPlayer { idx: number; name: string; cls: number; ready: boolean; on: boolean; /** cấp tài khoản (khách: không có) */ level?: number; /** chơi khách (không đăng nhập) */ guest: boolean }
+/** chế độ phòng: vô tận (khách được chơi) hoặc vượt ải (bắt buộc đăng nhập) */
+export type RoomMode = 'endless' | 'stage';
+/** người chơi trong tin 'start' */
+export interface StartPlayer { idx: number; name: string; cls: number; /** chỉ số ảnh hưởng mô phỏng — client PHẢI đưa vào GameModel/newState */ mods: SimMods; look: Loadout['look'] }
 export interface BoardEntry {
   names: string[];
   cls: number[];
@@ -21,8 +27,8 @@ export interface EndStat { idx: number; name: string; cls: number; kills: number
 
 export type CMsg =
   | { t: 'ping'; c: number }
-  | { t: 'create'; name: string; cls: number; solo: boolean; /** id bản đồ hoặc 'random' */ map?: string }
-  | { t: 'join'; code: string; name: string; cls: number }
+  | { t: 'create'; name: string; cls: number; solo: boolean; /** id bản đồ hoặc 'random' */ map?: string; mode?: RoomMode; /** id ải (mode 'stage') */ stage?: string }
+  | { t: 'join'; code: string; name: string; cls: number; mode?: RoomMode }
   | { t: 'rejoin'; code: string; pid: string; token: string }
   | { t: 'leave' }
   | { t: 'cls'; cls: number }
@@ -30,6 +36,10 @@ export type CMsg =
   | { t: 'start' }
   /** chủ phòng chọn bản đồ (id hoặc 'random') */
   | { t: 'map'; id: string }
+  /** chủ phòng chọn ải (phải nằm trong 'stages' của tin room) */
+  | { t: 'stage'; stage: string }
+  /** chủ phòng đổi chế độ */
+  | { t: 'mode'; mode: RoomMode }
   | { t: 'buy'; item: 'weapon' | 'hp' }
   | { t: 'bready'; r: boolean }
   | { t: 'again' }
@@ -37,22 +47,28 @@ export type CMsg =
   | { t: 'pause'; p: boolean }
   /** chat trong phòng (Enter) */
   | { t: 'chat'; m: string }
-  | { t: 'lb' };
+  | { t: 'lb' }
+  /** gắn tài khoản vào kết nối (token từ REST login/register) */
+  | { t: 'auth'; token: string };
 
 export type SMsg =
   | { t: 'welcome'; st: number }
   | { t: 'pong'; c: number; st: number }
   | { t: 'joined'; code: string; pid: string; token: string; idx: number; solo: boolean }
-  | { t: 'room'; code: string; phase: 'lobby' | 'play' | 'over'; solo: boolean; host: number; players: LobbyPlayer[]; /** lựa chọn bản đồ trong sảnh: id hoặc 'random' */ map: string }
-  | { t: 'start'; seed: number; players: { idx: number; name: string; cls: number }[]; tick: number; /** id bản đồ đã chốt */ map: string }
+  | { t: 'room'; code: string; phase: 'lobby' | 'play' | 'over'; solo: boolean; host: number; players: LobbyPlayer[]; /** lựa chọn bản đồ trong sảnh: id hoặc 'random' */ map: string; mode: RoomMode; /** ải đang chọn (mode 'stage') */ stage: string; /** ải chơi được = giao của các ải mọi thành viên đã mở */ stages: string[] }
+  | { t: 'start'; seed: number; players: StartPlayer[]; tick: number; /** id bản đồ đã chốt */ map: string; mode: RoomMode; stage?: string; /** số đợt phải vượt (ải) */ waves?: number; /** luật đặc biệt của ải */ mods?: Modifier[] }
   | { t: 'wave'; n: number; phase: 'fight' | 'break'; ends: number; total: number; boss: boolean; ready: number[] }
   | { t: 'ev'; k: string; i?: number; j?: number; v?: number; s?: string }
-  | { t: 'over'; wave: number; score: number; kills: number; rank: number; secs: number; stats: EndStat[]; board: BoardEntry[] }
+  | { t: 'over'; wave: number; score: number; kills: number; rank: number; secs: number; stats: EndStat[]; board: BoardEntry[]; /** thưởng an ủi (người có tài khoản) */ rewards?: RunReward[]; stage?: string }
+  /** vượt ải thành công (phòng chuyển 'over' ngay, không gửi thêm tin 'over') */
+  | { t: 'victory'; stage: string; stars: number; secs: number; wave: number; rewards: RunReward[]; stats: EndStat[]; score: number; kills: number }
   | { t: 'lb'; solo: BoardEntry[]; team: BoardEntry[] }
   | { t: 'err'; m: string }
   | { t: 'paused'; p: boolean }
   | { t: 'chat'; i: number; n: string; m: string }
-  | { t: 'left' };
+  | { t: 'left' }
+  /** trả lời {t:'auth'} thành công (thất bại → {t:'err'}) */
+  | { t: 'authed'; username: string; accountId: number };
 
 /* ============================ NHỊ PHÂN ============================ */
 export const BIN_CMDS = 1;

@@ -8,6 +8,7 @@ import type { Room } from '../rooms/Room.js';
 import type { Connection } from './connection.js';
 import { serveStatic } from './static.js';
 import { handleMonkeyUpgrade, serveMonkey } from '../monkey/index.js';
+import { handleMonkeyApi } from '../monkey/api.js';
 import { handleQuizHttp } from '../quiz/http.js';
 import { RateLimiter, sanitizeCode, sanitizeName } from '../validation/input.js';
 
@@ -34,6 +35,8 @@ export function startServer() {
       return;
     }
     if (handleQuizHttp(req, res)) return;
+    // Bầy Khỉ REST (/monkey/api/*) — phải đứng trước serveMonkey (serveMonkey chỉ nhận GET)
+    if (handleMonkeyApi(req, res)) return;
     // game SINH TỒN BẦY KHỈ (/monkey/) — bundle + health riêng, tách khỏi minigame
     if (serveMonkey(req, res)) return;
     if (serveStatic(req, res)) return;

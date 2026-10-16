@@ -4,7 +4,8 @@
 //  - Đồng hồ hiển thị (renderTick) gửi kèm mỗi lệnh để server bù trễ khi bắn.
 
 import { AI_MS, DT, MAX_MONKEYS, MAX_PLAYERS, TICK_HZ } from './config.js';
-import { CLASSES, MONKEYS, bodyR, bodyY, headR, headY, waveSpec, weaponOf } from './content.js';
+import { CLASSES, MONKEYS, bodyR, bodyY, headR, headY, waveSpec, weaponOf, type WaveStage } from './content.js';
+import { NO_MODS, type SimMods } from './progression.js';
 import { rayWorld } from './map.js';
 import {
   EN_PICKUP,
@@ -159,13 +160,20 @@ export class GameModel {
   /** thử nghiệm: không vẽ dự đoán (bot) */
   quiet = false;
 
-  constructor(me: number, cls: number, x: number, z: number) {
+  /** chỉ số đồ (tin 'start' players[i].mods) — phải khớp server để dự đoán đúng */
+  readonly mods: SimMods;
+  /** tham số ải (độ khó + luật) — để waveSpec ở client khớp server */
+  stage: WaveStage | undefined;
+
+  constructor(me: number, cls: number, x: number, z: number, mods: SimMods = NO_MODS, stage?: WaveStage) {
     this.me = me;
-    this.pred = newState(cls, x, z);
-    this.prev = newState(cls, x, z);
+    this.mods = mods;
+    this.stage = stage;
+    this.pred = newState(cls, x, z, mods);
+    this.prev = newState(cls, x, z, mods);
     for (let i = 0; i < HIST_N; i++) {
       this.hCmd.push({ seq: 0, mx: 0, mz: 0, yaw: 0, pitch: 0, btn: 0, vt: 0 });
-      this.hState.push(newState(cls, x, z));
+      this.hState.push(newState(cls, x, z, mods));
     }
     this.rx = x;
     this.rz = z;
@@ -227,7 +235,7 @@ export class GameModel {
       this.projectiles.length = 0;
     }
 
-    if (s.wave > 0) this.hpMul = waveSpec(s.wave, Math.max(1, s.np)).hpMul;
+    if (s.wave > 0) this.hpMul = waveSpec(s.wave, Math.max(1, s.np), this.stage).hpMul;
     this.dmgMul = CLASSES[this.pred.cls].dmgMul;
     // ---- người chơi ----
     this.infoValid.fill(0);
@@ -407,6 +415,7 @@ export class GameModel {
     srv.ground = (p.flags & 4) ? 1 : 0;
     srv.yaw = p.yaw; srv.pitch = p.pitch; srv.tier = p.tier; srv.ammo = p.ammo; srv.fireCd = p.fireCd;
     srv.reloadT = p.reloadT; srv.braceT = p.braceT; srv.down = p.flags & PF_DOWN_MASK; srv.cls = p.cls;
+    srv.mods = this.pred.mods;
 
     if (ack === 0 || ack >= this.seq) {
       // chưa có lệnh nào được xác nhận (hoặc server đi trước — không thể) → lấy nguyên

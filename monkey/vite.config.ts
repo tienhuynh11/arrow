@@ -30,11 +30,20 @@ export default defineConfig({
         },
       },
       [`${BASE}health`]: { target: SERVER, changeOrigin: true },
+      // REST tài khoản / kho đồ / admin
+      [`${BASE}api`]: { target: SERVER, changeOrigin: true },
     },
   },
   build: {
     target: 'es2020',
     reportCompressedSize: false,
-    chunkSizeWarningLimit: 700,
+    chunkSizeWarningLimit: 900,
+    // trang game + trang quản trị sự kiện (/monkey/admin.html)
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        admin: fileURLToPath(new URL('./admin.html', import.meta.url)),
+      },
+    },
   },
 });
