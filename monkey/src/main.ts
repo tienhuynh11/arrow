@@ -306,8 +306,8 @@ function renderLobby() {
       h('div', { class: 'grow', style: 'color:var(--dim);font-size:13px' },
         isHost ? (notReady.length ? `Đang chờ: ${notReady.map((p) => p.name).join(', ')}` : r.players.length === 1 ? 'Chơi một mình được — hoặc gửi mã cho bạn bè (tối đa 4 người).' : 'Mọi người đã sẵn sàng!') : 'Chủ phòng sẽ bắt đầu khi mọi người sẵn sàng.'),
       isHost
-        ? h('button', { class: 'btn green big', disabled: notReady.length > 0, onclick: () => { A.initAudio(); net.send({ t: 'start' }); } }, '▶ BẮT ĐẦU')
-        : h('button', { class: `btn big ${me?.ready ? 'ghost' : 'green'}`, onclick: () => { A.initAudio(); net.send({ t: 'ready', r: !me?.ready }); } }, me?.ready ? 'HUỶ SẴN SÀNG' : '✔ SẴN SÀNG')))));
+        ? h('button', { class: 'btn green big', disabled: notReady.length > 0, onclick: () => { A.initAudio(); goFullscreen(); net.send({ t: 'start' }); } }, '▶ BẮT ĐẦU')
+        : h('button', { class: `btn big ${me?.ready ? 'ghost' : 'green'}`, onclick: () => { A.initAudio(); if (!me?.ready) goFullscreen(); net.send({ t: 'ready', r: !me?.ready }); } }, me?.ready ? 'HUỶ SẴN SÀNG' : '✔ SẴN SÀNG')))));
 }
 
 /* ======================= TRẬN ======================= */
@@ -325,14 +325,56 @@ function startGame(players: { idx: number; name: string; cls: number }[]) {
   game = new Game({ stage, monkeys, fx }, input, players, meIdx);
   buildTouch();
   applyMode(input.touch);
-  if (!input.touch) input.lock();
+  enterPlay();
 }
+
+/* ---------- bắt buộc toàn màn hình + khoá chuột ---------- */
+/** vào toàn màn hình sẵn từ sảnh (nút Bắt đầu / Sẵn sàng là cử chỉ người dùng) */
+function goFullscreen() {
+  if (document.fullscreenEnabled && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+}
+/** máy hỗ trợ toàn màn hình (iPhone không có) thì bắt buộc phải vào toàn màn hình mới điều khiển được */
+const fsOk = () => !document.fullscreenEnabled || !!document.fullscreenElement;
+input.gate = fsOk;
+const inGameFree = () => !!game && screen === 'game' && !pauseEl && !shopOpen && !modalClose;
+
+/** gọi trong cú bấm của người chơi: xin toàn màn hình rồi khoá chuột (cả hai cần cử chỉ người dùng) */
+function enterPlay() {
+  if (!fsOk()) {
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(
+      () => { if (inGameFree() && !input.touch) input.lock(); },
+      () => {},
+    );
+  }
+  if (!input.touch) input.lock();
+  refreshPrompt();
+}
+
+function refreshPrompt() {
+  if (!game || screen !== 'game') return;
+  const free = !pauseEl && !shopOpen;
+  if (free && !fsOk()) game.hud.setClickPrompt(true, '⛶ Bấm vào màn hình để vào TOÀN MÀN HÌNH và chơi');
+  else game.hud.setClickPrompt(free && !input.touch && !document.pointerLockElement);
+}
+
+// bấm bất kỳ đâu trên màn chơi (kể cả lúc khoá chuột vừa bị trình duyệt từ chối) → vào lại
+document.addEventListener('pointerdown', (e) => {
+  if (!inGameFree()) return;
+  if ((e.target as HTMLElement | null)?.closest('button, input, select, a, .card')) return;
+  if (!fsOk() || (!input.touch && !document.pointerLockElement)) enterPlay();
+}, true);
+document.addEventListener('fullscreenchange', () => {
+  // thoát toàn màn hình giữa trận → tạm dừng, chỉ chơi tiếp được khi vào lại
+  if (!fsOk() && inGameFree()) showPause();
+  refreshPrompt();
+});
+document.addEventListener('pointerlockerror', () => refreshPrompt());
 
 /** đổi giữa chuột và cảm ứng ngay trong trận (laptop màn cảm ứng dùng được cả hai) */
 function applyMode(touch: boolean) {
   document.body.classList.toggle('touchmode', touch);
   touchUi?.classList.toggle('hidden', !touch);
-  if (game && screen === 'game') game.hud.setClickPrompt(!touch && !document.pointerLockElement && !pauseEl && !shopOpen);
+  refreshPrompt();
 }
 input.onMode = (t) => applyMode(t);
 document.body.classList.toggle('touchmode', input.touch);
@@ -367,7 +409,7 @@ function toggleShop() {
     modalClose = null;
     if (game && screen === 'game') {
       input.enabled = true;
-      if (!input.touch) input.lock();
+      enterPlay();
     }
   }));
 }
@@ -382,7 +424,7 @@ function showPause() {
     document.removeEventListener('keydown', onEsc, true);
     if (game && screen === 'game') {
       input.enabled = true;
-      if (!input.touch) input.lock();
+      enterPlay();
     }
   };
   const onEsc = (e: KeyboardEvent) => {
@@ -400,9 +442,7 @@ function showPause() {
   app.append(pauseEl);
 }
 
-document.addEventListener('pointerlockchange', () => {
-  if (game && screen === 'game') game.hud.setClickPrompt(!document.pointerLockElement && !input.touch && !pauseEl && !shopOpen);
-});
+document.addEventListener('pointerlockchange', () => refreshPrompt());
 
 function buildTouch() {
   if (!game) return;

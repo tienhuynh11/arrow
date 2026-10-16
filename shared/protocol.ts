@@ -5,7 +5,7 @@
 export const MAX_PLAYERS = 16;
 export const MIN_PLAYERS = 2;
 export const DEFAULT_MAX_PLAYERS = 4;
-export const NAME_MAX = 12;
+export const NAME_MAX = 20;
 export const RECONNECT_GRACE_MS = 30_000;
 /** đủ dài để đọc hết luật chơi trước mỗi minigame */
 export const COUNTDOWN_MS = 15_000;

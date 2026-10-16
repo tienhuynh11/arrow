@@ -9,7 +9,7 @@ export const MONKEY_WS_PATH = `${MONKEY_BASE}ws`;
 export const GAME_TITLE = 'SINH TỒN BẦY KHỈ';
 
 export const MAX_PLAYERS = 4;
-export const NAME_MAX = 14;
+export const NAME_MAX = 20;
 export const CODE_LEN = 5;
 /** chữ cái dùng cho mã phòng (bỏ I O 0 1 cho dễ đọc) */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

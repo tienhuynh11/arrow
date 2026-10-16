@@ -195,7 +195,8 @@ export class Hud {
     this.waveT.textContent = phase === 'fight' ? `ĐỢT ${n}${boss ? ' · BOSS' : ''}` : n === 0 ? 'CHUẨN BỊ!' : `NGHỈ SAU ĐỢT ${n}`;
   }
 
-  setClickPrompt(on: boolean) {
+  setClickPrompt(on: boolean, text = '🖱️ Bấm vào màn hình để điều khiển') {
+    if (on && this.clickEl.textContent !== text) this.clickEl.textContent = text;
     this.clickEl.classList.toggle('hidden', !on);
   }
 

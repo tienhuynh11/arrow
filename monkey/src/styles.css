@@ -22,6 +22,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 #stage { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
 #app { position: fixed; inset: 0; pointer-events: none; }
 #app > * { pointer-events: auto; }
+/* HUD phủ kín màn hình: không được nuốt cú bấm, nếu không bấm vào màn hình sẽ không khoá chuột lại được */
+#app > .hud { pointer-events: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
 input { font: inherit; }
 .hidden { display: none !important; }

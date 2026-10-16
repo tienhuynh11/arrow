@@ -95,7 +95,7 @@ export const SPRINT_MUL = 1.45;
 export const ADS_MUL = 0.62;
 export const CRAWL_SPEED = 1.1;
 /** độ cao mắt/vai súng + lệch vai phải (để tâm ngắm không bị nhân vật che) */
-export const EYE_Y = 1.78;
+export const EYE_Y = 1.85;
 export const SHOULDER = 0.5;
 
 /* kết quả bước */

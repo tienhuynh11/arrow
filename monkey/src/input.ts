@@ -18,6 +18,8 @@ export class Input {
   onAction: (a: 'shop' | 'scoresOn' | 'scoresOff' | 'pause' | 'touchpad') => void = () => {};
   /** đổi chế độ điều khiển (chuột ↔ cảm ứng) — giao diện bật/tắt nút ảo theo */
   onMode: (touch: boolean) => void = () => {};
+  /** false = chưa được điều khiển (ví dụ chưa vào toàn màn hình) → bỏ qua mọi thao tác */
+  gate: () => boolean = () => true;
   /** cảm ứng */
   touch = false;
   private stickId = -1;
@@ -63,16 +65,13 @@ export class Input {
       }
     });
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked || !this.enabled) return;
+      if (!this.locked || !this.enabled || !this.gate()) return;
       this.noteMouse(performance.now());
       this.look(e.movementX, e.movementY, settings.sens * 0.0022 * (this.ads ? settings.adsSens : 1));
     });
     canvas.addEventListener('mousedown', (e) => {
-      if (!this.enabled || this.touch) return;
-      if (!this.locked) {
-        this.lock();
-        return;
-      }
+      // chưa khoá chuột / chưa toàn màn hình: main.ts bắt cú bấm này (pointerdown trên document) để vào lại
+      if (!this.enabled || this.touch || !this.locked || !this.gate()) return;
       if (e.button === 0) this.mouseFire = true;
       else if (e.button === 2) {
         if (settings.adsToggle) this.adsLatched = !this.adsLatched;
@@ -121,7 +120,7 @@ export class Input {
 
   /** gọi mỗi khung hình: xoay camera bằng phím + theo dõi touchpad */
   tick(dt: number, now: number) {
-    if (!this.enabled) return;
+    if (!this.enabled || !this.gate()) return;
     const k = ((settings.keyTurn * Math.PI) / 180) * dt;
     if (this.bound('turnLeft')) this.look(-k / 0.0022 / Math.max(0.05, settings.sens), 0, settings.sens * 0.0022);
     if (this.bound('turnRight')) this.look(k / 0.0022 / Math.max(0.05, settings.sens), 0, settings.sens * 0.0022);
@@ -139,7 +138,7 @@ export class Input {
   }
 
   lock() {
-    if (this.touch) return;
+    if (this.touch || document.pointerLockElement === this.canvas) return;
     try {
       const r = (this.canvas as any).requestPointerLock({ unadjustedMovement: true });
       if (r && typeof r.catch === 'function') {
@@ -220,7 +219,7 @@ export class Input {
     let mx = 0;
     let mz = 0;
     let btn = 0;
-    if (this.enabled) {
+    if (this.enabled && this.gate()) {
       if (this.bound('forward')) mz += 127;
       if (this.bound('back')) mz -= 127;
       if (this.bound('right')) mx += 127;
