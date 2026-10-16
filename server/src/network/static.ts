@@ -26,7 +26,9 @@ export function serveStatic(req: IncomingMessage, res: ServerResponse): boolean 
   if (!hasStatic || (req.method !== 'GET' && req.method !== 'HEAD')) return false;
   const path = decodeURIComponent((req.url ?? '/').split('?')[0]);
   if (path === '/') {
-    res.writeHead(302, { location: BASE });
+    // vào thẳng domain → Bầy Khỉ (đổi bằng ROOT_REDIRECT, ví dụ '/arrow/'); giữ nguyên query (?room=…)
+    const q = (req.url ?? '').includes('?') ? (req.url ?? '').slice((req.url ?? '').indexOf('?')) : '';
+    res.writeHead(302, { location: (process.env.ROOT_REDIRECT || '/monkey/') + q });
     res.end();
     return true;
   }
