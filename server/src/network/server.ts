@@ -7,6 +7,7 @@ import { RoomManager } from '../rooms/RoomManager.js';
 import type { Room } from '../rooms/Room.js';
 import type { Connection } from './connection.js';
 import { serveStatic } from './static.js';
+import { handleMonkeyUpgrade, serveMonkey } from '../monkey/index.js';
 import { handleQuizHttp } from '../quiz/http.js';
 import { RateLimiter, sanitizeCode, sanitizeName } from '../validation/input.js';
 
@@ -33,12 +34,21 @@ export function startServer() {
       return;
     }
     if (handleQuizHttp(req, res)) return;
+    // game SINH TỒN BẦY KHỈ (/monkey/) — bundle + health riêng, tách khỏi minigame
+    if (serveMonkey(req, res)) return;
     if (serveStatic(req, res)) return;
     res.writeHead(404);
     res.end();
   });
 
-  const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
+  // Định tuyến WebSocket theo đường dẫn upgrade: `/monkey/ws` sang game Bầy Khỉ,
+  // mọi đường còn lại (`/arrow/ws`, hoặc `/` khi build với VITE_WS_URL cũ) vẫn là minigame như trước.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  http.on('upgrade', (req, socket, head) => {
+    socket.on('error', () => socket.destroy());
+    if (handleMonkeyUpgrade(req, socket, head)) return;
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
 
   wss.on('connection', (ws) => {
     const conn: Connection = {

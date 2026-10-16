@@ -10,3 +10,6 @@ dist/
 
 # Quiz: media upload (du lieu chay, khong commit)
 /server/data/quiz/media/
+
+# Bầy Khỉ: bảng xếp hạng lúc chạy (du lieu chay, khong commit)
+/server/data/monkey/

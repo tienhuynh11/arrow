@@ -517,3 +517,94 @@ Mở `/arrow/#admin`, nhập mật khẩu quản trị rồi thêm câu hỏi (�
 - **Mật khẩu:** đặt biến môi trường `QUIZ_ADMIN_KEY` trên server. Ở chế độ production mà thiếu biến này thì trang quản lý bị tắt.
 - **Dữ liệu lưu ở file:** `questions.json` + thư mục `media/` trong `QUIZ_DIR` (mặc định `server/data/quiz`). Trên VM riêng dữ liệu giữ lâu dài; trên hosting có ổ đĩa tạm (Render gói miễn phí) sẽ mất khi khởi động lại, nên bấm **Xuất sao lưu** (một file JSON kèm media) và **Nhập sao lưu** để nạp lại. Muốn bền hơn có thể gắn ổ đĩa bền cho thư mục đó.
 - Không có câu hỏi nào thì game dùng vài câu mẫu bằng chữ.
+
+---
+
+## Game riêng: 🐒 SINH TỒN BẦY KHỈ (`/monkey/`)
+
+Bắn súng sinh tồn **co-op 1–4 người** góc nhìn thứ ba qua vai (lấy cảm hứng từ thể loại "survive the horde" như *Survive a Million Monkeys* trên Roblox, nhưng tên, hình, số liệu đều là của riêng dự án). Chạy **chung tiến trình server Node** với Arrow Party nhưng **tách hẳn**: phòng riêng, giao thức riêng, WebSocket riêng, bundle riêng.
+
+| | Arrow Party (minigame) | Sinh Tồn Bầy Khỉ |
+|---|---|---|
+| Trang | `/arrow/` | `/monkey/` (`/monkey` tự chuyển hướng) |
+| WebSocket | `/arrow/ws` (và mọi đường khác như trước) | `/monkey/ws` |
+| Mã client | `client/` | `monkey/` (app Vite riêng, không React, Three.js) |
+| Mã server | `server/src/games`, `rooms`… | `server/src/monkey/` |
+| Dùng chung | `shared/*.ts` | `shared/monkey/*.ts` |
+| Health | `/health` | `/monkey/health` (phòng, người, khỉ, tick, băng thông, RSS) |
+
+Đường dẫn gốc là **một hằng số** `MONKEY_BASE` trong [shared/monkey/config.ts](shared/monkey/config.ts) — server và `monkey/vite.config.ts` cùng đọc, đổi một chỗ là đủ (nhớ build lại `monkey/`).
+
+### Chạy dev
+
+```powershell
+# terminal 1 — server (phục vụ cả hai game)
+cd server; npm run dev                 # http://localhost:8787
+# terminal 2 — client Bầy Khỉ (Vite, proxy /monkey/ws sang 8787)
+cd monkey; npm install; npm run dev    # http://localhost:5174/monkey/
+```
+
+Minigame vẫn chạy như cũ ở `cd client; npm run dev` (cổng 5173). Đổi cổng server thì đặt `SERVER_PORT` cho Vite.
+Chạy production cục bộ: `cd monkey; npm run build` (ra `monkey/dist`) rồi `cd server; npm run build; npm start` → mở `http://localhost:8787/monkey/`.
+
+Biến môi trường (server):
+
+| Biến | Ý nghĩa |
+|---|---|
+| `MONKEY_STATIC_DIR` | thư mục bundle (mặc định `../monkey/dist` tính từ `server/`) |
+| `MONKEY_DATA_DIR` | nơi lưu bảng xếp hạng `leaderboard.json` (mặc định `server/data/monkey`) |
+| `MONKEY_START_WAVE=8` | **chỉ để thử/chụp ảnh**: bắt đầu thẳng từ đợt 8 kèm xu tương ứng |
+| `VITE_MONKEY_WS_URL` | (lúc build `monkey/`) trỏ WebSocket sang host khác nếu không có reverse proxy |
+
+### Deploy
+
+**Render / Docker (một service duy nhất):** không cần làm gì thêm — `Dockerfile` đã có stage build `monkey/` và copy `monkey/dist` vào image; cùng một server phục vụ `/arrow/` lẫn `/monkey/`, WebSocket `/monkey/ws` đi chung cổng. Sau khi deploy mở `https://<tên-miền>/monkey/`.
+Lưu ý: ổ đĩa của gói miễn phí là tạm, bảng xếp hạng mất khi khởi động lại — muốn giữ lâu thì gắn ổ đĩa bền và đặt `MONKEY_DATA_DIR` vào đó.
+
+**VM có nginx đứng trước Node:** nginx phải chuyển `/monkey/` (gồm cả WebSocket `/monkey/ws`) sang Node giống như `/arrow/`. Thêm block (sửa cổng cho đúng server của bạn):
+
+```nginx
+# trong server { ... } của tên miền
+location /monkey/ {
+    proxy_pass http://127.0.0.1:8787;      # KHÔNG có dấu / ở cuối để giữ nguyên đường dẫn /monkey/...
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;  # nâng cấp WebSocket cho /monkey/ws
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 3600s;               # giữ kết nối game lâu
+    proxy_send_timeout 3600s;
+    proxy_buffering off;                    # snapshot 20 lần/giây, không đệm
+}
+# nếu chưa có ở mức http { ... }:
+# map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+```
+
+Rồi `sudo nginx -t && sudo systemctl reload nginx`. Kiểm tra: `curl https://<tên-miền>/monkey/health`.
+
+### Cách chơi (tóm tắt)
+
+WASD đi · chuột ngắm (Pointer Lock) · chuột trái bắn · chuột phải ngắm (zoom) · Space nhảy (né sóng xung kích của boss) · Shift chạy · R nạp · E giữ để đỡ đồng đội · G/X kỹ năng (tốn xu) · Q tuyệt chiêu (sạc bằng số khỉ hạ) · V nâng bậc súng · C nâng máu · B cửa hàng · Tab bảng điểm · Esc tạm dừng. Mọi phím đổi được trong **Cài đặt** (lưu `localStorage`): độ nhạy chuột, độ nhạy khi ngắm, đảo trục Y, ngắm bật/tắt, FOV, khoảng cách camera, rung màn hình, màu tâm, âm lượng (tổng/hiệu ứng/rừng), chất lượng đồ hoạ (Tự động/Cao/Vừa/Thấp), số sát thương, FPS; cảm ứng: độ nhạy vuốt, hỗ trợ ngắm, cỡ nút. Điện thoại: cần ảo bên trái, vuốt bên phải để ngắm, nút bắn/nhảy/đỡ/kỹ năng/mua.
+
+- **4 lớp:** Chiến Binh (lựu đạn, rào chắn làm chậm, không kích) · Y Sĩ (hộp cứu thương, trạm hồi máu, hồi đầy + đỡ dậy cả đội; đỡ dậy nhanh ×2) · Kỹ Sư (sửa chữa, trụ súng tự động, quá tải) · Đấu Sĩ (dậm đất hất văng, gồng mình, cuồng nộ khiêu khích).
+- **5 bậc súng chung:** súng lục → tiểu liên → súng săn → súng trường (xuyên) → pháo chuối (nổ lan); **5 bậc máu**.
+- **8 loài khỉ:** nâu, chạy nhanh, ném chuối (đạn né được), đỏ nổ (có vòng cảnh báo, bắn chết thì nổ lây), trắng vồ, khỉ đột đập đất, khỉ con, **Vua Khỉ Đột** mỗi 5 đợt (đập đất → sóng xung kích phải nhảy né, ném thùng, gầm gọi quân, nổi điên dưới 50% máu).
+- Gục → 25 giây chờ đồng đội giữ E 3 giây; quá hạn là tử trận, hồi sinh khi đội qua đợt; chơi một mình có lượt tự đứng dậy. Cả đội gục = thua → bảng tổng kết + **bảng xếp hạng** (Một mình / Đồng đội, file JSON ≤ 60 dòng mỗi bảng).
+
+### Netcode (tóm tắt)
+
+- **Nhân vật mình:** mô phỏng xác định 60Hz dùng chung ([shared/monkey/sim.ts](shared/monkey/sim.ts), sin/cos tự dựng bằng bảng) — client dự đoán ngay, gửi lệnh có `seq` (gói nhị phân 12 byte/lệnh, ~30 gói/s), server chạy đúng lệnh đó khi tới và trả `ack`; client lấy trạng thái server rồi chạy lại các lệnh chưa xác nhận (hoà giải), lệch hiển thị được làm mờ dần. Server giới hạn 62 lệnh/giây (chống hack tốc độ).
+- **Bắn:** vệt đạn/tia lửa/dấu trúng hiện ngay ở client; mỗi lệnh kèm `vt` = thời điểm client đang nhìn thấy khỉ; server **tua lịch sử vị trí khỉ** (16 tick) về đúng lúc đó, tối đa 7 tick = 350 ms (≈ đệm nội suy 100 ms + 250 ms trễ mạng). Tản đạn dùng PRNG seed theo (người, seq) nên client/server ra cùng hướng. Client còn đoán trước khỉ "chắc đã chết" từ sát thương mình vừa bắn để không bắn thừa khi mạng chậm.
+- **Khỉ:** AI ở server 20Hz (spatial hash, flow field BFS 1 m, typed array, không cấp phát trong vòng nóng), trần 150 khỉ sống đồng thời (160 slot). Snapshot nhị phân **mã hoá một lần cho cả phòng**, delta theo slot (1/256 m, khỉ đứng yên không tốn byte), client nội suy với đệm tự giãn theo độ giật.
+- Phòng hết ván / không còn ai: thế giới khỉ được giải phóng ngay, phòng tự huỷ.
+
+### Kiểm thử
+
+```powershell
+cd server
+npx tsx test/monkey.test.ts            # unit test xác định (sim, mã hoá, bù trễ, hoà giải RTT 0/80/150/250, AI, kinh tế, đỡ dậy)
+npx tsx test/monkeyLag.ts 300          # độ khớp "client thấy trúng" ↔ "server xác nhận" theo RTT
+npx tsx test/monkeySimRun.ts 2 80 900  # mô phỏng thời gian ảo một ván với bot (người, RTT, giây)
+npx tsx test/monkeyBots.ts 8787 4 4 90 80   # bot WebSocket thật: 4 phòng × 4 người, 90 giây, RTT giả 80ms
+```
