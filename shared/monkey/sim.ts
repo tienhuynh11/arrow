@@ -95,7 +95,7 @@ export const SPRINT_MUL = 1.45;
 export const ADS_MUL = 0.62;
 export const CRAWL_SPEED = 1.1;
 /** độ cao mắt/vai súng + lệch vai phải (để tâm ngắm không bị nhân vật che) */
-export const EYE_Y = 1.5;
+export const EYE_Y = 1.78;
 export const SHOULDER = 0.5;
 
 /* kết quả bước */
@@ -206,7 +206,7 @@ export function step(s: PState, c: Cmd): number {
   return out;
 }
 
-/** điểm gốc tia bắn (vai phải, ngang mắt) */
+/** điểm gốc tia bắn (lệch sang phải, ngang đầu) */
 export function shotOrigin(s: PState, out: Float64Array) {
   const fx = isin(s.yaw);
   const fz = icos(s.yaw);
