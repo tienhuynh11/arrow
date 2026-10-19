@@ -4,6 +4,7 @@ import { CHAPTERS, STAGES, STAGES_PER_CHAPTER } from '@shared/heroes/stages';
 import { api, me } from '../../api';
 import { nextStageOf, stageUnlocked, starsOfStage } from '../../game';
 import { toast, useMedia } from '../../state';
+import { useDesktopLand } from '../common';
 import { Icon } from '../icons';
 import { PreBattle } from './PreBattle';
 
@@ -14,6 +15,8 @@ export function Campaign({ initial }: { initial?: string }) {
   const [chapter, setChapter] = useState((startStage ?? next).chapter);
   const [open, setOpen] = useState<string | null>(startStage ? startStage.id : null);
   const vertical = useMedia('(max-aspect-ratio: 1/1)');
+  // PC ngang: bảng ải đang chọn luôn nằm bên phải bản đồ (không cần hộp thoại)
+  const side = useDesktopLand();
 
   // làm mới thể lực khi vào màn
   useEffect(() => {
@@ -34,10 +37,10 @@ export function Campaign({ initial }: { initial?: string }) {
     return { left: `${x}%`, top: `${y}%` };
   };
   const pts = stages.map((_, i) => xy(i).join(',')).join(' ');
-  const cur = STAGES.find((s) => s.id === open) ?? null;
+  const cur = STAGES.find((s) => s.id === (side ? (open ?? (next.chapter === chapter ? next.id : stages[0].id)) : open)) ?? null;
 
   return (
-    <div class="campaign">
+    <div class={`campaign${side ? ' dk-side' : ''}`}>
       <div class="chapter-tabs">
         {CHAPTERS.map((c, i) => {
           const first = STAGES[i * STAGES_PER_CHAPTER];
@@ -65,7 +68,7 @@ export function Campaign({ initial }: { initial?: string }) {
               <button
                 type="button"
                 key={s.id}
-                class={`node${s.boss ? ' boss' : ''}${unlocked ? '' : ' locked'}${stars > 0 ? ' cleared' : ''}${isNext ? ' current' : ''}`}
+                class={`node${s.boss ? ' boss' : ''}${unlocked ? '' : ' locked'}${stars > 0 ? ' cleared' : ''}${isNext ? ' current' : ''}${side && cur?.id === s.id ? ' picked' : ''}`}
                 style={pos(i)}
                 onClick={() => (unlocked ? setOpen(s.id) : toast('Hãy qua ải trước đó để mở khoá', 'info'))}
                 aria-label={`${s.name}${unlocked ? '' : ' (khoá)'}`}
@@ -83,7 +86,7 @@ export function Campaign({ initial }: { initial?: string }) {
           })}
         </div>
       </div>
-      {cur && <PreBattle stage={cur} onClose={() => setOpen(null)} />}
+      {cur && <PreBattle key={side ? cur.id : undefined} stage={cur} inline={side} onClose={() => setOpen(null)} />}
     </div>
   );
 }

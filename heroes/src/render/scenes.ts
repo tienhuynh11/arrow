@@ -105,6 +105,8 @@ export function createHubScene(squadIds: string[]): HubScene {
     [-0.95, -1.2, 0.95, 0.12],
     [0.95, -1.2, 0.95, -0.12],
   ];
+  // vị trí x gốc của từng tướng: màn dọc ép hẹp lại để cụm tướng to hơn mà không bị cắt hai bên
+  const spread: { o: THREE.Object3D; b: THREE.Object3D; x: number }[] = [];
   const ids = squadIds.length ? squadIds : [];
   ids.slice(0, spots.length).forEach((id, i) => {
     const m = createHeroModel(id, { outlines: currentPreset().outlines });
@@ -117,10 +119,11 @@ export function createHubScene(squadIds: string[]): HubScene {
     b.position.set(x, 0.03, z);
     island.add(b);
     models.push({ m, timer: 2 + i * 1.3 + Math.random() * 3 });
+    spread.push({ o: m.object3d, b, x });
   });
 
   let lx = 0, ly = 0, cx = 0, cy = 0;
-  let baseZ = 9;
+  let baseZ = 7.4, baseY = 3.1, aimY = 0.7;
   const hs: HubScene = {
     scene, camera,
     look(nx, ny) {
@@ -128,12 +131,23 @@ export function createHubScene(squadIds: string[]): HubScene {
       ly = ny;
     },
     resize(w, h) {
-      const a = w / h;
-      baseZ = 9 / Math.min(1, a * 1.15);
+      // khung hình theo tỉ lệ: dọc (điện thoại) = cụm tướng to, thấp, ép hẹp; ngang/PC = rộng hơn, co theo chiều CAO màn hình
+      const a = w / Math.max(1, h);
+      const t = Math.min(1, Math.max(0, (a - 0.5) / 0.5)); // 0 = dọc hẹp, 1 = vuông trở lên
+      const k = 0.72 + 0.28 * t;
+      for (const e of spread) {
+        e.o.position.x = e.x * k;
+        e.b.position.x = e.x * k;
+      }
+      const halfW = 2.25 + 0.9 * t; // nửa bề ngang cần thấy ở trục tướng
+      baseZ = Math.max(7.4, halfW / (a * Math.tan((34 / 2) * (Math.PI / 180))));
+      baseY = 3.1 + (1 - t) * 2.0; // dọc: nhìn từ cao hơn để thấy đảo
+      aimY = 0.7 + (1 - t) * 1.1; // dọc: ngắm cao hơn một chút => cụm tướng hơi thấp, vẫn nằm trên thẻ CHIẾN
     },
     update(dt, t) {
       island.position.y = Math.sin(t * 0.9) * 0.12;
       island.rotation.y = Math.sin(t * 0.25) * 0.06;
+      island.rotation.z = Math.sin(t * 0.7) * 0.012;
       for (const c of clouds) {
         c.position.x += (c.userData.v as number) * dt;
         if (c.position.x > 11) c.position.x = -11;
@@ -149,8 +163,8 @@ export function createHubScene(squadIds: string[]): HubScene {
       }
       cx += (lx - cx) * Math.min(1, dt * 3);
       cy += (ly - cy) * Math.min(1, dt * 3);
-      camera.position.set(cx * 1.2, 3.1 - cy * 0.5, baseZ);
-      camera.lookAt(0, 0.9, 0);
+      camera.position.set(cx * 1.2, baseY - cy * 0.5, baseZ);
+      camera.lookAt(0, aimY, 0);
       flag.rotation.y = Math.sin(t * 3) * 0.2;
     },
     dispose() {

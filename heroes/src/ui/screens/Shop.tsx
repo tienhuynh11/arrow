@@ -105,7 +105,7 @@ export function Shop() {
       </div>
 
       {pick && (
-        <Modal title="Chọn tướng nhận mảnh" onClose={() => setPick(null)}>
+        <Modal class="dk-pick" title="Chọn tướng nhận mảnh" onClose={() => setPick(null)}>
           <small class="hint">
             {pick.item.name} x{pick.times}: chạm một tướng để nhận mảnh.
           </small>

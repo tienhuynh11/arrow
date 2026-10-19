@@ -5,13 +5,14 @@ import { MAX_STAR } from '@shared/heroes/config';
 import { skillOf } from '@shared/heroes/skills';
 import { api, me } from '../../api';
 import { sfx } from '../../audio';
-import { describeSkill, gearBonus, HEROES, levelCapOf, ownedMap, powerOfOwned } from '../../game';
+import { describeSkill, gearBonus, gearOf, gearStatsOf, HEROES, levelCapOf, ownedMap, powerOfOwned } from '../../game';
 import { runLive } from '../../render/live';
 import { createDetailScene, type DetailScene } from '../../render/scenes';
 import { errToast, fmt, go, useMedia } from '../../state';
-import { Btn, Canvas3D, ElemChip, HeroCard, IconBtn, RarityTag, RoleChip, Stars } from '../common';
+import { Btn, Canvas3D, ElemChip, HeroCard, IconBtn, RarityTag, RoleChip, Stars, useDesktop } from '../common';
 import { applyFilter, EMPTY_FILTER, FilterBar, type HeroFilter } from '../filters';
-import { GearTab } from '../gear';
+import { GearTab, GearTile, statText } from '../gear';
+import { GEAR_SLOT_NAME, GEAR_SLOTS, gearDefOf } from '@shared/heroes/gear';
 import { Icon } from '../icons';
 
 const STAT_ROWS: { k: 'hp' | 'atk' | 'def' | 'spd'; label: string; icon: 'heart' | 'sword' | 'shield' | 'bolt' }[] = [
@@ -28,12 +29,20 @@ const DTABS: { k: DTab; label: string }[] = [
   { k: 'gear', label: 'Trang bị' },
   { k: 'up', label: 'Nâng cấp' },
 ];
+/** màn lớn: gộp Chỉ số + Kỹ năng + tóm tắt trang bị vào một tab "Tổng quan" để không còn vùng trống */
+const DTABS_DK: { k: DTab; label: string }[] = [
+  { k: 'stats', label: 'Tổng quan' },
+  { k: 'gear', label: 'Trang bị' },
+  { k: 'up', label: 'Nâng cấp' },
+];
 
 export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?: () => void; /** đổi tướng: -1 = trước, 1 = sau */ onStep?: (d: -1 | 1) => void; pos?: string }) {
   const m = me.value!;
   const def = HEROES.find((h) => h.id === id)!;
   const o = ownedMap(m).get(id);
-  const [tab, setTab] = useState<DTab>('stats');
+  const [tab0, setTab] = useState<DTab>('stats');
+  const dk = useDesktop();
+  const tab: DTab = dk && tab0 === 'skills' ? 'stats' : tab0;
   const sceneRef = useRef<DetailScene | null>(null);
   const shown = useRef('');
 
@@ -128,7 +137,7 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
       </div>
 
       <div class="seg wide d-tabs" role="tablist">
-        {DTABS.map((t) => (
+        {(dk ? DTABS_DK : DTABS).map((t) => (
           <button type="button" role="tab" key={t.k} class={tab === t.k ? 'on' : ''} aria-selected={tab === t.k} onClick={() => setTab(t.k)}>
             {t.label}
           </button>
@@ -137,7 +146,8 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
 
       <div class="d-pane scroll">
         {tab === 'stats' && (
-          <>
+          <div class={dk ? 'dk-ov' : 'dk-flat'}>
+            <div class="dk-ov-stats">
             <div class="d-tags">
               <ElemChip el={def.element} label />
               <RoleChip role={def.role} label />
@@ -165,10 +175,51 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
               </div>
             </div>
             {!o && <small class="muted">Chỉ số mẫu ở Lv1, 1 sao.</small>}
-          </>
+            </div>
+            {dk && (
+              <div class="dk-ov-skills">
+                <h4 class="dk-h">Kỹ năng</h4>
+                {def.skills.map((sid) => {
+                  const s = skillOf(sid);
+                  return (
+                    <div class={`skill k-${s.kind}`} key={sid}>
+                      <span class="sk-kind">{KIND_LABEL[s.kind]}</span>
+                      <b>{s.name}</b>
+                      <p>{describeSkill(s)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {dk && (
+              <div class="dk-ov-gear">
+                <h4 class="dk-h">Trang bị</h4>
+                {o ? (
+                  <div class="dk-gear-row">
+                    {GEAR_SLOTS.map((slot) => {
+                      const it = gearOf(m, id)[slot];
+                      const d = it ? gearDefOf(it.def) : null;
+                      return (
+                        <div class={`dk-gear${d ? '' : ' empty'}`} key={slot}>
+                          {d && it ? <GearTile def={d} level={it.level} size={44} /> : <span class="gtile gt-empty"><Icon n="sparkle" size={18} /></span>}
+                          <span class="dk-gear-t">
+                            <small>{GEAR_SLOT_NAME[slot]}</small>
+                            <b>{d ? d.name : 'Trống'}</b>
+                            {it && <em>{statText(gearStatsOf(it))}</em>}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <small class="muted">Chưa sở hữu tướng này.</small>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
-        {tab === 'skills' &&
+        {tab === 'skills' && !dk &&
           def.skills.map((sid) => {
             const s = skillOf(sid);
             return (

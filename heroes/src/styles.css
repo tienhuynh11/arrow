@@ -100,23 +100,24 @@ button { font: inherit; color: inherit; }
 
 .nav {
   display: flex; flex-direction: column; gap: 6px; padding: 8px 6px;
-  background: linear-gradient(#3b9cf0, #2674d2); border-right: 3px solid var(--ink);
+  background: linear-gradient(#3b9cf0, #2674d2); border-right: 1px solid rgba(30, 42, 74, 0.35);
 }
 .tab {
   position: relative; flex: 1; max-height: 92px; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  border: 3px solid transparent; border-radius: 16px; background: transparent; color: #fff; cursor: pointer; padding: 2px;
-  font-family: var(--f-title); font-size: 13px; text-shadow: 0 2px 0 var(--ink);
+  border: 3px solid transparent; border-radius: 16px; background: transparent; color: rgba(255, 255, 255, 0.82); cursor: pointer; padding: 2px;
+  font-family: var(--f-title); font-size: 13px; text-shadow: 0 1px 2px rgba(30, 42, 74, 0.45);
 }
-.tab .ic { filter: drop-shadow(0 2px 0 rgba(30, 42, 74, 0.5)); }
-.tab.on { background: linear-gradient(#ffe27a, #ffb52e); border-color: var(--ink); box-shadow: 0 3px 0 var(--ink); color: #fff; }
+.tab .ic { filter: drop-shadow(0 1px 1px rgba(30, 42, 74, 0.35)); opacity: 0.9; }
+.tab.on { background: linear-gradient(#ffe27a, #ffb52e); border-color: var(--ink); box-shadow: 0 3px 0 var(--ink); color: #fff; text-shadow: 0 2px 0 var(--ink); }
+.tab.on .ic { opacity: 1; }
 .tab-ic { position: relative; display: grid; }
-.dot { position: absolute; top: -2px; right: -4px; width: 12px; height: 12px; border-radius: 50%; background: var(--red); border: 2px solid var(--ink); }
+.dot { position: absolute; top: -2px; right: -4px; width: 12px; height: 12px; border-radius: 50%; background: var(--red); border: 2px solid #fff; box-shadow: 0 1px 2px rgba(30, 42, 74, 0.4); }
 
 @media (max-aspect-ratio: 1/1) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .app.full { grid-template-rows: minmax(0, 1fr); }
   .main { order: 1; }
-  .nav { order: 2; flex-direction: row; border-right: 0; border-top: 3px solid var(--ink); padding: 6px 6px 6px; gap: 4px; }
+  .nav { order: 2; flex-direction: row; border-right: 0; border-top: 1px solid rgba(30, 42, 74, 0.35); padding: 6px 6px 6px; gap: 4px; }
   .tab { max-height: none; min-height: 56px; }
 }
 @media (min-aspect-ratio: 1/1) and (max-height: 520px) {
@@ -131,35 +132,54 @@ button { font: inherit; color: inherit; }
   .tab .ic { width: 22px; height: 22px; }
 }
 
+@media (min-aspect-ratio: 1/1) and (min-width: 1024px) and (min-height: 521px) {
+  :root { --nav-w: 108px; --gap: 14px; }
+  .nav { padding: 12px 10px; gap: 8px; }
+  .tab { font-size: 15px; max-height: 104px; gap: 4px; }
+  .tab .ic { width: 32px; height: 32px; }
+}
+
 /* ---------- thanh trên ---------- */
+/* kính nhẹ dùng chung cho widget phủ lên cảnh 3D / thanh trên (không viền đậm) */
+.hb-pill, .hb-ibtn, .hb-plate, .hb-dock, .hb-afk, .hb-acts-btn, .hb-strip {
+  background: rgba(255, 255, 255, 0.58); border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 2px 10px rgba(30, 42, 74, 0.16);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
 .topbar { display: flex; align-items: center; gap: 8px; padding: 8px var(--gap); min-height: 58px; }
-.avatar { position: relative; flex: none; width: 48px; height: 48px; padding: 0; border: 3px solid var(--ink); border-radius: 50%; background: linear-gradient(#ffe27a, #ff9a1f); box-shadow: 0 3px 0 var(--ink); cursor: pointer; }
-.av-face { font-family: var(--f-title); font-size: 24px; color: #fff; text-shadow: 0 2px 0 var(--ink); }
-.av-lv { position: absolute; right: -6px; bottom: -6px; min-width: 24px; height: 24px; padding: 0 4px; display: grid; place-items: center; border-radius: 12px; border: 2px solid var(--ink); background: #fff; font-family: var(--f-title); font-size: 13px; }
+.avatar { position: relative; flex: none; width: 46px; height: 46px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: linear-gradient(#ffe27a, #ff9a1f); box-shadow: 0 2px 8px rgba(30, 42, 74, 0.28); cursor: pointer; }
+.av-face { font-family: var(--f-title); font-size: 22px; color: #fff; text-shadow: 0 2px 0 rgba(30, 42, 74, 0.55); }
+.av-lv { position: absolute; right: -5px; bottom: -5px; min-width: 22px; height: 22px; padding: 0 4px; display: grid; place-items: center; border-radius: 11px; border: 1px solid rgba(30, 42, 74, 0.35); background: #fff; font-family: var(--f-title); font-size: 12px; line-height: 1; }
 .who { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 0 1 140px; }
-.who-name { font-family: var(--f-title); font-weight: 800; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 0 #fff; }
+.who-name { font-family: var(--f-title); font-weight: 800; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8); }
 .xpbar, .shard-bar, .afk-bar, .pbar { position: relative; height: 12px; border: 2px solid var(--ink); border-radius: 8px; background: rgba(30, 42, 74, 0.25); overflow: hidden; }
 .xpbar i, .shard-bar i, .afk-bar i, .pbar i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(#8be85c, #35b84a); transition: width 0.3s; }
-.curs { flex: 1; display: flex; gap: 6px; justify-content: flex-end; flex-wrap: nowrap; min-width: 0; }
-.cur { display: flex; align-items: center; gap: 4px; padding: 3px 10px 3px 6px; min-height: 34px; border: 3px solid var(--ink); border-radius: 18px; background: rgba(255, 255, 255, 0.92); font-family: var(--f-title); font-size: 15px; white-space: nowrap; }
-.cur b { font-weight: 800; }
+.xpbar.hb-xp { height: 8px; border: 1px solid rgba(30, 42, 74, 0.35); background: rgba(255, 255, 255, 0.5); }
+/* viên thuốc tiền tệ: một khối kính, ngăn bằng vạch mảnh */
+.hb-pill { margin-left: auto; display: flex; align-items: center; min-width: 0; min-height: 38px; border-radius: 999px; overflow-x: auto; scrollbar-width: none; }
+.hb-pill::-webkit-scrollbar { display: none; }
+.hb-cur { flex: none; display: flex; align-items: center; gap: 4px; padding: 0 12px 0 10px; min-height: 38px; font-family: var(--f-title); font-size: 15px; white-space: nowrap; }
+.hb-cur + .hb-cur { border-left: 1px solid rgba(30, 42, 74, 0.16); }
+.hb-cur b { font-weight: 800; }
+.hb-ibtn { flex: none; width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border-radius: 50%; cursor: pointer; }
+.hb-ibtn:active { transform: scale(0.94); }
 @media (max-height: 700px) {
   .topbar { min-height: 48px; padding: 4px var(--gap); }
   .avatar { width: 40px; height: 40px; }
   .av-face { font-size: 20px; }
-  .cur { min-height: 30px; }
+  .hb-pill, .hb-cur { min-height: 34px; }
 }
 @media (max-height: 520px) {
   .topbar { min-height: 42px; padding: 2px var(--gap); }
   .avatar { width: 36px; height: 36px; }
-  .cur { min-height: 28px; font-size: 14px; }
+  .hb-pill, .hb-cur { min-height: 32px; }
+  .hb-cur { font-size: 14px; }
 }
 @media (max-width: 560px) {
   .who { display: none; }
-  .cur { padding: 2px 7px 2px 4px; font-size: 13px; gap: 2px; }
-  .cur .ic { width: 17px; height: 17px; }
-  .hide-sm { display: none; }
-  .curs { gap: 4px; }
+  .hb-cur { padding: 0 8px 0 6px; font-size: 14px; gap: 3px; }
+  .hb-cur .ic { width: 18px; height: 18px; }
+  .hb-hide-sm { display: none; }
 }
 
 /* ---------- panel / modal / toast ---------- */
@@ -255,19 +275,74 @@ button { font: inherit; color: inherit; }
 .hub-canvas { position: absolute; inset: 0; }
 .hub-ui { position: absolute; inset: 0; pointer-events: none; }
 .hub-ui > * { pointer-events: auto; }
-.leader-plate { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; padding: 4px 18px; border: 3px solid var(--ink); border-radius: 16px; background: rgba(255, 255, 255, 0.9); text-align: center; line-height: 1.1; }
-.leader-plate b { font-family: var(--f-title); font-weight: 800; font-size: 17px; }
-.afk-chip { position: absolute; left: var(--gap); bottom: var(--gap); display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 14px 4px 10px; border: 3px solid var(--ink); border-radius: 18px; background: linear-gradient(#fff, #dbe6f7); box-shadow: 0 4px 0 var(--ink); cursor: pointer; text-align: left; }
-.afk-chip span { display: flex; flex-direction: column; line-height: 1.15; }
-.afk-chip b { font-family: var(--f-title); font-weight: 800; }
-.go-wrap { position: absolute; right: var(--gap); bottom: var(--gap); display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.go-wrap .next { padding: 1px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.9); border: 2px solid var(--ink); }
-.go-btn { min-height: 68px; padding: 8px 34px; font-size: 32px; animation: bob 1.6s ease-in-out infinite; }
-@keyframes bob { 50% { transform: translateY(-4px); } }
+/* ---- Hub: widget kính phủ lên cảnh 3D; dock (ngang/PC) hoặc nút Hoạt động (dọc); cụm CTA ---- */
+.hb-plate { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; padding: 3px 16px; border-radius: 14px; text-align: center; line-height: 1.1; max-width: 46%; }
+.hb-plate b { font-family: var(--f-title); font-weight: 800; font-size: 16px; }
+.hb-plate small { color: var(--ink-soft); }
+.hb-ic { position: relative; display: grid; place-items: center; }
+.hb-badge { position: absolute; top: -7px; right: -10px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; border: 1.5px solid #fff; border-radius: 10px; background: var(--red); color: #fff; font: 800 12px/1 var(--f-title); font-style: normal; box-shadow: 0 1px 3px rgba(30, 42, 74, 0.4); }
+.hb-badge-dot { min-width: 0; width: 13px; height: 13px; padding: 0; top: -4px; right: -5px; border-radius: 50%; }
+/* dock dọc bên phải */
+.hb-dock { position: absolute; right: var(--gap); top: 8px; display: flex; flex-direction: column; padding: 4px; border-radius: 22px; }
+.hb-dock-b { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-width: 62px; min-height: 58px; padding: 4px 6px; border: 0; border-radius: 16px; background: transparent; cursor: pointer; font-family: var(--f-title); font-weight: 800; }
+.hb-dock-b small { font-size: 12px; line-height: 1.1; }
+.hb-dock-b:active { background: rgba(255, 255, 255, 0.6); }
+/* nút tròn Hoạt động + bảng neo (chỉ điện thoại dọc) */
+.hb-acts-btn { display: none; position: absolute; right: var(--gap); top: 8px; width: 52px; height: 52px; padding: 0; border-radius: 50%; place-items: center; cursor: pointer; }
+.hb-acts-btn:active { transform: scale(0.94); }
+.hb-acts-btn .hb-badge { top: -3px; right: -3px; }
+.hb-back { position: absolute; inset: 0; z-index: 4; }
+.hb-sheet { position: absolute; z-index: 5; right: var(--gap); top: 68px; width: min(264px, calc(100% - var(--gap) * 2)); display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; border-radius: 22px; background: rgba(255, 255, 255, 0.94); border: 1px solid rgba(255, 255, 255, 0.9); box-shadow: 0 8px 24px rgba(30, 42, 74, 0.28); animation: pop 0.15s ease-out; }
+.hb-sheet-b { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 84px; padding: 6px; border: 1px solid rgba(30, 42, 74, 0.12); border-radius: 16px; background: #f1f6ff; cursor: pointer; font-family: var(--f-title); }
+.hb-sheet-b:active { background: #dbe6f7; }
+.hb-sheet-b b { font-weight: 800; font-size: 15px; line-height: 1.1; }
+.hb-sheet-b small { color: var(--ink-soft); line-height: 1; }
+/* cụm đáy: chip AFK + thẻ CHIẾN */
+.hb-bottom { position: absolute; right: var(--gap); bottom: var(--gap); display: flex; align-items: flex-end; gap: 8px; }
+.hb-afk { position: relative; display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 4px 12px 4px 8px; border-radius: 16px; cursor: pointer; text-align: left; }
+.hb-afk span { display: flex; flex-direction: column; line-height: 1.15; }
+.hb-afk b { font-family: var(--f-title); font-weight: 800; font-size: 14px; }
+.hb-afk small { color: var(--ink-soft); }
+.hb-afk .dot { top: -3px; right: -3px; }
+.hb-cta { display: flex; flex-direction: column; gap: 5px; width: clamp(230px, 28vw, 330px); }
+.hb-strip { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 12px; border-radius: 12px; font-family: var(--f-title); font-weight: 800; font-size: 13px; white-space: nowrap; }
+.hb-strip span { display: inline-flex; align-items: center; gap: 4px; }
+.hb-go { width: 100%; min-height: 68px; padding: 6px 18px; gap: 12px; animation: bob 1.8s ease-in-out infinite; }
+.hb-go-t { display: flex; flex-direction: column; align-items: flex-start; line-height: 1; }
+.hb-go-t b { font-family: var(--f-title); font-weight: 800; font-size: 32px; letter-spacing: 1px; }
+.hb-go-t small { font-size: 13px; font-weight: 800; opacity: 0.8; }
+@keyframes bob { 50% { transform: translateY(-3px); } }
 @media (max-height: 520px) {
-  .go-btn { min-height: 52px; padding: 4px 22px; font-size: 24px; }
-  .leader-plate { top: 4px; padding: 2px 12px; }
-  .afk-chip { min-height: 46px; }
+  .hb-go { min-height: 54px; padding: 3px 14px; }
+  .hb-go-t b { font-size: 24px; }
+  .hb-plate { top: 4px; padding: 1px 12px; }
+  .hb-dock { top: 4px; }
+  .hb-dock-b { min-height: 48px; }
+  .hb-cta { width: clamp(210px, 30vw, 270px); }
+}
+/* điện thoại dọc: dock gập thành nút tròn, CTA tràn ngang phía trên thanh tab */
+@media (max-aspect-ratio: 1/1) {
+  .hb-dock { display: none; }
+  .hb-acts-btn { display: grid; }
+  .hb-bottom { left: var(--gap); }
+  .hb-cta { flex: 1; width: auto; min-width: 0; }
+  .hb-afk { flex: none; min-height: 64px; padding: 4px 10px 4px 8px; }
+}
+@media (max-width: 400px) {
+  .hb-strip { font-size: 12px; padding: 2px 8px; }
+  .hb-strip .ic { display: none; }
+  .hb-go { padding: 6px 10px; gap: 8px; }
+  .hb-go-t b { font-size: 28px; }
+}
+/* màn lớn: dock và CTA rộng rãi hơn */
+@media (min-width: 1024px) and (min-height: 700px) {
+  .hb-dock-b { min-width: 76px; min-height: 68px; }
+  .hb-dock-b small { font-size: 13px; }
+  .hb-go { min-height: 84px; }
+  .hb-go-t b { font-size: 40px; }
+  .hb-go-t small { font-size: 15px; }
+  .hb-strip { font-size: 15px; padding: 4px 14px; }
+  .hb-afk { min-height: 56px; }
 }
 
 .afk-bar { height: 22px; }
@@ -654,9 +729,9 @@ body.dnd-on [data-drop="roster"].drop-hot { box-shadow: inset 0 0 0 5px #ff5c6c;
 /* ---------- điện thoại nhỏ (≤400px rộng): thu gọn để không tràn/che nhau ---------- */
 @media (max-width: 400px) {
   .topbar { gap: 5px; padding-left: 8px; padding-right: 8px; }
-  .curs { gap: 4px; }
-  .cur { gap: 2px; padding: 2px 6px 2px 4px; min-height: 32px; border-width: 2px; font-size: 13px; }
-  .cur svg { width: 16px; height: 16px; }
+  .hb-cur { gap: 2px; padding: 0 6px 0 5px; font-size: 13px; }
+  .hb-cur .ic { width: 16px; height: 16px; }
+  .avatar { width: 38px; height: 38px; }
   .fcount { display: none; }
   .d-nav { width: 40px; height: 48px; top: 60%; }
   .d-title h2 { font-size: 18px; }
@@ -765,9 +840,6 @@ div.gtile { cursor: inherit; }
 .pb-drop .rtag { min-width: 0; height: 22px; font-size: 12px; padding: 0 6px; font-style: normal; }
 
 /* nút kho đồ ở Hub */
-.bag-chip { position: absolute; left: var(--gap); top: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 58px; min-height: 58px; padding: 2px 6px; border: 3px solid var(--ink); border-radius: 16px; background: linear-gradient(#fff, #dbe6f7); box-shadow: 0 4px 0 var(--ink); cursor: pointer; }
-.bag-chip small { font-family: var(--f-title); font-size: 12px; line-height: 1; }
-.bag-chip:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
 .d-tabs button { padding: 4px 4px; font-size: 14px; }
 
 @media (min-aspect-ratio: 1/1) and (max-height: 520px) {
@@ -776,7 +848,6 @@ div.gtile { cursor: inherit; }
   .gp-heroes { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
   .drop { width: auto; }
   .drop small { display: none; }
-  .bag-chip { top: 4px; min-height: 52px; }
 }
 
 /* ---------- HOẠT ĐỘNG: thanh tiêu đề chung (prefix ah-), Tháp (tw-), Nhiệm vụ (qs-), Cửa hàng (sh-), nút ở Hub ---------- */
@@ -873,14 +944,382 @@ div.gtile { cursor: inherit; }
 .sh-heroes { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 12px 8px; padding: 6px 6px 10px; max-height: min(56dvh, 380px); }
 .sh-shard { position: absolute; left: 50%; top: 24px; transform: translateX(-50%); z-index: 3; padding: 0 6px; border: 2px solid var(--ink); border-radius: 9px; background: #fff; font-size: 12px; font-weight: 800; line-height: 16px; white-space: nowrap; }
 
-/* nút Hoạt động ở Hub */
-.hub-acts { position: absolute; right: var(--gap); top: 8px; display: flex; flex-direction: column; gap: 8px; }
-.hub-act { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 66px; min-height: 62px; padding: 3px 6px; border: 3px solid var(--ink); border-radius: 16px; background: linear-gradient(#fff, #dbe6f7); box-shadow: 0 4px 0 var(--ink); cursor: pointer; }
-.hub-act small { font-family: var(--f-title); font-weight: 800; font-size: 12px; line-height: 1.1; }
-.hub-act:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
-.hub-act .dot { top: -5px; right: -5px; }
-.hub-badge { position: absolute; top: -9px; right: -7px; min-width: 22px; height: 22px; padding: 0 5px; display: grid; place-items: center; border: 2px solid var(--ink); border-radius: 11px; background: var(--red); color: #fff; font: 800 12px var(--f-title); font-style: normal; }
-@media (max-height: 520px) {
-  .hub-acts { top: 4px; gap: 5px; }
-  .hub-act { min-height: 52px; }
+
+/* =====================================================================================================
+   PC + MÁY TÍNH BẢNG (tiền tố dk-): CHỈ áp dụng khi cửa sổ >= 900x560 hoặc >= 700x800 (tablet dọc).
+   Điện thoại (<=900 rộng hoặc <=560 cao, và điện thoại dọc) KHÔNG khớp các khối này nên giữ nguyên bố cục cũ.
+   Không dùng hover, không zoom/transform toàn app (kéo thả dnd.ts vẫn đúng toạ độ).
+   Truy vấn dùng chung "DK" = (min-width:900px) and (min-height:560px), (min-width:700px) and (min-height:800px)
+   (khớp DK_Q trong ui/common.tsx).
+   ===================================================================================================== */
+
+/* bọc trung tính: ở điện thoại các lớp bọc dk- trong Chi tiết tướng không tạo hộp mới (bố cục như cũ) */
+.dk-flat, .dk-flat > .dk-ov-stats { display: contents; }
+
+/* ---------- DK-1: khung nội dung, bề mặt nhẹ, hộp thoại, thanh tiêu đề hoạt động ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  /* chặn trần ~1280px, căn giữa để 1920x1080 không bị thưa */
+  .screen-body > .split, .screen-body > .single, .screen-body > .squad, .screen-body > .summon, .screen-body > .campaign,
+  .screen-body > .tower { width: 100%; max-width: 1280px; margin-inline: auto; }
+  .screen-body > .shop { width: 100%; max-width: 1100px; margin-inline: auto; }
+  .screen-body > .quests { width: 100%; max-width: 900px; margin-inline: auto; }
+  .screen-body > .split, .screen-body > .squad { gap: 18px; }
+  .screen-body > .tower, .screen-body > .shop, .screen-body > .quests, .screen-body > .campaign, .screen-body > .summon .sm-main { gap: clamp(10px, 1.6vh, 16px); }
+
+  /* bề mặt phụ: kính nhẹ, viền mảnh sáng; viền đậm chỉ giữ cho nút chính và trạng thái chọn */
+  .panel { background: rgba(255, 255, 255, 0.74); border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 22px; box-shadow: 0 2px 12px rgba(30, 42, 74, 0.14); padding: clamp(12px, 2vh, 20px); }
+  .panel h3 { font-size: 20px; }
+  .fade-wrap > .hgrid, .tw-floors, .qs-list, .sh-grid { background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(255, 255, 255, 0.85); border-radius: 22px; box-shadow: 0 2px 10px rgba(30, 42, 74, 0.12); }
+  .sq-roster .fade-wrap > .hgrid { background: rgba(255, 255, 255, 0.5); }
+  .screen-body .seg { border: 2px solid rgba(30, 42, 74, 0.3); background: rgba(255, 255, 255, 0.55); }
+  .screen-body .seg button { min-height: 50px; font-size: 17px; }
+  .hint { font-size: 14px; }
+  .fcount { font-size: 14px; }
+
+  /* thanh tiêu đề màn Hoạt động */
+  .ah-head { gap: 12px; }
+  .ah-title { font-size: clamp(24px, 3.6vh, 32px); gap: 10px; }
+  .ah-title .ic { width: 32px; height: 32px; }
+  .ah-pill { min-height: 42px; padding: 2px 14px 2px 10px; font-size: 16px; border: 1px solid rgba(255, 255, 255, 0.9); box-shadow: 0 2px 8px rgba(30, 42, 74, 0.14); }
+  .ah-chip { padding: 2px 10px 2px 6px; font-size: 15px; line-height: 24px; border-width: 1px; border-color: rgba(30, 42, 74, 0.25); }
+  .btn.ah-back { min-height: 46px; padding: 4px 16px 4px 10px; font-size: 17px; }
+
+  /* hộp thoại / bảng: kích thước hợp lý, căn giữa, cuộn bên trong */
+  .modal { width: min(540px, 100%); max-height: min(100%, 92vh); border-radius: 26px; }
+  .modal.wide { width: min(980px, 100%); }
+  .modal.dk-pick { width: min(780px, 100%); }
+  .modal-head { padding: 14px 16px 8px 24px; }
+  .modal-head h2 { font-size: 28px; }
+  .modal-body { padding: 8px 24px 24px; gap: 14px; }
+  .modal-body .hint, .rates { font-size: 15px; }
+  .rate-table td { padding: 8px 6px; }
+  .rate-table .pct { font-size: 21px; }
+  .rate-table .pool { font-size: 14px; }
+  .rate-notes { font-size: 15px; }
+  .toast { font-size: 17px; }
+}
+
+/* ---------- DK-2: thẻ tướng, danh sách tướng, chi tiết tướng (Tướng) ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .hgrid { grid-template-columns: repeat(auto-fill, minmax(clamp(124px, 17vh, 168px), 1fr)); gap: 18px 14px; padding: 14px 14px 40px; }
+  .hgrid.compact { grid-template-columns: repeat(auto-fill, minmax(clamp(104px, 14vh, 136px), 1fr)); }
+  .hgrid.mini-grid { grid-template-columns: repeat(auto-fill, minmax(clamp(68px, 9vh, 88px), 1fr)); gap: 12px 8px; }
+  /* thẻ to: chữ lớn, viền xếp hạng giữ nguyên, bóng mềm thay vì vòng viền đen dày (UR vẫn viền đặc + cầu vồng bên trong) */
+  .hcard:not(.mini) { box-shadow: 0 3px 8px rgba(30, 42, 74, 0.3); }
+  .hcard:not(.mini).sel { box-shadow: 0 0 0 2px var(--ink), 0 0 16px 4px #fff; }
+  .hcard:not(.mini) .hc-art { inset: 0 0 30px; }
+  .hcard:not(.mini) .hc-name { height: 30px; line-height: 30px; font-size: clamp(14px, 1.9vh, 17px); padding: 0 6px; }
+  .hcard:not(.mini) .hc-lv { bottom: 34px; left: 5px; padding: 0 7px; font-size: 13px; line-height: 19px; }
+  .hcard:not(.mini) .stars { bottom: 33px; right: 4px; }
+  .hcard .stars .ic { width: 15px; height: 15px; }
+  .hcard:not(.mini) .hc-elem { top: 5px; left: 5px; }
+  .hcard:not(.mini) .hc-elem .ic { width: 20px; height: 20px; }
+  .hcard:not(.mini) .hc-rar { top: 5px; right: 5px; padding: 0 7px; font-size: 14px; line-height: 19px; }
+  .hcard:not(.mini) .in-squad { bottom: 36px; width: 30px; height: 30px; }
+  .more-unowned { min-height: 52px; font-size: 16px; }
+
+  /* chi tiết: vùng 3D cao hơn, chữ to, đáy nút hành động lớn */
+  .detail { grid-template-rows: minmax(170px, 38%) auto minmax(0, 1fr) auto; border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 24px; background: rgba(255, 248, 230, 0.94); box-shadow: 0 2px 14px rgba(30, 42, 74, 0.2); }
+  .d-nav { width: 56px; height: 64px; }
+  .d-pos { font-size: 15px; padding: 3px 12px; }
+  .d-title { bottom: 10px; gap: 12px; }
+  .d-title h2 { font-size: clamp(26px, 3.8vh, 38px); }
+  .d-title small { font-size: 14px; padding: 1px 10px; }
+  .d-tabs { margin: 10px 14px 0; }
+  .d-tabs button { font-size: 17px; }
+  .d-pane { padding: 16px 18px; gap: 12px; }
+  .d-actions { gap: 12px; padding: 12px 16px 14px; border-top: 1px solid rgba(30, 42, 74, 0.18); background: rgba(255, 243, 196, 0.8); }
+  .d-actions .btn { min-height: 62px; }
+  .act-t { font-size: 21px; }
+  .act-s { font-size: 14px; }
+  .d-tags { gap: 8px; }
+  .d-tags .chip { font-size: 15px; padding: 3px 10px 3px 6px; }
+  .lvtag { font-size: 16px; padding: 2px 12px; }
+  .stat-grid { gap: 10px; }
+  .stat { min-height: 50px; padding: 6px 12px; border-width: 1px; border-radius: 14px; }
+  .stat span { font-size: 16px; }
+  .stat b { font-size: 21px; }
+  .stat em, .stat .gb { font-size: 13px; }
+  .skill { padding: 10px 0; }
+  .skill b { font-size: 18px; }
+  .skill p { font-size: 15px; margin-top: 2px; }
+  .sk-kind { font-size: 13px; padding: 0 10px; }
+  .up-row b { font-size: 18px; }
+  .cost span { font-size: 17px; }
+  .shard-bar { height: 26px; }
+  .shard-bar span { font-size: 14px; line-height: 22px; }
+
+  /* tab "Tổng quan": chỉ số | kỹ năng cạnh nhau, tóm tắt trang bị ở dưới (không còn vùng trống) */
+  .dk-ov { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px 24px; align-items: start; }
+  .dk-ov-stats, .dk-ov-skills { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .dk-ov-skills { gap: 0; }
+  .dk-ov-gear { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid rgba(30, 42, 74, 0.15); }
+  .dk-h { margin: 0 0 4px; font-family: var(--f-title); font-weight: 800; font-size: 17px; color: var(--ink-soft); letter-spacing: 0.4px; }
+  .dk-gear-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+  .dk-gear { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 10px; border-radius: 16px; background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(30, 42, 74, 0.14); }
+  .dk-gear.empty { opacity: 0.7; }
+  .dk-gear .gtile.gt-empty { width: 44px; height: 44px; }
+  .dk-gear-t { display: flex; flex-direction: column; min-width: 0; line-height: 1.12; }
+  .dk-gear-t small { color: var(--ink-soft); font-size: 13px; }
+  .dk-gear-t b { font-family: var(--f-title); font-size: 15px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .dk-gear-t em { font-style: normal; font-size: 13px; color: #1f7a33; }
+
+  /* tab Trang bị */
+  .gslots { gap: 10px; }
+  .gslot { min-height: 80px; padding: 8px 10px; border-width: 2px; gap: 12px; }
+  .gs-txt small { font-size: 13px; }
+  .gs-txt b { font-size: 16px; }
+  .gs-txt em { font-size: 13px; }
+  .gbonus { font-size: 15px; padding: 8px 12px; }
+  .gbonus > b { font-size: 16px; }
+}
+/* PC ngang: danh sách tướng : chi tiết ~ 1 : 1 */
+@media (min-width: 900px) and (min-height: 560px) and (min-aspect-ratio: 1/1) {
+  .split { grid-template-columns: minmax(0, 1.05fr) minmax(430px, 1fr); }
+}
+
+/* ---------- DK-3: Đội hình ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .sq-board { gap: 14px; }
+  .sq-roster { gap: 10px; }
+  .row-label { font-size: 14px; }
+  .slots { gap: 14px; }
+  .slot { border-width: 2px; border-radius: 18px; padding: 3px; }
+  .slot.sel { border-width: 3px; }
+  .slot-plus .ic { width: 40px; height: 40px; }
+  .slot-n { width: 28px; height: 28px; font-size: 14px; top: -10px; left: -8px; }
+  .board { gap: clamp(14px, 3vh, 28px); }
+  .sq-foot { gap: 10px; }
+  .sq-foot .power { font-size: 17px; }
+  .power b { font-size: 26px; }
+  .sq-foot .btn.small { min-height: 50px; font-size: 16px; padding: 4px 16px; }
+  .btn.sq-return { min-height: 64px; font-size: 26px; }
+  .sq-tabs button { min-height: 52px; }
+}
+@media (min-width: 900px) and (min-height: 560px) and (min-aspect-ratio: 1/1), (min-width: 700px) and (min-height: 800px) and (min-aspect-ratio: 1/1) {
+  .squad { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
+  .squad .board { --sw: clamp(88px, min(17vh, 12vw), 168px); }
+}
+/* tablet / cửa sổ dọc: 5 ô một hàng, to hơn điện thoại */
+@media (min-width: 700px) and (min-height: 800px) and (max-aspect-ratio: 1/1), (min-width: 900px) and (min-height: 560px) and (max-aspect-ratio: 1/1) {
+  .squad .board { --sw: clamp(80px, calc((100vw - 190px) / 5.2), 130px); gap: 18px; }
+  .squad .board .slots { gap: 10px; }
+}
+
+/* ---------- DK-4: Triệu hồi ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .banner-tabs, .sm-ctrl { width: 100%; max-width: 1000px; margin-inline: auto; }
+  .banner-tabs { gap: 10px; }
+  .banner-tabs .fchip { min-height: 54px; font-size: 18px; }
+  .banner-art { justify-content: center; gap: clamp(20px, 4vw, 56px); padding: clamp(12px, 2.4vh, 28px) clamp(18px, 3vw, 48px); min-height: 150px; border: 2px solid rgba(255, 255, 255, 0.75); border-radius: 28px; box-shadow: 0 4px 16px rgba(30, 42, 74, 0.22); }
+  .ba-hero { width: clamp(150px, 40vh, 400px); }
+  .ba-text { align-items: center; text-align: center; gap: clamp(6px, 1.2vh, 12px); max-width: 560px; }
+  .ba-text h2 { font-size: clamp(30px, 5.4vh, 56px); line-height: 1.05; }
+  .ba-text p { font-size: clamp(15px, 2.2vh, 20px); line-height: 1.25; }
+  .ba-text .rtag { height: 30px; min-width: 48px; font-size: 17px; }
+  .banner-art.feat .ba-text { align-items: flex-start; text-align: left; }
+  .ba-showcase { gap: clamp(8px, 1.4vw, 18px); margin-top: clamp(4px, 1.4vh, 14px); }
+  .ba-mini { width: clamp(72px, 14vh, 140px); border-width: 3px; border-radius: 18px; }
+  .sm-ctrl { gap: clamp(8px, 1.4vh, 14px); }
+  .pity { padding: 12px 18px; gap: 8px; }
+  .pity-row { grid-template-columns: 150px 1fr 76px; font-size: 16px; gap: 12px; }
+  .pbar { height: 18px; }
+  .summon-btns { gap: 16px; }
+  .summon-btns .btn { min-height: clamp(66px, 9vh, 88px); }
+  .sb-top { font-size: 26px; }
+  .sb-cost { font-size: 19px; }
+  .lack-note { font-size: 15px; }
+  /* màn lật thẻ */
+  .rv-grid { width: min(100%, 1180px); gap: 16px; }
+  .rv-grid.n1 { grid-template-columns: minmax(0, 380px); grid-template-rows: minmax(0, 560px); }
+  .rv-name { font-size: clamp(15px, 2.2vh, 22px); }
+  .rv-new, .rv-dupe { font-size: 14px; line-height: 20px; }
+  .rv-actions .btn.big { min-height: 66px; font-size: 26px; }
+}
+@media (min-width: 900px) and (min-height: 560px) and (min-aspect-ratio: 1/1) {
+  .rv-grid.n10 { gap: 16px; }
+}
+
+/* ---------- DK-5: Chiến dịch + bảng chuẩn bị trận ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .chapter-tabs { gap: 10px; }
+  .chapter-tabs .fchip { min-height: 56px; font-size: 18px; }
+  .chap span { font-size: 18px; }
+  .chap small { font-size: 13px; }
+  .map { border: 2px solid rgba(255, 255, 255, 0.75); border-radius: 28px; box-shadow: 0 3px 14px rgba(30, 42, 74, 0.22); }
+  .node { width: clamp(76px, 11vh, 108px); height: clamp(76px, 11vh, 108px); }
+  .node-c { width: calc(100% - 6px); height: calc(100% - 6px); font-size: clamp(26px, 3.8vh, 38px); border-width: 3px; }
+  .node-c .ic { width: 42%; height: 42%; }
+  .node.boss { width: clamp(96px, 14vh, 136px); height: clamp(96px, 14vh, 136px); }
+  .node.boss .node-c { width: calc(100% - 6px); height: calc(100% - 6px); }
+  .node-stars { bottom: -24px; gap: 2px; }
+  .node-stars .ic { width: 22px; height: 22px; }
+  .node.picked .node-c { box-shadow: 0 0 0 5px #fff, 0 4px 0 var(--ink); }
+  .map-path polyline { stroke-width: 12; }
+
+  /* bảng chuẩn bị trận dạng hộp thoại: to hơn, chữ ≥ 14px */
+  .modal.pb .modal-body { gap: 12px; padding: 4px 22px 20px; }
+  .pb-meta { gap: 12px; }
+  .pb .mon { width: 52px; height: 52px; border-radius: 12px; }
+  .pb .wave-row small { width: 60px; font-size: 14px; }
+  .pb-rewards .reward { font-size: 16px; padding: 4px 12px 4px 8px; }
+  .pb-power { font-size: 16px; }
+  .pb-power b { font-size: 21px; }
+  .verdict { font-size: 14px; }
+  .pb-drop { font-size: 14px; }
+  .pb .board.compact { --sw: clamp(52px, min(8vh, 6vw), 88px); }
+  .pb-pick { height: clamp(150px, 26vh, 260px); }
+  .btn.pb-go { min-height: 64px; font-size: 26px; max-width: 340px; }
+  .pb-foot .btn.small { min-height: 50px; font-size: 16px; }
+}
+/* PC ngang: bản đồ bên trái + bảng ải đang chọn cố định bên phải */
+@media (min-width: 900px) and (min-height: 560px) and (min-aspect-ratio: 1/1) {
+  .campaign.dk-side { display: grid; grid-template-columns: minmax(0, 1fr) clamp(330px, 30vw, 400px); grid-template-rows: auto minmax(0, 1fr); gap: 12px 16px; }
+  .campaign.dk-side .chapter-tabs { grid-column: 1 / -1; }
+  .campaign.dk-side .map { grid-column: 1; min-height: 0; }
+  .campaign.dk-side .pb-side { grid-column: 2; grid-row: 2; }
+  .pb-side { min-height: 0; padding: 16px 18px 18px; background: rgba(255, 248, 230, 0.92); border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 24px; box-shadow: 0 2px 14px rgba(30, 42, 74, 0.2); }
+  .pb-side-t { font-size: 24px; line-height: 1.1; margin-bottom: 10px; text-shadow: 0 2px 0 #fff; }
+  .pb-side-body { display: flex; flex-direction: column; gap: 12px; }
+  .pb-side .pb-cols { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .pb-side .board.compact { --sw: clamp(38px, 3.4vw, 58px); }
+  .pb-side .mon { width: 46px; height: 46px; }
+  .pb-side .pb-foot { justify-content: stretch; }
+  .pb-side .pb-go { flex: 1 0 100%; max-width: none; }
+}
+
+/* ---------- DK-6: Tháp thử thách ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .tw-body { gap: 16px; }
+  .tw-floors { padding: 10px 10px 34px; gap: 8px; }
+  .tw-fl { min-height: 56px; padding: 0 14px; border-width: 2px; border-radius: 14px; font-size: 21px; }
+  .tw-fl.boss { min-height: 64px; }
+  .tw-fl.cur { border-width: 3px; border-color: var(--ink); }
+  .tw-info { padding: clamp(14px, 2.4vh, 24px) clamp(16px, 2vw, 26px); gap: 14px; }
+  .tw-ihead { gap: 10px; }
+  .tw-ihead h3 { font-size: clamp(20px, 3vh, 28px); margin: 0; }
+  .tw-info .waves { gap: 12px; }
+  .tw-info .wave-row { gap: 12px; }
+  .tw-info .wave-row small { width: 64px; font-size: 15px; }
+  .tw-info .mons { gap: 8px; }
+  .tw-info .mon { width: clamp(52px, 8.5vh, 80px); height: clamp(52px, 8.5vh, 80px); border-radius: 14px; }
+  .tw-info .pb-power { font-size: 17px; }
+  .tw-info .pb-power b, .tw-squad .pb-power b { font-size: clamp(20px, 2.8vh, 26px); }
+  .tw-squad .pb-power { font-size: 17px; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+  .tw-squad .verdict { font-size: 15px; padding: 2px 14px; }
+  .tw-rew { gap: 8px; }
+  .btn.tw-go { min-height: clamp(62px, 9vh, 80px); font-size: 28px; }
+  .tw-actions { gap: 12px; }
+  .tw-actions .btn.small { min-height: 54px; font-size: 17px; }
+  .tw-note { font-size: 15px; padding: 3px 14px; }
+}
+/* PC ngang: [tầng] [thông tin tầng] [bảng đội hình + thưởng + THÁCH ĐẤU] */
+@media (min-width: 900px) and (min-height: 560px) and (min-aspect-ratio: 1/1) {
+  .tw-body { grid-template-columns: clamp(104px, 10vw, 140px) minmax(0, 1fr) minmax(0, 1.15fr); }
+  .tw-info .waves { flex: 1; justify-content: space-evenly; }
+  .tw-squad { padding: clamp(16px, 3vh, 28px); gap: clamp(12px, 2.4vh, 22px); justify-content: center; background: rgba(255, 255, 255, 0.74); border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 22px; box-shadow: 0 2px 12px rgba(30, 42, 74, 0.14); }
+  .tw-squad .board.compact { --sw: clamp(52px, min(11vh, 6.2vw), 96px); }
+  .tw-squad .tw-rew { justify-content: center; }
+}
+/* tablet dọc: cột tầng + thông tin phía trên, đội hình + nút bên dưới */
+@media (min-width: 700px) and (min-height: 800px) and (max-aspect-ratio: 1/1), (min-width: 900px) and (min-height: 560px) and (max-aspect-ratio: 1/1) {
+  .tw-body { grid-template-columns: 112px minmax(0, 1fr); }
+  .tw-squad { padding: 16px; gap: 14px; background: rgba(255, 255, 255, 0.74); border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 22px; box-shadow: 0 2px 12px rgba(30, 42, 74, 0.14); }
+  .tw-squad .board.compact { --sw: clamp(64px, 12vw, 108px); }
+  .tw-info .mon { width: clamp(56px, 9vw, 76px); height: clamp(56px, 9vw, 76px); }
+}
+
+/* ---------- DK-7: Cửa hàng + Nhiệm vụ ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .sh-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; padding: 16px 16px 36px; }
+  .sh-card { gap: 10px; padding: 16px; border: 1px solid rgba(30, 42, 74, 0.16); border-radius: 20px; box-shadow: 0 2px 8px rgba(30, 42, 74, 0.12); }
+  .sh-top { gap: 12px; }
+  .sh-ic { width: 64px; height: 64px; border-width: 1px; border-radius: 16px; }
+  .sh-ic .ic { width: 42px; height: 42px; }
+  .sh-name { font-size: 19px; }
+  .sh-desc { font-size: 15px; line-height: 1.25; }
+  .sh-count { font-size: 14px; }
+  .sh-cost .ah-chip { font-size: 16px; }
+  .sh-btns { gap: 8px; }
+  .sh-btns .btn { min-height: 50px; font-size: 17px; }
+  .sh-heroes { grid-template-columns: repeat(auto-fill, minmax(clamp(100px, 14vh, 128px), 1fr)); gap: 16px 12px; max-height: min(58vh, 520px); }
+  .sh-shard { font-size: 13px; top: 32px; }
+
+  .qs-list { padding: 14px 14px 36px; gap: 12px; }
+  .qs-row { gap: 16px; padding: 14px 18px; border: 1px solid rgba(30, 42, 74, 0.18); border-radius: 18px; box-shadow: 0 2px 6px rgba(30, 42, 74, 0.1); }
+  .qs-row.ready { box-shadow: 0 0 0 3px #8be85c; }
+  .qs-info { gap: 4px; }
+  .qs-name { font-size: 19px; }
+  .qs-desc { font-size: 15px; }
+  .qs-bar { height: 22px; border-width: 1px; border-color: rgba(30, 42, 74, 0.35); }
+  .qs-bar span { font-size: 13px; line-height: 18px; }
+  .btn.qs-btn { min-width: 124px; min-height: 52px; font-size: 17px; }
+  .qs-bonus { gap: 14px; padding: 18px; }
+  .qs-bonus > .ic { width: 52px; height: 52px; }
+  .qs-bonus.ready { box-shadow: 0 0 0 3px #ffd23f, 0 2px 12px rgba(30, 42, 74, 0.14); }
+}
+@media (min-aspect-ratio: 1/1) and (min-width: 900px) and (min-height: 560px) {
+  .quests { grid-template-columns: minmax(0, 1fr) 270px; column-gap: 16px; }
+}
+
+/* ---------- DK-8: kết quả trận / Tháp, kho đồ, bảng trang bị, rơi đồ, đăng nhập, HUD trận ---------- */
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .result-card { width: min(720px, 100%); gap: clamp(10px, 2vh, 20px); padding: clamp(18px, 3.4vh, 36px); border-radius: 30px; }
+  .res-title { font-size: clamp(36px, 7vh, 64px); }
+  .res-star .ic { width: clamp(56px, 11vh, 96px); height: clamp(56px, 11vh, 96px); }
+  .result .reward.big { font-size: clamp(20px, 3vh, 28px); padding: 6px 18px 6px 12px; border-width: 2px; }
+  .levelup { font-size: 18px; }
+  .result .tips, .result .muted { font-size: 16px; }
+  .res-btns { gap: 12px; }
+  .res-btns .btn { min-height: 56px; font-size: 20px; }
+  .res-btns .res-main { min-height: 70px; font-size: 28px; }
+
+  .drop { width: 116px; gap: 6px; }
+  .drop small { font-size: 14px; }
+  .drop .gtile { --gs: clamp(58px, 9vh, 86px); }
+  .pb-drop .rtag { font-size: 13px; height: 24px; }
+
+  /* kho đồ */
+  .modal.gbag { width: min(960px, 100%); height: min(100%, 86vh); }
+  .ggrid { grid-template-columns: repeat(auto-fill, minmax(clamp(72px, 9vh, 92px), 1fr)); gap: 14px 12px; padding: 10px 12px 14px; }
+  .gchip { min-height: 48px; font-size: 16px; }
+  .gb-foot > .btn { min-height: 54px; }
+
+  /* bảng trang bị: hộp thoại giữa màn hình thay vì trượt từ đáy */
+  .gs-back { align-items: center; padding: 20px; }
+  .gsheet { width: min(680px, 100%); max-height: min(88vh, 100%); border-bottom: 4px solid var(--ink); border-radius: 26px; padding-bottom: 0; animation: pop 0.2s ease-out; }
+  .gs-head { padding: 14px 16px 6px 24px; }
+  .gs-head h2 { font-size: 26px; }
+  .gs-body { padding: 8px 24px 22px; gap: 12px; }
+  .gp-row { min-height: 64px; gap: 14px; }
+  .gp-txt b { font-size: 17px; }
+  .gp-sub { font-size: 14px; }
+  .gd { font-size: 14px; }
+  .gp-heroes { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 16px 10px; }
+  .gdetail { width: min(780px, 100%); }
+  .gdetail .gs-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .gd-lv { font-size: 20px; }
+  .gd-row .btn { min-height: 58px; }
+  .gd-acts > .btn { min-height: 52px; }
+
+  /* đăng nhập */
+  .login-card { width: min(440px, 100%); padding: 28px; gap: 14px; }
+  .login-card label { font-size: 15px; }
+  .logo { font-size: 48px; }
+
+  /* HUD trận đánh: nút / thông tin to hơn cho màn lớn (vị trí thanh máu do JS tính, không đổi) */
+  .pill { min-height: 50px; font-size: 17px; padding: 2px 16px; }
+  .b-info { font-size: 16px; padding: 4px 16px; }
+  .b-info b { font-size: 19px; }
+  .ult { width: clamp(66px, 10vh, 92px); height: clamp(66px, 10vh, 92px); }
+  .pause-veil b { font-size: 56px; }
+}
+
+/* chi tiết tướng trên PC: cột chỉ số rộng hơn một chút, chữ nhãn nhỏ lại để số "+N" không bị cắt */
+@media (min-width: 900px) and (min-height: 560px) {
+  .dk-ov { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .dk-ov .stat { gap: 4px; padding: 4px 6px; }
+  .dk-ov .stat b { font-size: 16px; }
+  .dk-ov .stat > span { font-size: 13px; white-space: nowrap; }
+  .dk-ov .stat em, .dk-ov .stat-ex { font-size: 11px; white-space: nowrap; }
 }

@@ -15,7 +15,7 @@ import { GearDrops } from '../gear';
 import { Icon } from '../icons';
 import { pad, Roster, SquadBoard, useSquadOps } from '../squadkit';
 
-export function PreBattle({ stage, onClose }: { stage: StageDef; onClose: () => void }) {
+export function PreBattle({ stage, onClose, inline }: { stage: StageDef; onClose: () => void; /** PC ngang: hiện thành bảng cố định bên phải bản đồ thay vì hộp thoại */ inline?: boolean }) {
   const m = me.value!;
   const [busy, run] = useBusy();
   const base = pad(m.squads[m.activeSquad]);
@@ -65,8 +65,9 @@ export function PreBattle({ stage, onClose }: { stage: StageDef; onClose: () => 
       setSwept({ times, r });
     });
 
-  return (
-    <Modal onClose={onClose} wide class="pb" title={`${stage.name}${stage.boss ? ' (BOSS)' : ''}`}>
+  const title = `${stage.name}${stage.boss ? ' (BOSS)' : ''}`;
+  const body = (
+    <>
       <div class="pb-meta">
         <ElemChip el={stage.element} label />
         <span class="lvtag">Đề xuất Lv {stage.level}</span>
@@ -152,6 +153,19 @@ export function PreBattle({ stage, onClose }: { stage: StageDef; onClose: () => 
           <Btn kind="green" onClick={() => setSwept(null)}>Tuyệt!</Btn>
         </Modal>
       )}
+    </>
+  );
+  if (inline) {
+    return (
+      <section class="pb-side pb scroll">
+        <h3 class="pb-side-t">{title}</h3>
+        <div class="pb-side-body">{body}</div>
+      </section>
+    );
+  }
+  return (
+    <Modal onClose={onClose} wide class="pb" title={title}>
+      {body}
     </Modal>
   );
 }

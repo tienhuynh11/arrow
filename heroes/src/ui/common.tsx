@@ -5,8 +5,15 @@ import { MAX_STAR } from '@shared/heroes/config';
 import { ELEMENT_NAME, ROLE_NAME, type HeroDef, type OwnedHero, type Rarity } from '@shared/heroes/types';
 import { sfx } from '../audio';
 import { portraitOf } from '../render/portraits';
-import { toasts } from '../state';
+import { toasts, useMedia } from '../state';
 import { ELEM_CSS, ELEM_ICON, ROLE_ICON, Icon, type IconName } from './icons';
+
+/** màn lớn (PC / máy tính bảng): khớp các khối @media "dk-" ở cuối styles.css; điện thoại giữ nguyên bố cục cũ */
+export const DK_Q = '(min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px)';
+/** PC ngang đủ rộng để có cột phụ bên phải */
+export const DK_LAND_Q = '(min-width: 900px) and (min-height: 560px) and (min-aspect-ratio: 1/1)';
+export const useDesktop = () => useMedia(DK_Q);
+export const useDesktopLand = () => useMedia(DK_LAND_Q);
 
 export function Spinner() {
   return <span class="spin" aria-label="Đang tải" />;

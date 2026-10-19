@@ -7,7 +7,7 @@ import { isTowerBoss, TOWER_MAX_FLOOR, TOWER_TRIES, towerReward, towerStage } fr
 import { api, me } from '../../api';
 import { powerOfOwned, squadPower, towerOf } from '../../game';
 import { fmt, fmtDur, go, returnTo, toast, useBusy } from '../../state';
-import { Btn, ElemChip, Modal, Portrait } from '../common';
+import { Btn, ElemChip, Modal, Portrait, useDesktopLand } from '../common';
 import { Icon } from '../icons';
 import { pad, Roster, SquadBoard, useSquadOps } from '../squadkit';
 import { ActHead, ResetChip, useDayReset, WalletChips } from './activity';
@@ -48,6 +48,7 @@ export function Tower() {
   const m = me.value!;
   const left = useDayReset();
   const [busy, run] = useBusy();
+  const side = useDesktopLand(); // PC ngang: lực chiến + thưởng chuyển sang bảng bên phải cùng đội hình và nút THÁCH ĐẤU
   const base = pad(m.squads[m.activeSquad]);
   const [slots, setSlots] = useState<string[]>(base);
   const ops = useSquadOps(slots, setSlots, { closeWhenFull: true });
@@ -88,6 +89,23 @@ export function Tower() {
     go({ n: 'squad' });
   };
 
+  const powerEl = (
+  <div class="pb-power">
+    <span>Đội bạn <b>{fmt(mine)}</b></span>
+    <i class={`verdict ${verdict.c}`}>{verdict.t}</i>
+    <span>Địch <b>{fmt(enemy)}</b></span>
+  </div>
+  );
+  const rewEl = (
+  <div class="tw-rew" aria-label="Thưởng">
+    <WalletChips w={{ gold: reward.gold, exp: reward.exp, gems: reward.gems, stones: reward.stones }} />
+    <span class="ah-chip"><Icon n="user" size={16} /><b>{fmt(reward.xp)}</b></span>
+    {reward.gearRolls > 0 && (
+      <span class="ah-chip gear"><Icon n="gWeapon" size={16} /><b>Trang bị x{reward.gearRolls}</b></span>
+    )}
+  </div>
+  );
+
   return (
     <div class="tower">
       <ActHead title="Tháp thử thách" icon="tower">
@@ -123,21 +141,13 @@ export function Tower() {
               </div>
             ))}
           </div>
-          <div class="pb-power">
-            <span>Đội bạn <b>{fmt(mine)}</b></span>
-            <i class={`verdict ${verdict.c}`}>{verdict.t}</i>
-            <span>Địch <b>{fmt(enemy)}</b></span>
-          </div>
-          <div class="tw-rew" aria-label="Thưởng">
-            <WalletChips w={{ gold: reward.gold, exp: reward.exp, gems: reward.gems, stones: reward.stones }} />
-            <span class="ah-chip"><Icon n="user" size={16} /><b>{fmt(reward.xp)}</b></span>
-            {reward.gearRolls > 0 && (
-              <span class="ah-chip gear"><Icon n="gWeapon" size={16} /><b>Trang bị x{reward.gearRolls}</b></span>
-            )}
-          </div>
+          {!side && powerEl}
+          {!side && rewEl}
         </section>
 
         <section class="tw-squad">
+          {side && powerEl}
+          {side && rewEl}
           <SquadBoard m={m} slots={slots} sel={null} onTapSlot={ops.tapSlot} onDrop={ops.drop} compact />
           <div class="tw-actions">
             <Btn kind="ghost" small onClick={toSquad}>Đội hình</Btn>
@@ -150,7 +160,7 @@ export function Tower() {
       </div>
 
       {ops.sel !== null && (
-        <Modal title={`Chọn tướng cho ô ${ops.sel + 1}`} onClose={() => ops.setSel(null)}>
+        <Modal class="dk-pick" title={`Chọn tướng cho ô ${ops.sel + 1}`} onClose={() => ops.setSel(null)}>
           <small class="hint">Chạm tướng để xếp vào ô; chạm lại tướng đang ở ô để gỡ.</small>
           <div class="tw-pick">
             <Roster heroes={heroes} slots={slots} onTap={ops.tapHero} onDrop={ops.drop} compact />

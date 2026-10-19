@@ -10,7 +10,7 @@ type IconName =
   | 'battle' | 'gear' | 'back' | 'lock' | 'close' | 'check' | 'pause' | 'play' | 'ffwd' | 'auto' | 'sword' | 'shield' | 'heart'
   | 'clock' | 'up' | 'down' | 'leaf' | 'rock' | 'drop' | 'sun' | 'moon' | 'wand' | 'bow' | 'plus' | 'note' | 'crown'
   | 'sparkle' | 'logout' | 'info' | 'chest' | 'skip' | 'user' | 'sound' | 'mute' | 'filter' | 'search'
-  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop';
+  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop' | 'grid';
 
 const PATHS: Record<IconName, JSX.Element> = {
   gold: (
@@ -291,6 +291,14 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M3 10 4.8 4h14.4L21 10z" fill="#ff7a7a" {...st} />
       <path d="M3 10a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" fill="#fff" stroke={INK} stroke-width="1.8" stroke-linejoin="round" />
       <rect x="9.5" y="14" width="5" height="6" rx="1" fill="#3fa7ff" stroke={INK} stroke-width="1.4" />
+    </>
+  ),
+  grid: (
+    <>
+      <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="2" fill="#7fd4ff" {...st} />
+      <rect x="13" y="3.5" width="7.5" height="7.5" rx="2" fill="#ffd23f" {...st} />
+      <rect x="3.5" y="13" width="7.5" height="7.5" rx="2" fill="#8be85c" {...st} />
+      <rect x="13" y="13" width="7.5" height="7.5" rx="2" fill="#ff8a8a" {...st} />
     </>
   ),
 };

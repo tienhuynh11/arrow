@@ -99,18 +99,19 @@ export function TopBar() {
       </button>
       <div class="who">
         <b class="who-name">{m.profile.username}</b>
-        <div class="xpbar" title={`${m.profile.xp}/${need}`}>
+        <div class="xpbar hb-xp" title={`${m.profile.xp}/${need}`}>
           <i style={{ width: `${pct}%` }} />
         </div>
       </div>
-      <div class="curs">
-        <div class="cur" title="Vàng"><Icon n="gold" size={20} /><b>{fmt(w.gold)}</b></div>
-        <div class="cur" title="Kim cương"><Icon n="gem" size={20} /><b>{fmt(w.gems)}</b></div>
-        <div class="cur" title="Vé triệu hồi"><Icon n="ticket" size={20} /><b>{fmt(w.tickets)}</b></div>
-        <div class="cur hide-sm" title="EXP bình"><Icon n="exp" size={20} /><b>{fmt(w.exp)}</b></div>
-        <div class="cur" title="Thể lực"><Icon n="bolt" size={20} /><b>{m.profile.stamina}/{STAMINA_MAX}</b></div>
+      {/* một viên thuốc kính chứa mọi loại tiền, ngăn bằng vạch mảnh */}
+      <div class="hb-pill" role="list" aria-label="Tài nguyên">
+        <div class="hb-cur" role="listitem" title="Vàng"><Icon n="gold" size={20} /><b>{fmt(w.gold)}</b></div>
+        <div class="hb-cur" role="listitem" title="Kim cương"><Icon n="gem" size={20} /><b>{fmt(w.gems)}</b></div>
+        <div class="hb-cur" role="listitem" title="Vé triệu hồi"><Icon n="ticket" size={20} /><b>{fmt(w.tickets)}</b></div>
+        <div class="hb-cur hb-hide-sm" role="listitem" title="EXP bình"><Icon n="exp" size={20} /><b>{fmt(w.exp)}</b></div>
+        <div class="hb-cur" role="listitem" title="Thể lực"><Icon n="bolt" size={20} /><b>{m.profile.stamina}/{STAMINA_MAX}</b></div>
       </div>
-      <button type="button" class="ibtn" aria-label="Cài đặt" onClick={() => setOpen(true)}>
+      <button type="button" class="hb-ibtn" aria-label="Cài đặt" onClick={() => setOpen(true)}>
         <Icon n="gear" size={22} />
       </button>
       {open && <SettingsModal onClose={() => setOpen(false)} />}
