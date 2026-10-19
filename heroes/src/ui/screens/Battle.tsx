@@ -5,12 +5,12 @@ import { powerOf } from '@shared/heroes/formulas';
 import type { ArenaOpponent } from '@shared/heroes/arena';
 import { arenaSetup } from '@shared/heroes/arena';
 import { HERO_BY_ID } from '@shared/heroes/heroes';
-import { stageOf, stageSetup } from '@shared/heroes/stages';
+import { CHAPTERS, stageOf, stageSetup } from '@shared/heroes/stages';
 import { BOSS_UID, bossSetup, type GuildInfo } from '@shared/heroes/guild';
 import { towerStage } from '@shared/heroes/tower';
 import { api, me } from '../../api';
 import { music } from '../../audio';
-import { BattleOverlay, type BattleInfo } from '../../battle/overlay';
+import { BattleOverlay, type BattleInfo, type IntroInfo } from '../../battle/overlay';
 import { BattleSession, type HudUnit } from '../../battle/session';
 import { defOf, gearBonus, ownedMap, starsOfStage, towerOf } from '../../game';
 import { BattleScene } from '../../render/battle-scene';
@@ -19,6 +19,7 @@ import { autoPref, saveSettings, speedPref } from '../../settings';
 import { errToast, fmt, go, toast } from '../../state';
 import { Btn, Modal, Portrait, Spinner } from '../common';
 import { Icon } from '../icons';
+import { setLastBattle } from '../result-kit';
 import { BossHp } from './Guild';
 
 /** nhãn hồi chiêu phía trên thẻ: "8.2s" tới lượt kế, "ĐẦY" khi đủ năng lượng (chạm để tung), "--" khi choáng */
@@ -84,7 +85,12 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
     let timer = 0;
     music('battle');
 
+    let offIntro: (() => void) | null = null;
     const submit = (s: BattleSession) => {
+      offIntro?.();
+      // số liệu trận cho màn kết quả (sao theo điều kiện, tướng gục, đã phát nhạc hiệu chưa)
+      const mine = s.battle.units.filter((u) => u.init.side === 0);
+      setLastBattle({ ticks: s.battle.tick, deaths: mine.filter((u) => !u.alive).length, dead: mine.filter((u) => !u.alive).map((u) => u.init.key), fanfare: !!overlay?.bannerShown });
       setPhase('submit');
       const body = { squad: m0.activeSquad, seed: s.setup.seed, inputs: s.inputs, auto: s.initialAuto };
       const onErr = (e: unknown) => {
@@ -196,6 +202,27 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
         else if (def.boss) overlay?.waveBanner('BOSS!');
       };
       const session = new BattleSession(setup, scene, overlay, autoPref.value, speedPref.value, () => submit(session));
+      // mở màn: biển ải + (boss) cảnh báo + đếm 3-2-1; kéo dài nhịp ready của session, chạm bất kỳ đâu (trừ nút) để bỏ qua
+      const floor = towerOf(m0).floor + 1;
+      const bossFight = isGuildBoss || (isTower ? floor % 10 === 0 : !!def?.boss);
+      const intro: IntroInfo = {
+        title: isGuildBoss ? (gi?.boss.name ?? 'Boss bang') : isArena ? `Đấu trường · vs ${opp?.name ?? 'Đối thủ'}` : isTower ? `Tầng ${floor}` : (def?.name ?? ''),
+        sub: isGuildBoss ? 'Boss bang' : isArena ? '' : isTower ? (bossFight ? 'Tầng Boss' : 'Tháp thử thách') : bossFight ? 'Ải Boss' : '',
+        chip: isGuildBoss ? 'Boss bang' : isArena ? 'Đấu trường' : isTower ? 'Tháp' : (CHAPTERS[(def?.chapter ?? 1) - 1]?.name ?? ''),
+        boss: bossFight,
+        foeKey: info.foeKey,
+        foeRarity: info.foeRarity,
+        mePower: info.mePower,
+        foePower: info.foePower,
+      };
+      session.holdIntro(overlay.intro(intro));
+      const tapSkip = (e: Event) => {
+        if ((e.target as HTMLElement | null)?.closest?.('button')) return;
+        session.skipIntro();
+        overlay?.skipIntro();
+      };
+      addEventListener('pointerdown', tapSkip);
+      offIntro = () => removeEventListener('pointerdown', tapSkip);
       scene.onTick = (dt, sdt) => session.advance(dt, sdt);
       live = runLive(canvasRef.current, scene);
       if (!live.ok) toast('Thiết bị không hỗ trợ WebGL — trận vẫn được tính nhưng không có hình', 'error');
@@ -205,6 +232,7 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
 
     return () => {
       cancelled = true;
+      offIntro?.();
       clearTimeout(timer);
       music('menu');
       live?.stop();

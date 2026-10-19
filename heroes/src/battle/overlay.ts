@@ -8,6 +8,7 @@ import type { Rarity } from '@shared/heroes/types';
 import { gsap } from 'gsap';
 import { sfx, type Sfx } from '../audio';
 import { portraitOf } from '../render/portraits';
+import { currentPreset } from '../render/quality';
 import { compactNum, type BattleScene, type CineInfo, type SceneHooks } from '../render/battle-scene';
 import { store } from '../settings';
 import './battle.css';
@@ -53,6 +54,21 @@ export interface BattleInfo {
   foeRarity: Rarity;
 }
 
+/** thông tin màn mở đầu (ải/tầng/đấu trường/boss bang) */
+export interface IntroInfo {
+  /** tên ải: "Ải 1-3", "Tầng 12", tên boss, "Đấu trường · vs X" */
+  title: string;
+  /** dòng phụ (tên địch) */
+  sub: string;
+  /** chip chương/hệ, vd "Đền Rừng" */
+  chip: string;
+  boss: boolean;
+  foeKey: string;
+  foeRarity: Rarity;
+  mePower: number;
+  foePower: number;
+}
+
 const ARROW_UP = '<svg viewBox="0 0 12 14" width="13" height="15"><path d="M6 1 L11 7 H8 V13 H4 V7 H1 Z" fill="#ff5a1a" stroke="#1e2a4a" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const ARROW_DOWN = '<svg viewBox="0 0 12 14" width="13" height="15"><path d="M6 13 L11 7 H8 V1 H4 V7 H1 Z" fill="#8fa3d0" stroke="#1e2a4a" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const CROWN = '<svg viewBox="0 0 24 24" width="13" height="13"><path d="M3 19 L2 7 L8 12.5 L12 4 L16 12.5 L22 7 L21 19 Z" fill="#ffd23f" stroke="#5a3a00" stroke-width="1.7" stroke-linejoin="round"/></svg>';
@@ -93,6 +109,11 @@ export class BattleOverlay implements SceneHooks {
   private endEl: HTMLElement | null = null;
   private endTl: gsap.core.Timeline | null = null;
   private waveEl: HTMLElement | null = null;
+  private introEl: HTMLElement | null = null;
+  private introTl: gsap.core.Timeline | null = null;
+  private endFx: HTMLElement[] = [];
+  /** banner thắng/thua đã hiện (nhạc hiệu đã phát) */
+  bannerShown = false;
   private flashTw: gsap.core.Tween | null = null;
   /** các timeline "theo nhịp trận" (tốc độ chạy = timeScale cảnh; 0 khi tạm dừng) — dọn khi xong / khi rời trận */
   private paced = new Set<gsap.core.Timeline>();
@@ -440,21 +461,165 @@ export class BattleOverlay implements SceneHooks {
     this.cine = null;
   }
 
-  /** banner kết thúc trận (giữ tới khi rời màn) */
+  /** màn mở đầu (giây THẬT, không bám nhịp trận): viền tối, biển ải trượt từ trái, (boss: còi báo động đỏ + chân dung), đếm 3-2-1-CHIẾN!.
+   *  Trả về số giây session nên giữ engine (tới lúc hiện "CHIẾN!"). Bỏ qua được bằng skipIntro(). */
+  intro(i: IntroInfo): number {
+    this.skipIntro();
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const wrap = el(`bt-intro${i.boss ? ' boss' : ''}`);
+    wrap.innerHTML =
+      '<div class="bi-vig"></div><div class="bi-siren"></div>' +
+      '<div class="bi-banner"><span class="bi-chip"></span><b class="bi-title"></b><small class="bi-sub"></small></div>' +
+      '<div class="bi-warn"><b>CẢNH BÁO BOSS</b></div><img class="bi-boss" alt="" draggable="false"><div class="bi-cd"></div>';
+    const q = <T extends HTMLElement>(sel: string) => wrap.querySelector(sel) as T;
+    q('.bi-chip').textContent = i.chip;
+    q('.bi-title').textContent = i.title;
+    q('.bi-sub').textContent = i.sub;
+    q('.bi-chip').style.display = i.chip ? '' : 'none';
+    q('.bi-sub').style.display = i.sub ? '' : 'none';
+    const boss = q<HTMLImageElement>('.bi-boss');
+    const url = i.boss ? portraitOf(i.foeKey, i.foeRarity).value : '';
+    if (url && url !== 'none') boss.src = url;
+    else boss.style.display = 'none';
+    this.root.append(wrap);
+    this.introEl = wrap;
+    const pw = { m: 0, f: 0 }; // lực chiến chạy từ 0 vào thanh trên cùng
+    const k = reduce ? 0.01 : 1;
+    const off = i.boss ? 0.65 : 0; // boss: thêm nhịp báo động trước khi đếm
+    const t0 = 0.3 + off;
+    const cd = q('.bi-cd');
+    const banner = q('.bi-banner');
+    const tl = gsap.timeline({ onComplete: () => this.clearIntro() });
+    gsap.set(banner, { xPercent: -120, skewX: -14 });
+    gsap.set(q('.bi-vig'), { opacity: 0 });
+    gsap.set(cd, { opacity: 0 });
+    tl.to(q('.bi-vig'), { opacity: 1, duration: 0.25 * k, ease: 'power1.out' }, 0)
+      .to(banner, { xPercent: 0, skewX: -6, duration: 0.38 * k, ease: 'expo.out' }, 0.05)
+      .to(pw, {
+        m: i.mePower, f: i.foePower, duration: 0.7 * k, ease: 'power2.out',
+        onUpdate: () => {
+          this.powEl[0].textContent = compactNum(Math.round(pw.m));
+          this.powEl[1].textContent = compactNum(Math.round(pw.f));
+        },
+        onComplete: () => {
+          this.powEl[0].textContent = compactNum(i.mePower);
+          this.powEl[1].textContent = compactNum(i.foePower);
+        },
+      }, 0.1);
+    if (i.boss) {
+      const warn = q('.bi-warn');
+      gsap.set(warn, { opacity: 0, scale: 1.8 });
+      gsap.set(boss, { opacity: 0, scale: 0.4, xPercent: 40 });
+      tl.call(() => sfx('wave'), undefined, 0.1)
+        .to(warn, { opacity: 1, scale: 1, duration: 0.18 * k, ease: 'back.out(2)' }, 0.1)
+        .to(q('.bi-siren'), { keyframes: [{ opacity: 0.55, duration: 0.1 }, { opacity: 0, duration: 0.14 }, { opacity: 0.55, duration: 0.1 }, { opacity: 0, duration: 0.14 }], ease: 'none' }, 0.1)
+        .to(boss, { opacity: 1, scale: 1, xPercent: 0, duration: 0.3 * k, ease: 'back.out(2.2)' }, 0.18)
+        .to(warn, { opacity: 0, y: -10, duration: 0.15, ease: 'power1.in' }, off - 0.1 + 0.3);
+    }
+    // 3 · 2 · 1 · CHIẾN!
+    const steps = ['3', '2', '1', 'CHIẾN!'];
+    const gap = 0.22;
+    steps.forEach((t, n) => {
+      const at = t0 + n * gap;
+      const fight = n === 3;
+      tl.call(() => {
+        cd.textContent = t;
+        cd.classList.toggle('go', fight);
+        sfx(fight ? 'wave' : 'count');
+      }, undefined, at).fromTo(cd, { opacity: 1, scale: fight ? 2.2 : 1.9 }, { opacity: 1, scale: 1, duration: 0.14 * k, ease: 'back.out(2.4)' }, at);
+      if (!fight) tl.to(cd, { opacity: 0, scale: 0.85, duration: 0.07, ease: 'power1.in' }, at + gap - 0.08);
+    });
+    const goAt = t0 + 3 * gap;
+    // rút biển ải + viền; "CHIẾN!" mờ dần ngay khi trận bắt đầu
+    tl.to(banner, { xPercent: 120, skewX: -14, opacity: 0, duration: 0.25, ease: 'power3.in' }, goAt - 0.05)
+      .to([boss, q('.bi-warn')], { opacity: 0, duration: 0.2 }, goAt - 0.05)
+      .to(q('.bi-vig'), { opacity: 0, duration: 0.3 }, goAt)
+      .to(cd, { opacity: 0, scale: 1.25, duration: 0.25, ease: 'power1.in' }, goAt + 0.22);
+    this.introTl = tl;
+    return goAt + 0.1;
+  }
+
+  /** chạm để bỏ qua màn mở đầu: chạy nốt timeline tức thì (số lực chiến về đúng giá trị) */
+  skipIntro() {
+    const tl = this.introTl;
+    if (tl) tl.progress(1);
+    this.clearIntro();
+  }
+
+  private clearIntro() {
+    this.introTl?.kill();
+    this.introTl = null;
+    this.introEl?.remove();
+    this.introEl = null;
+  }
+
+  get introActive() {
+    return !!this.introTl;
+  }
+
+  /** banner kết thúc trận (giữ tới khi rời màn). THẮNG: rơi từ trên xuống nảy + tia nắng vàng xoay + pháo giấy.
+   *  THUA: trượt xuống chậm, màn hình (chỉ lớp overlay, không phải canvas WebGL) mất màu. */
   banner(win: boolean) {
+    this.bannerShown = true;
+    sfx(win ? 'win' : 'lose');
     this.endTl?.kill();
     this.endEl?.remove();
+    for (const f of this.endFx) f.remove();
+    this.endFx = [];
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const lvl = currentPreset().level;
     const e = el(`bt-end ${win ? 'win' : 'lose'}`);
     e.style.animation = 'none';
     e.textContent = win ? 'CHIẾN THẮNG!' : 'THẤT BẠI';
-    this.root.append(e);
-    this.endEl = e;
-    gsap.set(e, { scale: 2.6, rotation: -8, opacity: 0 });
+    const h = this.root.clientHeight || window.innerHeight;
     const tl = gsap.timeline();
-    tl.to(e, { scale: 1, rotation: -2, opacity: 1, duration: 0.6, ease: 'back.out(1.7)' });
-    // thắng: lắc lư nhẹ vô hạn (bị kill khi rời màn)
-    if (win) tl.to(e, { rotation: 1.5, scale: 1.04, duration: 0.9, ease: 'sine.inOut', yoyo: true, repeat: -1 });
+    if (win) {
+      const rays = el('bt-rays');
+      this.root.append(rays, e);
+      this.endFx.push(rays);
+      gsap.set(rays, { xPercent: -50, yPercent: -50, scale: 0.3, opacity: 0 });
+      if (reduce) {
+        gsap.set(e, { y: 0, scale: 1, rotation: -2, opacity: 1 });
+        gsap.set(rays, { scale: 1, opacity: 0.8 });
+      } else {
+        gsap.set(e, { y: -h * 0.6, scale: 1.25, rotation: -4, opacity: 1 });
+        tl.to(e, { y: 0, scale: 1, rotation: -2, duration: 0.85, ease: 'bounce.out' }, 0)
+          .to(rays, { scale: 1, opacity: 0.9, duration: 0.6, ease: 'power2.out' }, 0.45)
+          .call(() => this.sparkBurst(lvl), undefined, 0.3)
+          .call(() => this.sparkBurst(lvl), undefined, 0.75);
+        if (lvl !== 'low') tl.to(rays, { rotation: 360, duration: 24, ease: 'none', repeat: -1 }, 0.45);
+        tl.to(e, { rotation: 1.5, scale: 1.04, duration: 0.9, ease: 'sine.inOut', yoyo: true, repeat: -1 }, 1.0);
+      }
+    } else {
+      this.root.append(e);
+      gsap.set(e, { y: -h * 0.3, opacity: 0, scale: 1, rotation: 0 });
+      tl.to(e, { y: 0, opacity: 1, duration: reduce ? 0.01 : 1.4, ease: 'power2.out' }, 0);
+      tl.to(this.root, { filter: 'saturate(0.15) brightness(0.82)', duration: reduce ? 0.01 : 1.1, ease: 'power1.out' }, 0);
+    }
+    this.endEl = e;
     this.endTl = tl;
+  }
+
+  /** pháo hoa: các ngôi sao nhỏ bắn toả từ giữa banner (số lượng theo chất lượng) */
+  private sparkBurst(lvl: 'high' | 'medium' | 'low') {
+    const n = lvl === 'high' ? 22 : lvl === 'medium' ? 14 : 7;
+    const w = this.root.clientWidth || window.innerWidth;
+    const h = this.root.clientHeight || window.innerHeight;
+    const cols = ['#ffd23f', '#fff3a0', '#ff7fa0', '#7fd9ff', '#7be05a'];
+    for (let j = 0; j < n; j++) {
+      const p = el('bt-spark', 'i');
+      p.style.color = cols[j % cols.length];
+      p.style.left = `${w / 2}px`;
+      p.style.top = `${h * 0.42}px`;
+      this.root.append(p);
+      this.endFx.push(p);
+      const a = (j / n) * Math.PI * 2 + Math.random() * 0.4;
+      const r = (0.18 + Math.random() * 0.22) * Math.min(w, 700);
+      gsap.fromTo(p, { x: 0, y: 0, scale: 0.4, opacity: 1, rotation: 0 }, {
+        x: Math.cos(a) * r, y: Math.sin(a) * r * 0.7 + 30, scale: 0.9 + Math.random() * 0.8, rotation: 180 + Math.random() * 200,
+        opacity: 0, duration: 0.8 + Math.random() * 0.5, ease: 'power2.out', onComplete: () => p.remove(),
+      });
+    }
   }
 
   /** banner ĐỢT n / BOSS: dải tối trượt ngang + chữ nảy; bám nhịp trận */
@@ -629,6 +794,14 @@ export class BattleOverlay implements SceneHooks {
   dispose() {
     this.cineTl?.kill();
     this.endTl?.kill();
+    this.clearIntro();
+    gsap.killTweensOf(this.root);
+    this.root.style.filter = '';
+    for (const f of this.endFx) {
+      gsap.killTweensOf(f);
+      f.remove();
+    }
+    this.endFx = [];
     this.flashTw?.kill();
     for (const tl of this.paced) tl.kill();
     this.paced.clear();

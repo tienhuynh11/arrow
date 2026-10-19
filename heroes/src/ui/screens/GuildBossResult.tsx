@@ -9,6 +9,7 @@ import { Btn, Portrait } from '../common';
 import { Icon } from '../icons';
 import { BossHp } from './Guild';
 import { WalletChips } from './activity';
+import { getLastBattle } from '../result-kit';
 
 export function GuildBossResult({ res }: { res: GuildBossRes }) {
   const after = res.boss.hp;
@@ -17,7 +18,7 @@ export function GuildBossResult({ res }: { res: GuildBossRes }) {
   const [dmg, setDmg] = useState(0);
 
   useEffect(() => {
-    sfx(res.killed || res.damage > 0 ? 'win' : 'lose');
+    if (!getLastBattle()?.fanfare) sfx(res.killed || res.damage > 0 ? 'win' : 'lose'); // đã phát ở banner trong trận
     const t = setTimeout(() => setHp(after), 350);
     // đếm sát thương lên trong ~0,9 s
     const t0 = performance.now();

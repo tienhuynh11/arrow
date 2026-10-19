@@ -7,6 +7,11 @@ import { sfx } from '../../audio';
 import { me } from '../../api';
 import { towerOf } from '../../game';
 import { fmt, go, returnTo } from '../../state';
+import { powerOf } from '@shared/heroes/formulas';
+import { towerStage } from '@shared/heroes/tower';
+import { stageSetup } from '@shared/heroes/stages';
+import { squadPower } from '../../game';
+import { DefeatTips, getLastBattle } from '../result-kit';
 import { Btn } from '../common';
 import { useResultFx } from '../result-fx';
 import { GearDrops } from '../gear';
@@ -16,7 +21,7 @@ export function TowerResult({ res }: { res: TowerBattleRes }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useResultFx(rootRef, res.win);
   useEffect(() => {
-    sfx(res.win ? 'win' : 'lose');
+    if (!getLastBattle()?.fanfare) sfx(res.win ? 'win' : 'lose'); // nhạc hiệu đã phát ở banner trong trận
     if (res.levelUp) setTimeout(() => sfx('level'), 900);
   }, []);
   const m = me.value;
@@ -40,7 +45,11 @@ export function TowerResult({ res }: { res: TowerBattleRes }) {
             <GearDrops ids={res.drops ?? []} full={(m?.gear.length ?? 0) >= GEAR_CAP} />
           </>
         ) : (
-          <p class="muted tips">Thua vẫn tốn 1 lượt. Hãy nâng cấp tướng, đổi hàng trước/sau hoặc bật Auto rồi thử lại.</p>
+          <DefeatTips
+            mine={m ? squadPower(m, m.squads[m.activeSquad] ?? []) : 0}
+            enemy={Math.max(...stageSetup(towerStage(res.floor), [], 0).waves.map((w) => w.reduce((x, u) => x + powerOf(u.stats), 0)))}
+            squadLen={(m?.squads[m.activeSquad] ?? []).filter(Boolean).length}
+          />
         )}
         {res.levelUp && (
           <div class="levelup">

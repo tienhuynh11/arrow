@@ -908,11 +908,24 @@ export class BattleScene implements LiveScene {
         this.later(wait, () => this.hooks.banner?.(ev.win));
         this.later(wait + 0.2, () => {
           if (!ev.win) {
-            for (const v of this.views.values()) if (v.side === 1 && v.alive) v.model.play('win');
+            for (const v of this.views.values()) {
+              if (v.side === 1 && v.alive) v.model.play('win');
+              else if (v.side === 0 && v.alive) v.model.play('hit'); // hết giờ mà thua: tướng ta còn sống chùng xuống
+            }
             return;
           }
           const confetti = [0xff7fa0, 0xffe14d, 0x7fd9ff, 0x7be05a];
           let ci = 0;
+          // camera nhích nhẹ về phía đội còn sống (chỉ hình ảnh)
+          const cen = this.tmpB.set(0, 0, 0);
+          let alive = 0;
+          for (const v of this.views.values()) if (v.side === 0 && v.alive) { cen.add(v.group.position); alive++; }
+          if (alive) {
+            this.camFocus.copy(cen.multiplyScalar(1 / alive)).setY(1);
+            this.tween(1.1, (k) => {
+              this.cinePush = Math.max(this.cinePush, 0.4 * easeOut(k));
+            });
+          }
           for (const v of this.views.values()) {
             if (v.side !== 0 || !v.alive) continue;
             v.model.play('win');

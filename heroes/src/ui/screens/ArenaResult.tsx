@@ -10,6 +10,8 @@ import { Btn } from '../common';
 import { Icon } from '../icons';
 import { useResultFx } from '../result-fx';
 import { MiniRow } from './Arena';
+import { squadPower } from '../../game';
+import { DefeatTips, getLastBattle } from '../result-kit';
 
 /** số chạy từ 0 tới `to` trong ~0,9 giây (GSAP tween, huỷ khi rời màn) */
 function useCount(to: number): number {
@@ -33,7 +35,7 @@ export function ArenaResult({ res }: { res: ArenaBattleRes }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useResultFx(rootRef, res.win);
   useEffect(() => {
-    sfx(res.win ? 'win' : 'lose');
+    if (!getLastBattle()?.fanfare) sfx(res.win ? 'win' : 'lose'); // nhạc hiệu đã phát ở banner trong trận
     let off = false;
     api.arena().then((r) => !off && setRank(r.rank)).catch(() => {}); // chỉ để hiện hạng mới, lỗi thì bỏ qua
     return () => void (off = true);
@@ -81,6 +83,9 @@ export function ArenaResult({ res }: { res: ArenaBattleRes }) {
             </div>
           )}
         </div>
+        {!res.win && m && (
+          <DefeatTips mine={squadPower(m, m.squads[m.activeSquad] ?? [])} enemy={res.opponent.power} squadLen={(m.squads[m.activeSquad] ?? []).filter(Boolean).length} />
+        )}
         <small class="muted">Lượt còn lại hôm nay: {tries}</small>
         <div class="res-btns">
           {tries > 0 && (

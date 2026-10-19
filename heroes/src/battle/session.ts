@@ -74,6 +74,16 @@ export class BattleSession {
     this.publish();
   }
 
+  /** màn mở đầu (biển ải + đếm 3-2-1) kéo dài nhịp "ready" thêm tới `sec` giây thật; chỉ hình ảnh, engine chưa chạy nên không đổi kết quả */
+  holdIntro(sec: number) {
+    if (this.opened && this.ready <= 0) return;
+    this.ready = Math.max(this.ready, sec);
+  }
+  /** chạm bỏ qua mở đầu: còn lại ~0 giây ready */
+  skipIntro() {
+    if (this.ready > 0.05) this.ready = 0.05;
+  }
+
   /** gọi mỗi khung hình: dt thực (giây). Nhịp engine = dt × 20Hz × SPEED_MULT, không phụ thuộc hoạt ảnh/hit-stop/slow-mo */
   advance(dt: number, _sdt?: number) {
     if (this.paused) return;

@@ -223,3 +223,25 @@
   .bh-row { font-size: 12px; }
   .bt-rb { width: 46px; height: 46px; }
 }
+
+/* ---------- MỞ ĐẦU: biển ải + cảnh báo boss + đếm 3-2-1 ---------- */
+.bt-intro { position: absolute; inset: 0; z-index: 8; pointer-events: none; overflow: hidden; }
+.bi-vig { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, rgba(10, 14, 36, 0) 45%, rgba(10, 14, 36, 0.72) 100%); }
+.bi-siren { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at 50% 50%, rgba(255, 30, 30, 0) 30%, rgba(255, 30, 30, 0.85) 100%); }
+.bi-banner { position: absolute; left: 0; top: 24%; min-width: 62%; max-width: 92%; padding: 8px 40px 8px 16px; display: flex; flex-direction: column; gap: 1px; font-family: var(--f-title); color: #fff;
+  background: linear-gradient(90deg, rgba(20, 26, 64, 0.92) 0%, rgba(20, 26, 64, 0.86) 72%, rgba(20, 26, 64, 0) 100%); border-top: 3px solid #ffd23f; border-bottom: 3px solid #ffd23f; }
+.bt-intro.boss .bi-banner { border-color: #ff4a3a; background: linear-gradient(90deg, rgba(70, 10, 16, 0.94) 0%, rgba(70, 10, 16, 0.86) 72%, rgba(70, 10, 16, 0) 100%); }
+.bi-chip { align-self: flex-start; font-size: clamp(10px, 1.9vh, 13px); font-weight: 800; letter-spacing: 1px; padding: 1px 9px; border-radius: 99px; background: #ffd23f; color: #1a2140; }
+.bi-title { font-size: clamp(26px, 6.4vh, 46px); font-weight: 900; font-style: italic; line-height: 1.05; -webkit-text-stroke: 3px #1a2140; paint-order: stroke fill; text-shadow: 0 3px 0 #1a2140; color: #fff7c2; }
+.bi-sub { font-size: clamp(11px, 2.2vh, 15px); color: #cfd8ff; font-weight: 700; }
+.bi-warn { position: absolute; left: 0; right: 0; top: 12%; text-align: center; font-family: var(--f-title); font-weight: 900; font-size: clamp(22px, 5.6vh, 40px); color: #ff3b30; letter-spacing: 2px; -webkit-text-stroke: 3px #1a0008; paint-order: stroke fill; text-shadow: 0 0 14px rgba(255, 40, 30, 0.9); opacity: 0; }
+.bi-boss { position: absolute; right: 4%; top: 30%; height: min(34vh, 220px); width: auto; aspect-ratio: 1; opacity: 0; filter: drop-shadow(0 0 10px rgba(255, 60, 40, 0.8)); }
+.bt-intro:not(.boss) .bi-warn, .bt-intro:not(.boss) .bi-boss { display: none; }
+.bi-cd { position: absolute; left: 0; right: 0; top: 52%; text-align: center; opacity: 0; font-family: var(--f-title); font-weight: 900; font-size: clamp(60px, 18vh, 140px); color: #fff; -webkit-text-stroke: 5px #1a2140; paint-order: stroke fill; text-shadow: 0 6px 0 #1a2140; line-height: 1; }
+.bi-cd.go { font-size: clamp(44px, 12vh, 96px); color: #ffd23f; }
+
+/* ---------- THẮNG: tia nắng + pháo giấy ---------- */
+.bt-rays { position: absolute; left: 50%; top: 42%; z-index: 6; width: 150vmax; height: 150vmax; pointer-events: none; opacity: 0; will-change: transform;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 224, 110, 0.55) 0deg 9deg, rgba(255, 224, 110, 0) 9deg 24deg);
+  -webkit-mask-image: radial-gradient(circle, #000 0, rgba(0, 0, 0, 0.55) 18%, transparent 46%); mask-image: radial-gradient(circle, #000 0, rgba(0, 0, 0, 0.55) 18%, transparent 46%); }
+.bt-spark { position: absolute; z-index: 9; width: 16px; height: 16px; margin: -8px 0 0 -8px; pointer-events: none; background: currentColor; clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
