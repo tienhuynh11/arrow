@@ -9,6 +9,8 @@ import type { Connection } from './connection.js';
 import { serveStatic } from './static.js';
 import { handleMonkeyUpgrade, serveMonkey } from '../monkey/index.js';
 import { handleMonkeyApi } from '../monkey/api.js';
+import { handleHeroesApi } from '../heroes/api.js';
+import { serveHeroes } from '../heroes/index.js';
 import { handleQuizHttp } from '../quiz/http.js';
 import { RateLimiter, sanitizeCode, sanitizeName } from '../validation/input.js';
 
@@ -35,6 +37,9 @@ export function startServer() {
       return;
     }
     if (handleQuizHttp(req, res)) return;
+    // game THẺ TƯỚNG (/heroes/): REST trước, rồi file tĩnh (chỉ nhận GET/HEAD dưới /heroes/)
+    if (handleHeroesApi(req, res)) return;
+    if (serveHeroes(req, res)) return;
     // Bầy Khỉ REST (/monkey/api/*) — phải đứng trước serveMonkey (serveMonkey chỉ nhận GET)
     if (handleMonkeyApi(req, res)) return;
     // game SINH TỒN BẦY KHỈ (/monkey/) — bundle + health riêng, tách khỏi minigame

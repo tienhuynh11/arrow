@@ -1,0 +1,346 @@
+// Luật chơi Thẻ Tướng phía server: các hàm THUẦN trên HState (đồng bộ, ném StoreError nếu sai).
+// Store (Mem/Pg) gọi các hàm này bên trong một giao dịch có khoá hồ sơ nên không có chỗ nào tiêu trùng tiền.
+
+import type { AfkState, BattleRes, MeResponse, StageProgress, SummonRes } from '../../../shared/heroes/api.js';
+import { heroUnit, simulate, type BattleInput, type UnitInit } from '../../../shared/heroes/battle.js';
+import {
+  MAX_ACCOUNT_LEVEL, MAX_LEVEL, MAX_STAR, SQUAD_COUNT, SQUAD_SIZE, STAMINA_MAX, STAMINA_REGEN_MS, SWEEP_COST,
+} from '../../../shared/heroes/config.js';
+import { DUPE_SHARDS, accountXpToNext, levelCapOf, levelUpCost, starUpCost } from '../../../shared/heroes/formulas.js';
+import {
+  BANNER_BY_ID, NEW_PITY, SUMMON10_COST, SUMMON_COST, summon, type RandInt,
+} from '../../../shared/heroes/gacha.js';
+import {
+  GEAR_BY_ID, GEAR_CAP, MAX_GEAR_LEVEL, STARTER_GEAR, enhanceCost, gearDefOf, rollGearDrops, salvageStones, sumGear,
+  type GearInst, type RandInt as GearRand,
+} from '../../../shared/heroes/gear.js';
+import { HERO_BY_ID, STARTER_HEROES } from '../../../shared/heroes/heroes.js';
+import { STAGES, afkReward, stageOf, stageSetup, staminaNow, starsOf, type StageDef } from '../../../shared/heroes/stages.js';
+import type { OwnedHero, Wallet } from '../../../shared/heroes/types.js';
+import { StoreError, type HState, type LedgerRow } from './db/store.js';
+
+export const STARTER_WALLET: Readonly<Wallet> = { gold: 5000, gems: 3000, tickets: 10, exp: 500, stones: 0 };
+/** trần mỗi loại tiền (cột integer của Postgres) */
+export const MONEY_CAP = 2_000_000_000;
+const SHARD_CAP = 1_000_000_000;
+export const MAX_SWEEP = 10;
+/** số hành động tối đa trong một trận (engine cũng cắt ở 400) */
+export const MAX_BATTLE_INPUTS = 200;
+
+const WALLET_KEYS = ['gold', 'gems', 'tickets', 'exp', 'stones'] as const;
+const WALLET_NAME: Record<keyof Wallet, string> = { gold: 'vàng', gems: 'kim cương', tickets: 'vé triệu hồi', exp: 'EXP bình', stones: 'đá cường hoá' };
+
+/* ------------------------------ KHỞI TẠO / HIỂN THỊ ------------------------------ */
+/** hồ sơ khởi đầu của tài khoản mới */
+export function newState(accountId: number, nowMs: number): HState {
+  const heroes: Record<string, OwnedHero> = {};
+  for (const id of STARTER_HEROES) heroes[id] = { id, level: 1, star: 1, shards: 0 };
+  const squads: string[][] = Array.from({ length: SQUAD_COUNT }, () => Array<string>(SQUAD_SIZE).fill(''));
+  STARTER_HEROES.slice(0, SQUAD_SIZE).forEach((id, i) => (squads[0][i] = id));
+  return {
+    accountId, wallet: { ...STARTER_WALLET }, level: 1, xp: 0, stamina: STAMINA_MAX, staminaAt: nowMs, afkSince: nowMs,
+    activeSquad: 0, pity: {}, heroes, squads, progress: {}, runs: [], gear: [], newGear: [...STARTER_GEAR],
+  };
+}
+
+/** chỉ số ải cao nhất đã qua (-1 = chưa qua ải nào) */
+export function highestIndex(s: Readonly<HState>): number {
+  let best = -1;
+  for (const p of Object.values(s.progress)) {
+    if (p.stars <= 0) continue;
+    const st = stageOf(p.stage);
+    if (st && st.index > best) best = st.index;
+  }
+  return best;
+}
+export function afkOf(s: Readonly<HState>, nowMs: number): AfkState {
+  return { since: s.afkSince, pending: afkReward(highestIndex(s), nowMs - s.afkSince) };
+}
+
+export function buildMe(s: Readonly<HState>, username: string, now: Date): MeResponse {
+  const ms = now.getTime();
+  return {
+    profile: { id: s.accountId, username, level: s.level, xp: s.xp, stamina: staminaNow(s.stamina, s.staminaAt, ms) },
+    wallet: { ...s.wallet },
+    heroes: Object.values(s.heroes).map((h) => ({ ...h })),
+    gear: [...s.gear].sort((a, b) => a.uid - b.uid).map((g) => ({ ...g })),
+    squads: s.squads.map((q) => [...q]),
+    activeSquad: s.activeSquad,
+    pity: structuredClone(s.pity),
+    progress: Object.values(s.progress).map((p) => ({ ...p })),
+    afk: afkOf(s, ms),
+    now: ms,
+  };
+}
+
+/* ------------------------------ TIỀN / THỂ LỰC ------------------------------ */
+export function gain(s: HState, g: Partial<Wallet>) {
+  for (const k of WALLET_KEYS) if (g[k]) s.wallet[k] = Math.min(MONEY_CAP, s.wallet[k] + (g[k] as number));
+}
+/** trừ tiền; thiếu → ném lỗi, không trừ gì */
+export function spend(s: HState, cost: Partial<Wallet>) {
+  for (const k of WALLET_KEYS) if ((cost[k] ?? 0) > s.wallet[k]) throw new StoreError(`Không đủ ${WALLET_NAME[k]}`, 400);
+  for (const k of WALLET_KEYS) if (cost[k]) s.wallet[k] -= cost[k] as number;
+}
+/** an toàn cuối giao dịch: ví không bao giờ âm */
+export function assertWallet(s: Readonly<HState>) {
+  for (const k of WALLET_KEYS) if (!Number.isInteger(s.wallet[k]) || s.wallet[k] < 0) throw new StoreError('Số dư không hợp lệ', 500);
+}
+/** chênh lệch ví → dòng ledger (null nếu không đổi) */
+export function ledgerOf(before: Readonly<Wallet>, after: Readonly<Wallet>, kind: string): LedgerRow | null {
+  const delta: Partial<Wallet> = {};
+  let any = false;
+  for (const k of WALLET_KEYS) if (after[k] !== before[k]) (delta[k] = after[k] - before[k]), (any = true);
+  return any ? { kind, delta } : null;
+}
+
+export function spendStamina(s: HState, nowMs: number, cost: number) {
+  const cur = staminaNow(s.stamina, s.staminaAt, nowMs);
+  if (cur < cost) throw new StoreError('Không đủ thể lực', 400);
+  // đầy → mốc hồi bắt đầu từ bây giờ; chưa đầy → giữ phần lẻ của lần hồi hiện tại
+  if (cur >= STAMINA_MAX) s.staminaAt = nowMs;
+  else s.staminaAt += (cur - s.stamina) * STAMINA_REGEN_MS;
+  s.stamina = cur - cost;
+}
+
+function addShards(h: OwnedHero, n: number) {
+  h.shards = Math.min(SHARD_CAP, h.shards + n);
+}
+function ownedHero(s: HState, id: unknown): OwnedHero {
+  const h = typeof id === 'string' ? s.heroes[id] : undefined;
+  if (!h) throw new StoreError('Bạn chưa có tướng này', 400);
+  return h;
+}
+
+/* ------------------------------ TRIỆU HỒI ------------------------------ */
+export type SummonPulls = SummonRes['pulls'];
+export function opSummon(s: HState, bannerId: string, count: 1 | 10, pay: 'tickets' | 'gems', rand: RandInt): SummonPulls {
+  const banner = BANNER_BY_ID[bannerId];
+  if (!banner) throw new StoreError('Banner không tồn tại', 404);
+  spend(s, { [pay]: (count === 10 ? SUMMON10_COST : SUMMON_COST)[pay] });
+  const r = summon(s.pity[banner.id] ?? NEW_PITY, banner, count, rand);
+  s.pity[banner.id] = r.state;
+  return r.pulls.map((p) => {
+    const own = s.heroes[p.heroId];
+    if (own) {
+      const shards = DUPE_SHARDS[p.rarity];
+      addShards(own, shards);
+      return { ...p, isNew: false, shards };
+    }
+    s.heroes[p.heroId] = { id: p.heroId, level: 1, star: 1, shards: 0 };
+    return { ...p, isNew: true, shards: 0 };
+  });
+}
+
+/* ------------------------------ NÂNG CẤP ------------------------------ */
+/** nâng tối đa `times` cấp; dừng êm khi hết tiền hoặc chạm trần. Trả số cấp đã nâng (≥1, nếu không đủ cả cấp đầu thì báo lỗi). */
+export function opLevelUp(s: HState, heroId: unknown, times = 1): number {
+  const h = ownedHero(s, heroId);
+  if (!Number.isInteger(times) || times < 1 || times > MAX_LEVEL) throw new StoreError('Số cấp không hợp lệ', 400);
+  if (h.level >= MAX_LEVEL || h.level >= levelCapOf(h.star)) throw new StoreError('Tướng đã đạt cấp tối đa của sao hiện tại — hãy lên sao', 400);
+  let gained = 0;
+  while (gained < times && h.level < MAX_LEVEL && h.level < levelCapOf(h.star)) {
+    const c = levelUpCost(h.level);
+    if (gained > 0 && (c.gold > s.wallet.gold || c.exp > s.wallet.exp)) break;
+    spend(s, { gold: c.gold, exp: c.exp }); // cấp đầu không đủ tiền thì ném lỗi như cũ
+    h.level += 1;
+    gained++;
+  }
+  return gained;
+}
+export function opStarUp(s: HState, heroId: unknown) {
+  const h = ownedHero(s, heroId);
+  const need = h.star >= MAX_STAR ? null : starUpCost(h.star);
+  if (need === null) throw new StoreError('Tướng đã đạt sao tối đa', 400);
+  if (h.shards < need) throw new StoreError(`Cần ${need} mảnh tướng để lên sao`, 400);
+  h.shards -= need;
+  h.star += 1;
+}
+
+/* ------------------------------ ĐỘI HÌNH ------------------------------ */
+export function opSetSquad(s: HState, idx: number, slots: string[], active: boolean) {
+  if (!Number.isInteger(idx) || idx < 0 || idx >= SQUAD_COUNT) throw new StoreError('Đội không hợp lệ', 400);
+  if (slots.length !== SQUAD_SIZE) throw new StoreError(`Đội hình gồm ${SQUAD_SIZE} ô`, 400);
+  const seen = new Set<string>();
+  for (const id of slots) {
+    if (!id) continue;
+    if (!s.heroes[id]) throw new StoreError('Đội hình có tướng bạn chưa sở hữu', 400);
+    if (seen.has(id)) throw new StoreError('Một tướng chỉ đứng được một ô', 400);
+    seen.add(id);
+  }
+  if (active && seen.size === 0) throw new StoreError('Đội đang dùng phải có ít nhất một tướng', 400);
+  s.squads[idx] = [...slots];
+  if (active) s.activeSquad = idx;
+}
+
+/* ------------------------------ ẢI ------------------------------ */
+export function isUnlocked(s: Readonly<HState>, stage: StageDef): boolean {
+  return stage.index === 0 || (s.progress[STAGES[stage.index - 1].id]?.stars ?? 0) > 0;
+}
+function stageOrThrow(id: unknown): StageDef {
+  const st = typeof id === 'string' ? stageOf(id) : undefined;
+  if (!st) throw new StoreError('Ải không tồn tại', 404);
+  return st;
+}
+/** cộng EXP tài khoản, trả true nếu lên cấp */
+function addAccountXp(s: HState, xp: number): boolean {
+  if (s.level >= MAX_ACCOUNT_LEVEL) return false;
+  s.xp += xp;
+  let up = false;
+  while (s.level < MAX_ACCOUNT_LEVEL && s.xp >= accountXpToNext(s.level)) {
+    s.xp -= accountXpToNext(s.level);
+    s.level += 1;
+    up = true;
+  }
+  if (s.level >= MAX_ACCOUNT_LEVEL) s.xp = 0;
+  return up;
+}
+function progressOf(s: HState, stage: string): StageProgress {
+  return (s.progress[stage] ??= { stage, stars: 0, clears: 0 });
+}
+
+export type BattleOutcome = Omit<BattleRes, 'me'>;
+/**
+ * Chấm một trận: dựng đội từ DB (bỏ qua mọi chỉ số client), chạy lại cả trận bằng simulate() với đúng seed server đã cấp.
+ * Thưởng chỉ phát khi thắng; sao chỉ tăng, không giảm.
+ */
+export function opBattle(s: HState, stageId: unknown, squadIdx: number, seed: number, inputs: BattleInput[], auto: boolean, rand: GearRand = () => 0): BattleOutcome {
+  const stage = stageOrThrow(stageId);
+  if (!isUnlocked(s, stage)) throw new StoreError('Ải chưa mở — hãy qua ải trước đó', 403);
+  const squad = s.squads[squadIdx];
+  if (!squad) throw new StoreError('Đội không hợp lệ', 400);
+  const player: UnitInit[] = [];
+  squad.forEach((id, slot) => {
+    if (id && s.heroes[id]) player.push(heroUnit(s.heroes[id], slot, sumGear(s.gear.filter((g) => g.hero === id))));
+  });
+  if (player.length === 0) throw new StoreError('Đội hình đang trống', 400);
+
+  const result = simulate(stageSetup(stage, player, seed), inputs, auto);
+  const stars = starsOf(result, stage);
+  const prog = progressOf(s, stage.id);
+  const first = result.win && prog.stars === 0;
+  const reward = { gold: 0, exp: 0, xp: 0, gems: 0, firstClear: first };
+  let levelUp = false;
+  let drops: string[] = [];
+  if (result.win) {
+    reward.gold = stage.reward.gold;
+    reward.exp = stage.reward.exp;
+    reward.xp = stage.reward.xp;
+    reward.gems = first ? stage.reward.gems : 0;
+    gain(s, reward);
+    levelUp = addAccountXp(s, reward.xp);
+    prog.stars = Math.max(prog.stars, stars);
+    prog.clears += 1;
+    drops = addDrops(s, rollGearDrops(stage.chapter, stage.boss, rand));
+  }
+  s.runs.push({ stage: stage.id, win: result.win, stars, ticks: result.ticks });
+  return { win: result.win, stars, reward, levelUp, drops };
+}
+
+export function opSweep(s: HState, nowMs: number, stageId: unknown, times: number, rand: GearRand = () => 0) {
+  const stage = stageOrThrow(stageId);
+  const prog = s.progress[stage.id];
+  if (!prog || prog.stars < 3) throw new StoreError('Chỉ quét được ải đã đạt 3 sao', 400);
+  if (!Number.isInteger(times) || times < 1 || times > MAX_SWEEP) throw new StoreError(`Số lần quét từ 1 đến ${MAX_SWEEP}`, 400);
+  spendStamina(s, nowMs, SWEEP_COST * times);
+  const reward = { gold: stage.reward.gold * times, exp: stage.reward.exp * times, xp: stage.reward.xp * times };
+  gain(s, reward);
+  addAccountXp(s, reward.xp);
+  prog.clears += times;
+  const drops: string[] = [];
+  for (let i = 0; i < times; i++) drops.push(...addDrops(s, rollGearDrops(stage.chapter, stage.boss, rand)));
+  return { reward, drops };
+}
+
+export function opAfkClaim(s: HState, nowMs: number) {
+  const reward = afkReward(highestIndex(s), nowMs - s.afkSince);
+  gain(s, reward);
+  s.afkSince = nowMs;
+  return reward;
+}
+
+/** admin tặng tiền / tướng (tướng đã có → đổi thành mảnh như quay trùng) */
+export function opGrant(s: HState, g: Partial<Wallet>, heroId?: string) {
+  gain(s, g);
+  if (heroId) {
+    const def = HERO_BY_ID[heroId];
+    if (!def) throw new StoreError('Không có tướng này', 400);
+    const own = s.heroes[heroId];
+    if (own) addShards(own, DUPE_SHARDS[def.rarity]);
+    else s.heroes[heroId] = { id: heroId, level: 1, star: 1, shards: 0 };
+  }
+}
+
+/* ------------------------------ TRANG BỊ ------------------------------ */
+/**
+ * Thêm món rớt vào kho (qua s.newGear, uid do store cấp). Kho đầy (GEAR_CAP, tính cả món chờ cấp uid) thì phần dư
+ * được đổi âm thầm thành đá cường hoá = salvageStones(phẩm, 0). Trả về CHỈ những món thực sự vào kho.
+ */
+function addDrops(s: HState, ids: string[]): string[] {
+  const added: string[] = [];
+  for (const id of ids) {
+    if (s.gear.length + s.newGear.length < GEAR_CAP) {
+      s.newGear.push(id);
+      added.push(id);
+    } else gain(s, { stones: salvageStones(gearDefOf(id).rarity, 0) });
+  }
+  return added;
+}
+function ownedGear(s: HState, uid: unknown): GearInst {
+  const g = typeof uid === 'number' ? s.gear.find((x) => x.uid === uid) : undefined;
+  if (!g) throw new StoreError('Không tìm thấy trang bị', 404);
+  return g;
+}
+/** mặc món cho tướng: mỗi tướng một món mỗi ô; món cũ cùng ô về kho, món đang ở tướng khác thì chuyển sang */
+export function opGearEquip(s: HState, uid: unknown, heroId: unknown) {
+  const g = ownedGear(s, uid);
+  const h = ownedHero(s, heroId);
+  const slot = GEAR_BY_ID[g.def]?.slot;
+  for (const o of s.gear) if (o !== g && o.hero === h.id && GEAR_BY_ID[o.def]?.slot === slot) o.hero = null;
+  g.hero = h.id;
+}
+export function opGearUnequip(s: HState, uid: unknown) {
+  ownedGear(s, uid).hero = null;
+}
+/** cường hoá tối đa `times` cấp bằng vàng + đá; dừng êm khi hết tiền (lỗi nếu không đủ cho cấp đầu). Trả số cấp đã nâng. */
+export function opGearUpgrade(s: HState, uid: unknown, times = 1): number {
+  const g = ownedGear(s, uid);
+  if (!Number.isInteger(times) || times < 1 || times > MAX_GEAR_LEVEL) throw new StoreError('Số cấp không hợp lệ', 400);
+  if (g.level >= MAX_GEAR_LEVEL) throw new StoreError('Trang bị đã đạt cấp tối đa', 400);
+  const rarity = gearDefOf(g.def).rarity;
+  let gained = 0;
+  while (gained < times && g.level < MAX_GEAR_LEVEL) {
+    const c = enhanceCost(rarity, g.level)!;
+    if (gained > 0 && (c.gold > s.wallet.gold || c.stones > s.wallet.stones)) break;
+    spend(s, c); // cấp đầu không đủ tiền thì ném lỗi
+    g.level += 1;
+    gained++;
+  }
+  return gained;
+}
+/** phân rã các món trong kho (không đang mặc) → đá cường hoá. Trả tổng đá nhận được. */
+export function opGearSalvage(s: HState, uids: unknown): number {
+  if (!Array.isArray(uids) || uids.length < 1 || uids.length > 50) throw new StoreError('Chọn từ 1 đến 50 món', 400);
+  if (new Set(uids).size !== uids.length) throw new StoreError('Danh sách có món trùng', 400);
+  let stones = 0;
+  for (const u of uids) {
+    const g = ownedGear(s, u);
+    if (g.hero) throw new StoreError('Không phân rã được trang bị đang mặc', 400);
+    stones += salvageStones(gearDefOf(g.def).rarity, g.level);
+  }
+  const drop = new Set<number>(uids);
+  s.gear = s.gear.filter((g) => !drop.has(g.uid));
+  gain(s, { stones });
+  return stones;
+}
+
+/** ải cao nhất đã qua + sao ở ải đó (cho bảng xếp hạng bản RAM) */
+export function bestStage(s: Readonly<HState>): { stage: number; stars: number } | null {
+  let best: { stage: number; stars: number } | null = null;
+  for (const p of Object.values(s.progress)) {
+    if (p.stars <= 0) continue;
+    const st = stageOf(p.stage);
+    if (st && (!best || st.index > best.stage)) best = { stage: st.index, stars: p.stars };
+  }
+  return best;
+}
