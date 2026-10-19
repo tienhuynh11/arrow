@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { heroUnit, type UnitInit } from '@shared/heroes/battle';
 import { BATTLE_HZ } from '@shared/heroes/config';
 import { stageOf, stageSetup } from '@shared/heroes/stages';
+import { towerStage } from '@shared/heroes/tower';
 import { api, me } from '../../api';
 import { BattleOverlay } from '../../battle/overlay';
 import { BattleSession, type HudUnit } from '../../battle/session';
-import { defOf, gearBonus, ownedMap, starsOfStage } from '../../game';
+import { defOf, gearBonus, ownedMap, starsOfStage, towerOf } from '../../game';
 import { BattleScene } from '../../render/battle-scene';
 import { runLive, type LiveHandle } from '../../render/live';
 import { autoPref, saveSettings, speedPref } from '../../settings';
@@ -37,14 +38,17 @@ function UltBtn({ u, hot, onUlt }: { u: HudUnit; hot: number; onUlt: () => void 
 
 export function BattleScreen({ stage }: { stage: string }) {
   const m0 = me.value!;
-  const def = stageOf(stage);
+  // stage 'tower' = Tháp: ải dựng theo tầng kế tiếp (chốt lúc vào trận), nộp kết quả qua /tower-battle
+  const isTower = stage === 'tower';
+  const [def] = useState(() => (isTower ? towerStage(towerOf(m0).floor + 1) : stageOf(stage)));
+  const leave = () => go(isTower ? { n: 'tower' } : { n: 'campaign', stage });
   const [phase, setPhase] = useState<'loading' | 'fight' | 'submit'>('loading');
   const [sess, setSess] = useState<BattleSession | null>(null);
   const [banner, setBanner] = useState('');
   const [exit, setExit] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const cleared = starsOfStage(m0, stage) > 0;
+  const cleared = !isTower && starsOfStage(m0, stage) > 0;
 
   useEffect(() => {
     if (!def) {
@@ -58,15 +62,26 @@ export function BattleScreen({ stage }: { stage: string }) {
 
     const submit = (s: BattleSession) => {
       setPhase('submit');
-      api
-        .battle({ stage, squad: m0.activeSquad, seed: s.setup.seed, inputs: s.inputs, auto: s.initialAuto })
-        .then((res) => {
-          if (!cancelled) go({ n: 'result', stage, res });
-        })
-        .catch((e) => {
-          errToast(e);
-          if (!cancelled) go({ n: 'campaign', stage });
-        });
+      const body = { squad: m0.activeSquad, seed: s.setup.seed, inputs: s.inputs, auto: s.initialAuto };
+      const onErr = (e: unknown) => {
+        errToast(e);
+        if (!cancelled) leave();
+      };
+      if (isTower) {
+        api
+          .towerBattle(body)
+          .then((res) => {
+            if (!cancelled) go({ n: 'towerResult', res });
+          })
+          .catch(onErr);
+      } else {
+        api
+          .battle({ stage, ...body })
+          .then((res) => {
+            if (!cancelled) go({ n: 'result', stage, res });
+          })
+          .catch(onErr);
+      }
     };
 
     void (async () => {
@@ -78,7 +93,7 @@ export function BattleScreen({ stage }: { stage: string }) {
       });
       if (!units.length) {
         toast('Đội hình trống — hãy xếp tướng trước', 'error');
-        go({ n: 'squad' });
+        go(isTower ? { n: 'tower' } : { n: 'squad' });
         return;
       }
       let seed: number;
@@ -86,7 +101,7 @@ export function BattleScreen({ stage }: { stage: string }) {
         seed = (await api.battleStart(stage)).seed;
       } catch (e) {
         errToast(e);
-        go({ n: 'campaign', stage });
+        leave();
         return;
       }
       if (cancelled || !canvasRef.current || !overlayRef.current) return;
@@ -216,7 +231,7 @@ export function BattleScreen({ stage }: { stage: string }) {
           <p>Trận đang đánh sẽ không được tính và không mất thể lực.</p>
           <div class="btn-row">
             <Btn kind="ghost" onClick={() => { setExit(false); sess.setPaused(false); }}>Tiếp tục đánh</Btn>
-            <Btn kind="red" onClick={() => go({ n: 'campaign', stage })}>Rời trận</Btn>
+            <Btn kind="red" onClick={leave}>Rời trận</Btn>
           </div>
         </Modal>
       )}

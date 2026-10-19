@@ -4,6 +4,7 @@
 import type * as THREE from 'three';
 import { HERO_BY_ID } from '@shared/heroes/heroes';
 import type { HeroDef } from '@shared/heroes/types';
+import { HERO_STYLE } from './hero-extras';
 import { createGltfHero, hasGltfHero } from './gltf-model';
 import { createProceduralModel, monsterLook, type ProcLook } from './procedural-model';
 import type { QualityState } from './quality';
@@ -63,7 +64,12 @@ export function createHeroModel(src: HeroDef | string, opts: ModelOptions = {}):
 export { onHeroModelReady, preloadHeroModels } from './gltf-model';
 
 function heroLook(d: HeroDef): ProcLook {
-  return { body: d.look.body, accent: d.look.accent, skin: '#ffd9b8', props: d.look.props, scale: d.rarity === 'UR' ? 1.12 : 1, monkey: false };
+  const st = HERO_STYLE[d.id];
+  const props = st?.drop ? d.look.props.filter((p) => !st.drop!.includes(p)) : d.look.props;
+  return {
+    body: d.look.body, accent: d.look.accent, skin: '#ffd9b8', props, scale: d.rarity === 'UR' ? 1.12 : 1, monkey: false,
+    hair: st?.hair, extra: st?.add,
+  };
 }
 
 export function outlinesOf(q: QualityState): boolean {

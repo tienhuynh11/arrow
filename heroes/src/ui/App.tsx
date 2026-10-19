@@ -3,6 +3,7 @@ import { useState } from 'preact/hooks';
 import { accountXpToNext } from '@shared/heroes/formulas';
 import { STAMINA_MAX } from '@shared/heroes/config';
 import { api, me } from '../api';
+import { hubBadges } from '../game';
 import { quality, saveSettings, sound, type Quality } from '../settings';
 import { go, returnTo, screen, type Screen } from '../state';
 import { Btn, Modal, Toasts } from './common';
@@ -16,6 +17,10 @@ import { Summon } from './screens/Summon';
 import { Campaign } from './screens/Campaign';
 import { BattleScreen } from './screens/Battle';
 import { Result } from './screens/Result';
+import { Tower } from './screens/Tower';
+import { TowerResult } from './screens/TowerResult';
+import { Quests } from './screens/Quests';
+import { Shop } from './screens/Shop';
 
 const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
   { n: 'hub', label: 'Thành', icon: 'home' },
@@ -26,8 +31,11 @@ const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
 ];
 
 function Nav() {
-  const cur = screen.value.n;
+  const n = screen.value.n;
+  // 3 màn Hoạt động (Tháp/Nhiệm vụ/Cửa hàng) nằm dưới tab Thành
+  const cur = n === 'tower' || n === 'quests' || n === 'shop' ? 'hub' : n;
   const tickets = me.value?.wallet.tickets ?? 0;
+  const act = me.value ? hubBadges(me.value).total : 0;
   return (
     <nav class="nav" aria-label="Điều hướng">
       {TABS.map((t) => (
@@ -35,6 +43,7 @@ function Nav() {
           <span class="tab-ic">
             <Icon n={t.icon} size={26} />
             {t.n === 'summon' && tickets > 0 && <i class="dot" />}
+            {t.n === 'hub' && act > 0 && <i class="dot" />}
           </span>
           <span class="tab-lb">{t.label}</span>
         </button>
@@ -119,6 +128,10 @@ function Body() {
     case 'campaign': return <Campaign initial={s.stage} />;
     case 'battle': return <BattleScreen stage={s.stage} />;
     case 'result': return <Result stage={s.stage} res={s.res} />;
+    case 'tower': return <Tower />;
+    case 'towerResult': return <TowerResult res={s.res} />;
+    case 'quests': return <Quests />;
+    case 'shop': return <Shop />;
   }
 }
 
@@ -132,7 +145,7 @@ export function App() {
     );
   }
   const s = screen.value;
-  const full = s.n === 'battle' || s.n === 'result';
+  const full = s.n === 'battle' || s.n === 'result' || s.n === 'towerResult';
   return (
     <div class={`app${full ? ' full' : ''}`}>
       {!full && <Nav />}

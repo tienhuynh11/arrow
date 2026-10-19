@@ -45,6 +45,18 @@ export interface HState {
    * (cấp 0, chưa mặc) rồi xoá `newGear`. Vì uid chỉ có SAU giao dịch nên hồ sơ trả về client phải dựng SAU `mutate`.
    */
   newGear: string[];
+  /** Tháp: tầng cao nhất đã qua */
+  towerFloor: number;
+  /** dayKey của lần cấp lượt thử gần nhất; khác hôm nay → reset lượt (xem rollDay) */
+  towerDay: number;
+  towerTries: number;
+  /** dayKey mà `quests`, `questBonus`, `shop` thuộc về (hàng ngày cũ bị xoá khi ghi) */
+  day: number;
+  quests: Record<string, { progress: number; claimed: boolean }>;
+  /** đã nhận thưởng thêm khi xong hết nhiệm vụ (PG: hàng quest_id='bonus' trong h_quest) */
+  questBonus: boolean;
+  /** số lần đã mua hôm nay theo id mặt hàng */
+  shop: Record<string, number>;
 }
 
 export interface LedgerRow {

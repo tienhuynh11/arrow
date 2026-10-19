@@ -84,6 +84,29 @@ CREATE TABLE ${S}h_gear (
 );
 CREATE INDEX ON ${S}h_gear (account_id);
 `,
+  // v3 — Tháp, nhiệm vụ hằng ngày, cửa hàng. `day` = dayKey (ngày VN); chỉ giữ hàng của ngày hiện tại, ngày cũ bị xoá khi ghi.
+  (S) => `
+ALTER TABLE ${S}h_profile
+  ADD COLUMN tower_floor integer NOT NULL DEFAULT 0 CHECK (tower_floor >= 0),
+  ADD COLUMN tower_day   integer NOT NULL DEFAULT 0,
+  ADD COLUMN tower_tries integer NOT NULL DEFAULT 0 CHECK (tower_tries >= 0);
+-- quest_id = id nhiệm vụ; hàng đặc biệt quest_id = 'bonus' (claimed = đã nhận thưởng thêm)
+CREATE TABLE ${S}h_quest (
+  account_id  integer NOT NULL REFERENCES ${S}accounts(id) ON DELETE CASCADE,
+  day         integer NOT NULL,
+  quest_id    text NOT NULL,
+  progress    integer NOT NULL DEFAULT 0 CHECK (progress >= 0),
+  claimed     boolean NOT NULL DEFAULT false,
+  PRIMARY KEY (account_id, day, quest_id)
+);
+CREATE TABLE ${S}h_shop_buy (
+  account_id  integer NOT NULL REFERENCES ${S}accounts(id) ON DELETE CASCADE,
+  day         integer NOT NULL,
+  item_id     text NOT NULL,
+  count       integer NOT NULL DEFAULT 0 CHECK (count >= 0),
+  PRIMARY KEY (account_id, day, item_id)
+);
+`,
 ];
 
 /** chạy các migration còn thiếu, một giao dịch có khoá advisory (khác khoá của Bầy Khỉ) */

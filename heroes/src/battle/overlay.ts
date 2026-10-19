@@ -65,6 +65,44 @@ export class BattleOverlay implements SceneHooks {
     setTimeout(kill, 1800);
   }
 
+  /** tên kỹ năng bật lên "bụp" trên đầu người dùng (chữ viền dày, nghiêng, nảy) — chỉ dùng Web Animations nên không cần CSS riêng */
+  skill(uid: number, name: string, color: string, ult: boolean) {
+    const p = this.scene?.project(uid, ult ? 0.75 : 0.55);
+    if (!p) return;
+    while (this.layer.querySelectorAll('.sk-pop').length > 4) this.layer.querySelector('.sk-pop')?.remove();
+    const el = document.createElement('div');
+    el.className = 'sk-pop';
+    const size = ult ? 38 : 24;
+    const ink = '#1a2140';
+    el.textContent = name + (ult ? '!' : '');
+    Object.assign(el.style, {
+      position: 'absolute', left: `${p.x}px`, top: `${p.y}px`, pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: '5',
+      fontFamily: "var(--f-title), 'Baloo 2', system-ui, sans-serif", fontWeight: '900', fontSize: `${size}px`, color: ult ? '#fff7c2' : '#fff',
+      letterSpacing: '1px', willChange: 'transform, opacity',
+      textShadow: `-3px 0 ${ink}, 3px 0 ${ink}, 0 -3px ${ink}, 0 3px ${ink}, -2px -2px ${ink}, 2px 2px ${ink}, -2px 2px ${ink}, 2px -2px ${ink}, 0 4px 0 ${color}, 0 0 14px ${color}`,
+    } as Partial<CSSStyleDeclaration>);
+    this.layer.append(el);
+    // giữ chữ trong màn hình (kể cả lúc phóng to): người dùng chiêu đứng sát mép thì chữ không bị cắt
+    const half = (el.offsetWidth * (ult ? 1.5 : 1.3)) / 2 + 4;
+    const maxW = this.layer.clientWidth || window.innerWidth;
+    el.style.left = `${half * 2 >= maxW ? maxW / 2 : Math.min(maxW - half, Math.max(half, p.x))}px`;
+    const tilt = (Math.random() < 0.5 ? -1 : 1) * (ult ? 7 : 4);
+    const sc = this.scene?.timeScale || 1;
+    const base = 'translate(-50%, -100%)';
+    const anim = el.animate(
+      [
+        { transform: `${base} translateY(10px) scale(0.2) rotate(${-tilt * 2}deg)`, opacity: 0 },
+        { transform: `${base} translateY(-6px) scale(${ult ? 1.45 : 1.25}) rotate(${tilt}deg)`, opacity: 1, offset: 0.2 },
+        { transform: `${base} translateY(-2px) scale(${ult ? 0.94 : 0.97}) rotate(${-tilt * 0.4}deg)`, opacity: 1, offset: 0.32 },
+        { transform: `${base} translateY(-8px) scale(1.04) rotate(${tilt * 0.3}deg)`, opacity: 1, offset: 0.6 },
+        { transform: `${base} translateY(-44px) scale(0.9) rotate(0deg)`, opacity: 0 },
+      ],
+      { duration: (ult ? 1500 : 950) / sc, easing: 'ease-out' },
+    );
+    anim.onfinish = () => el.remove();
+    setTimeout(() => el.remove(), 2600);
+  }
+
   hp(uid: number, hp: number, max: number) {
     const b = this.bars.get(uid);
     if (!b) return;

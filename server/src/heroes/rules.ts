@@ -1,7 +1,7 @@
 // Luật chơi Thẻ Tướng phía server: các hàm THUẦN trên HState (đồng bộ, ném StoreError nếu sai).
 // Store (Mem/Pg) gọi các hàm này bên trong một giao dịch có khoá hồ sơ nên không có chỗ nào tiêu trùng tiền.
 
-import type { AfkState, BattleRes, MeResponse, StageProgress, SummonRes } from '../../../shared/heroes/api.js';
+import type { AfkState, BattleRes, MeResponse, QuestClaimRes, ShopBuyRes, StageProgress, SummonRes, TowerBattleRes } from '../../../shared/heroes/api.js';
 import { heroUnit, simulate, type BattleInput, type UnitInit } from '../../../shared/heroes/battle.js';
 import {
   MAX_ACCOUNT_LEVEL, MAX_LEVEL, MAX_STAR, SQUAD_COUNT, SQUAD_SIZE, STAMINA_MAX, STAMINA_REGEN_MS, SWEEP_COST,
@@ -17,6 +17,9 @@ import {
 import { HERO_BY_ID, STARTER_HEROES } from '../../../shared/heroes/heroes.js';
 import { STAGES, afkReward, stageOf, stageSetup, staminaNow, starsOf, type StageDef } from '../../../shared/heroes/stages.js';
 import type { OwnedHero, Wallet } from '../../../shared/heroes/types.js';
+import { QUEST_BONUS, QUEST_BY_ID, QUEST_DEFS, dayKey, type QuestKind } from '../../../shared/heroes/quests.js';
+import { SHOP_BY_ID, SHOP_ITEMS } from '../../../shared/heroes/shop.js';
+import { TOWER_MAX_FLOOR, TOWER_TRIES, towerReward, towerStage } from '../../../shared/heroes/tower.js';
 import { StoreError, type HState, type LedgerRow } from './db/store.js';
 
 export const STARTER_WALLET: Readonly<Wallet> = { gold: 5000, gems: 3000, tickets: 10, exp: 500, stones: 0 };
@@ -40,6 +43,7 @@ export function newState(accountId: number, nowMs: number): HState {
   return {
     accountId, wallet: { ...STARTER_WALLET }, level: 1, xp: 0, stamina: STAMINA_MAX, staminaAt: nowMs, afkSince: nowMs,
     activeSquad: 0, pity: {}, heroes, squads, progress: {}, runs: [], gear: [], newGear: [...STARTER_GEAR],
+    towerFloor: 0, towerDay: 0, towerTries: 0, day: 0, quests: {}, questBonus: false, shop: {},
   };
 }
 
@@ -57,9 +61,52 @@ export function afkOf(s: Readonly<HState>, nowMs: number): AfkState {
   return { since: s.afkSince, pending: afkReward(highestIndex(s), nowMs - s.afkSince) };
 }
 
+/**
+ * Chuyển sang ngày mới (lười, không timer): reset lượt Tháp, xoá nhiệm vụ/mua hàng của ngày cũ, và tính "đăng nhập" cho hôm nay.
+ * Store gọi TRƯỚC mỗi `fn` trong mutate (cùng giao dịch); buildMe áp dụng cùng quy tắc nhưng chỉ để hiển thị (không ghi).
+ */
+export function rollDay(s: HState, nowMs: number) {
+  const today = dayKey(nowMs);
+  if (s.towerDay !== today) {
+    s.towerDay = today;
+    s.towerTries = TOWER_TRIES;
+  }
+  if (s.day !== today) {
+    s.day = today;
+    s.quests = {};
+    s.questBonus = false;
+    s.shop = {};
+  }
+  bumpQuest(s, 'login', 1);
+}
+/** tăng tiến trình mọi nhiệm vụ loại `kind` thêm `n`, chặn ở target */
+export function bumpQuest(s: HState, kind: QuestKind, n: number) {
+  if (!(n > 0)) return;
+  for (const q of QUEST_DEFS) {
+    if (q.kind !== kind) continue;
+    const row = (s.quests[q.id] ??= { progress: 0, claimed: false });
+    row.progress = Math.min(q.target, row.progress + n);
+  }
+}
+
 export function buildMe(s: Readonly<HState>, username: string, now: Date): MeResponse {
   const ms = now.getTime();
+  const today = dayKey(ms);
+  const stale = s.day !== today; // chưa mutate hôm nay: hiển thị như đã reset
+  const shop: Record<string, number> = {};
+  for (const it of SHOP_ITEMS) shop[it.id] = stale ? 0 : (s.shop[it.id] ?? 0);
   return {
+    tower: { floor: s.towerFloor, tries: s.towerDay === today ? s.towerTries : TOWER_TRIES },
+    quests: {
+      day: today,
+      list: QUEST_DEFS.map((q) => {
+        const row = stale ? undefined : s.quests[q.id];
+        // "đăng nhập" tính ngay khi xem hồ sơ hôm nay (được ghi ở thao tác đầu tiên trong ngày)
+        return { id: q.id, progress: q.kind === 'login' ? q.target : (row?.progress ?? 0), claimed: row?.claimed ?? false };
+      }),
+      bonusClaimed: stale ? false : s.questBonus,
+    },
+    shop,
     profile: { id: s.accountId, username, level: s.level, xp: s.xp, stamina: staminaNow(s.stamina, s.staminaAt, ms) },
     wallet: { ...s.wallet },
     heroes: Object.values(s.heroes).map((h) => ({ ...h })),
@@ -103,6 +150,14 @@ export function spendStamina(s: HState, nowMs: number, cost: number) {
   s.stamina = cur - cost;
 }
 
+/** cộng thể lực (được vượt trần STAMINA_MAX; phần vượt không hồi thêm cũng không bị cắt — xem staminaNow) */
+function addStamina(s: HState, nowMs: number, amount: number) {
+  const cur = staminaNow(s.stamina, s.staminaAt, nowMs);
+  if (cur < STAMINA_MAX) s.staminaAt += (cur - s.stamina) * STAMINA_REGEN_MS; // giữ phần lẻ của lần hồi hiện tại
+  s.stamina = cur + amount;
+  if (s.stamina >= STAMINA_MAX) s.staminaAt = nowMs;
+}
+
 function addShards(h: OwnedHero, n: number) {
   h.shards = Math.min(SHARD_CAP, h.shards + n);
 }
@@ -120,6 +175,7 @@ export function opSummon(s: HState, bannerId: string, count: 1 | 10, pay: 'ticke
   spend(s, { [pay]: (count === 10 ? SUMMON10_COST : SUMMON_COST)[pay] });
   const r = summon(s.pity[banner.id] ?? NEW_PITY, banner, count, rand);
   s.pity[banner.id] = r.state;
+  bumpQuest(s, 'summon', count);
   return r.pulls.map((p) => {
     const own = s.heroes[p.heroId];
     if (own) {
@@ -146,6 +202,7 @@ export function opLevelUp(s: HState, heroId: unknown, times = 1): number {
     h.level += 1;
     gained++;
   }
+  bumpQuest(s, 'levelup', gained);
   return gained;
 }
 export function opStarUp(s: HState, heroId: unknown) {
@@ -199,6 +256,18 @@ function progressOf(s: HState, stage: string): StageProgress {
   return (s.progress[stage] ??= { stage, stars: 0, clears: 0 });
 }
 
+/** dựng đội ra trận từ DB (tướng + trang bị đang mặc), bỏ qua mọi chỉ số client; dùng chung cho ải và Tháp */
+function squadUnits(s: Readonly<HState>, squadIdx: number): UnitInit[] {
+  const squad = s.squads[squadIdx];
+  if (!squad) throw new StoreError('Đội không hợp lệ', 400);
+  const player: UnitInit[] = [];
+  squad.forEach((id, slot) => {
+    if (id && s.heroes[id]) player.push(heroUnit(s.heroes[id], slot, sumGear(s.gear.filter((g) => g.hero === id))));
+  });
+  if (player.length === 0) throw new StoreError('Đội hình đang trống', 400);
+  return player;
+}
+
 export type BattleOutcome = Omit<BattleRes, 'me'>;
 /**
  * Chấm một trận: dựng đội từ DB (bỏ qua mọi chỉ số client), chạy lại cả trận bằng simulate() với đúng seed server đã cấp.
@@ -207,13 +276,7 @@ export type BattleOutcome = Omit<BattleRes, 'me'>;
 export function opBattle(s: HState, stageId: unknown, squadIdx: number, seed: number, inputs: BattleInput[], auto: boolean, rand: GearRand = () => 0): BattleOutcome {
   const stage = stageOrThrow(stageId);
   if (!isUnlocked(s, stage)) throw new StoreError('Ải chưa mở — hãy qua ải trước đó', 403);
-  const squad = s.squads[squadIdx];
-  if (!squad) throw new StoreError('Đội không hợp lệ', 400);
-  const player: UnitInit[] = [];
-  squad.forEach((id, slot) => {
-    if (id && s.heroes[id]) player.push(heroUnit(s.heroes[id], slot, sumGear(s.gear.filter((g) => g.hero === id))));
-  });
-  if (player.length === 0) throw new StoreError('Đội hình đang trống', 400);
+  const player = squadUnits(s, squadIdx);
 
   const result = simulate(stageSetup(stage, player, seed), inputs, auto);
   const stars = starsOf(result, stage);
@@ -231,6 +294,7 @@ export function opBattle(s: HState, stageId: unknown, squadIdx: number, seed: nu
     levelUp = addAccountXp(s, reward.xp);
     prog.stars = Math.max(prog.stars, stars);
     prog.clears += 1;
+    bumpQuest(s, 'win', 1);
     drops = addDrops(s, rollGearDrops(stage.chapter, stage.boss, rand));
   }
   s.runs.push({ stage: stage.id, win: result.win, stars, ticks: result.ticks });
@@ -247,9 +311,96 @@ export function opSweep(s: HState, nowMs: number, stageId: unknown, times: numbe
   gain(s, reward);
   addAccountXp(s, reward.xp);
   prog.clears += times;
+  bumpQuest(s, 'win', times);
   const drops: string[] = [];
   for (let i = 0; i < times; i++) drops.push(...addDrops(s, rollGearDrops(stage.chapter, stage.boss, rand)));
   return { reward, drops };
+}
+
+/* ------------------------------ THÁP ------------------------------ */
+export type TowerOutcome = Omit<TowerBattleRes, 'me'>;
+/** đánh tầng kế tiếp; tốn 1 lượt dù thắng hay thua. Seed đã được api kiểm tra + huỷ (cùng cơ chế /battle). */
+export function opTowerBattle(s: HState, squadIdx: number, seed: number, inputs: BattleInput[], auto: boolean, rand: GearRand = () => 0): TowerOutcome {
+  const floor = s.towerFloor + 1;
+  if (floor > TOWER_MAX_FLOOR) throw new StoreError('Đã chinh phục hết tháp', 400);
+  if (s.towerTries < 1) throw new StoreError('Hết lượt thử Tháp hôm nay', 400);
+  const stage = towerStage(floor);
+  const player = squadUnits(s, squadIdx);
+  const result = simulate(stageSetup(stage, player, seed), inputs, auto);
+  s.towerTries -= 1;
+  bumpQuest(s, 'tower', 1);
+  const reward = { gold: 0, exp: 0, xp: 0, gems: 0, stones: 0 };
+  let levelUp = false;
+  const drops: string[] = [];
+  if (result.win) {
+    const r = towerReward(floor);
+    reward.gold = r.gold;
+    reward.exp = r.exp;
+    reward.xp = r.xp;
+    reward.gems = r.gems;
+    reward.stones = r.stones;
+    gain(s, reward);
+    levelUp = addAccountXp(s, r.xp);
+    s.towerFloor = floor;
+    for (let i = 0; i < r.gearRolls; i++) drops.push(...addDrops(s, rollGearDrops(stage.chapter, stage.boss, rand)));
+  }
+  s.runs.push({ stage: stage.id, win: result.win, stars: 0, ticks: result.ticks });
+  return { win: result.win, floor, reward, drops, levelUp };
+}
+
+/* ------------------------------ NHIỆM VỤ ------------------------------ */
+/** nhận thưởng một nhiệm vụ (hoặc 'bonus' khi đã nhận hết) */
+export function opQuestClaim(s: HState, id: unknown): QuestClaimRes['reward'] {
+  if (id === 'bonus') {
+    if (s.questBonus) throw new StoreError('Đã nhận thưởng thêm rồi', 400);
+    if (!QUEST_DEFS.every((q) => s.quests[q.id]?.claimed)) throw new StoreError('Hãy nhận hết nhiệm vụ trong ngày trước', 400);
+    s.questBonus = true;
+    gain(s, QUEST_BONUS);
+    return { ...QUEST_BONUS };
+  }
+  const def = typeof id === 'string' ? QUEST_BY_ID[id] : undefined;
+  if (!def) throw new StoreError('Nhiệm vụ không tồn tại', 404);
+  const row = s.quests[def.id];
+  if (!row || row.progress < def.target) throw new StoreError('Nhiệm vụ chưa hoàn thành', 400);
+  if (row.claimed) throw new StoreError('Đã nhận thưởng nhiệm vụ này rồi', 400);
+  row.claimed = true;
+  gain(s, def.reward);
+  return { ...def.reward };
+}
+
+/* ------------------------------ CỬA HÀNG ------------------------------ */
+export type ShopOutcome = Omit<ShopBuyRes, 'me'>;
+/** mua `times` lần; vượt giới hạn ngày hoặc thiếu tiền thì mua được bao nhiêu hay bấy nhiêu, lỗi chỉ khi được 0 lần */
+export function opShopBuy(s: HState, nowMs: number, itemId: unknown, times: number, heroId: unknown, rand: GearRand = () => 0): ShopOutcome {
+  const item = typeof itemId === 'string' ? SHOP_BY_ID[itemId] : undefined;
+  if (!item) throw new StoreError('Mặt hàng không tồn tại', 404);
+  if (!Number.isInteger(times) || times < 1) throw new StoreError('Số lần mua không hợp lệ', 400);
+  const hero = item.give.kind === 'shards' ? ownedHero(s, heroId) : null;
+  const left = item.limit - (s.shop[item.id] ?? 0);
+  if (left < 1) throw new StoreError('Đã hết lượt mua hôm nay', 400);
+  let n = Math.min(times, left);
+  for (const k of WALLET_KEYS) {
+    const c = item.cost[k] ?? 0;
+    if (c > 0) n = Math.min(n, Math.floor(s.wallet[k] / c));
+  }
+  if (n < 1) {
+    spend(s, item.cost); // thiếu tiền → ném đúng thông báo loại tiền thiếu
+    throw new StoreError('Không đủ tiền', 400);
+  }
+  const total: Partial<Wallet> = {};
+  for (const k of WALLET_KEYS) if (item.cost[k]) total[k] = (item.cost[k] as number) * n;
+  spend(s, total);
+  s.shop[item.id] = (s.shop[item.id] ?? 0) + n;
+  const drops: string[] = [];
+  const g = item.give;
+  if (g.kind === 'wallet') {
+    const give: Partial<Wallet> = {};
+    for (const k of WALLET_KEYS) if (g.give[k]) give[k] = (g.give[k] as number) * n;
+    gain(s, give);
+  } else if (g.kind === 'stamina') addStamina(s, nowMs, g.amount * n);
+  else if (g.kind === 'shards') addShards(hero!, g.amount * n);
+  else for (let i = 0; i < n; i++) drops.push(...addDrops(s, rollGearDrops(g.chapter, false, rand).slice(0, 1))); // 1 món mỗi lần mua
+  return { bought: n, drops };
 }
 
 export function opAfkClaim(s: HState, nowMs: number) {
@@ -316,6 +467,7 @@ export function opGearUpgrade(s: HState, uid: unknown, times = 1): number {
     g.level += 1;
     gained++;
   }
+  bumpQuest(s, 'gear', gained);
   return gained;
 }
 /** phân rã các món trong kho (không đang mặc) → đá cường hoá. Trả tổng đá nhận được. */

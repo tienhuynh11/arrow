@@ -8,6 +8,7 @@ import type { EffectType, Element, Role } from '@shared/heroes/types';
 import { createHeroModel, type HeroModel } from './hero-model';
 import { brightLights, makeBlob, type LiveScene } from './live';
 import { currentPreset, type QualityState } from './quality';
+import { playUlt, type FxHost } from './ult-fx';
 
 export const ELEMENT_COLOR: Record<Element, number> = {
   forest: 0x54c74a, earth: 0xd9a050, water: 0x3fa7ff, light: 0xffe66b, dark: 0xb066ff,
@@ -29,12 +30,16 @@ export interface SceneHooks {
   wave(n: number): void;
   flash(color: string): void;
   sfx(k: 'hit' | 'crit' | 'ult' | 'heal'): void;
+  /** chữ tên kỹ năng to, vui nhộn bật lên trên đầu người dùng (tuyệt kỹ = to hơn) */
+  skill?(uid: number, name: string, color: string, ult: boolean): void;
   /** sau mỗi khung vẽ: HUD cập nhật vị trí thanh máu theo camera */
   frame?(): void;
 }
 
 export interface UnitView {
   uid: number;
+  /** khoá mô hình: id tướng hoặc mk_* */
+  key: string;
   side: 0 | 1;
   slot: number;
   role: Role;
@@ -101,6 +106,20 @@ export class BattleScene implements LiveScene {
   private torusGeo: THREE.TorusGeometry;
   private camTarget = new THREE.Vector3();
   private tmp = new THREE.Vector3();
+  private tmpA = new THREE.Vector3();
+  private tmpB = new THREE.Vector3();
+  /** cầu nối cho hiệu ứng tuyệt kỹ riêng từng tướng (ult-fx.ts) */
+  private fxHost: FxHost = {
+    scene: this.scene,
+    tween: (d, f, dn) => this.tween(d, f, dn),
+    later: (s, f) => this.later(s, f),
+    ring: (p, c, s, d) => this.ring(p, c, s, d),
+    burst: (p, c, n, sp) => this.burst(p, c, n, sp),
+    shake: (v) => {
+      this.shake = Math.max(this.shake, v);
+    },
+    low: this.q.level === 'low',
+  };
 
   constructor(hooks: SceneHooks, theme: Element = 'forest') {
     this.hooks = hooks;
@@ -235,7 +254,7 @@ export class BattleScene implements LiveScene {
     const blob = makeBlob(init.boss ? 2.4 : 1.4);
     group.add(blob);
     const v: UnitView = {
-      uid: u.uid, side: init.side, slot: init.slot, role: init.role, element: init.element, boss: !!init.boss,
+      uid: u.uid, key: init.key, side: init.side, slot: init.slot, role: init.role, element: init.element, boss: !!init.boss,
       group, model, blob, home: this.homeOf(init.side, init.slot), offset: new THREE.Vector3(),
       hp: u.hp, maxHp: u.maxHp, alive: true, gone: false,
     };
@@ -365,15 +384,20 @@ export class BattleScene implements LiveScene {
         const tgs = ev.tg.map((id) => this.views.get(id)).filter((x): x is UnitView => !!x);
         const col = ELEMENT_COLOR[v.element];
         const first = tgs[0];
+        if (sk.kind !== 'basic') this.hooks.skill?.(v.uid, sk.name, `#${col.toString(16).padStart(6, '0')}`, sk.kind === 'ult');
         const ranged = v.role === 'mage' || v.role === 'archer' || sk.target === 'enemyAll' || sk.type !== 'dmg';
         if (sk.kind === 'ult') {
           v.model.play('cast');
           this.ring(v.group.position, col, 2.4, 0.7);
-          this.pillar(v.group.position, col, 0.8);
+          const custom = playUlt({
+            host: this.fxHost, hero: v.key, from: v.group.position.clone(), height: v.model.height,
+            targets: tgs.map((t) => t.group.position.clone()), color: col,
+          });
+          if (!custom) this.pillar(v.group.position, col, 0.8);
           this.shake = Math.max(this.shake, 0.25);
           this.hooks.flash(`#${col.toString(16).padStart(6, '0')}`);
           this.hooks.sfx('ult');
-          if (sk.type === 'dmg') for (const t of tgs) this.projectile(this.chest(v).setY(2.4), this.chest(t), col, 0.4, 0.28);
+          if (sk.type === 'dmg' && !custom) for (const t of tgs) this.projectile(this.chest(v).setY(2.4), this.chest(t), col, 0.4, 0.28);
           this.curDelay = 0.5;
         } else if (sk.type === 'dmg' && !ranged && first) {
           const dir = first.home.clone().sub(v.home);
@@ -381,13 +405,22 @@ export class BattleScene implements LiveScene {
           dir.normalize();
           const to = dir.multiplyScalar(Math.max(0, dist - 1.2));
           v.model.play('attack');
-          this.tween(0.14, (k) => {
-            v.offset.copy(to).multiplyScalar(easeOut(k));
+          // gồng lùi ra sau (anticipation) -> lao tới quá đà -> trượt về chỗ cũ
+          const back = this.tmpA.copy(dir).multiplyScalar(-0.28).clone();
+          const over = to.clone().multiplyScalar(1.04);
+          this.tween(0.18, (k) => {
+            v.offset.copy(back).multiplyScalar(easeOut(k));
             v.group.position.copy(v.home).add(v.offset);
           });
-          this.later(0.34, () =>
-            this.tween(0.2, (k) => {
-              v.offset.copy(to).multiplyScalar(1 - easeOut(k));
+          this.later(0.18, () =>
+            this.tween(0.1, (k) => {
+              v.offset.lerpVectors(back, over, k * k);
+              v.group.position.copy(v.home).add(v.offset);
+            }),
+          );
+          this.later(0.42, () =>
+            this.tween(0.24, (k) => {
+              v.offset.copy(over).multiplyScalar(1 - easeOut(k));
               v.group.position.copy(v.home).add(v.offset);
             }),
           );
@@ -470,6 +503,7 @@ export class BattleScene implements LiveScene {
           v.hp = 0;
           v.model.play('die');
           this.hooks.died(v.uid);
+          this.burst(this.chest(v), 0xffffff, this.q.particles, 1.4);
           // đơn vị ngã rồi biến mất; hồn nhỏ bay lên
           this.later(1.5, () => {
             if (v.side === 1) this.removeView(v);
@@ -484,7 +518,13 @@ export class BattleScene implements LiveScene {
             for (const v of this.views.values()) if (v.side === 1 && v.alive) v.model.play('win');
             return;
           }
-          for (const v of this.views.values()) if (v.side === 0 && v.alive) v.model.play('win');
+          const confetti = [0xff7fa0, 0xffe14d, 0x7fd9ff, 0x7be05a];
+          let ci = 0;
+          for (const v of this.views.values()) {
+            if (v.side !== 0 || !v.alive) continue;
+            v.model.play('win');
+            this.burst(this.tmpB.copy(v.group.position).setY(v.model.height + 0.3), confetti[ci++ % 4], this.q.particles, 1.6);
+          }
         });
         break;
       }

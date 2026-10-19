@@ -4,7 +4,7 @@ import { GEAR_CAP } from '@shared/heroes/gear';
 import { AFK_CAP_MS } from '@shared/heroes/config';
 import { afkRatePerHour } from '@shared/heroes/stages';
 import { api, me } from '../../api';
-import { activeSquadIds, afkNow, defOf, highestIndex, nextStageOf } from '../../game';
+import { activeSquadIds, afkNow, defOf, highestIndex, hubBadges, nextStageOf } from '../../game';
 import { runLive } from '../../render/live';
 import { createHubScene } from '../../render/scenes';
 import { fmt, fmtDur, go, useBusy, useTicker, toast } from '../../state';
@@ -55,6 +55,7 @@ export function Hub() {
   const ids = activeSquadIds(m);
   const next = nextStageOf(m);
   const a = afkNow(m);
+  const bd = hubBadges(m);
   const leader = ids[0] ? defOf(ids[0]) : null;
 
   const start = (canvas: HTMLCanvasElement) => {
@@ -97,6 +98,22 @@ export function Hub() {
           </span>
           {a.gold > 0 && <i class="dot" />}
         </button>
+        <div class="hub-acts" aria-label="Hoạt động">
+          <button type="button" class="hub-act" onClick={() => go({ n: 'tower' })} aria-label="Tháp">
+            <Icon n="tower" size={32} />
+            <small>Tháp</small>
+            {bd.tower && <i class="dot" />}
+          </button>
+          <button type="button" class="hub-act" onClick={() => go({ n: 'quests' })} aria-label={`Nhiệm vụ${bd.quests ? `, ${bd.quests} có thể nhận` : ''}`}>
+            <Icon n="quest" size={32} />
+            <small>Nhiệm vụ</small>
+            {bd.quests > 0 && <i class="hub-badge">{bd.quests}</i>}
+          </button>
+          <button type="button" class="hub-act" onClick={() => go({ n: 'shop' })} aria-label="Cửa hàng">
+            <Icon n="shop" size={32} />
+            <small>Cửa hàng</small>
+          </button>
+        </div>
         <div class="go-wrap">
           <small class="next">Tiếp tục: {next.name}</small>
           <Btn big kind="primary" class="go-btn" onClick={() => go({ n: 'campaign', stage: next.id })}>

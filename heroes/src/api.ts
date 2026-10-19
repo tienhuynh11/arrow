@@ -26,9 +26,18 @@ import {
   type SetSquadReq,
   type SummonReq,
   type SummonRes,
+  type QuestClaimReq,
+  type QuestClaimRes,
+  type ShopBuyReq,
+  type ShopBuyRes,
   type SweepRes,
+  type TowerBattleReq,
+  type TowerBattleRes,
 } from '@shared/heroes/api';
+import { QUEST_BONUS, QUEST_BY_ID } from '@shared/heroes/quests';
+import { SHOP_BY_ID } from '@shared/heroes/shop';
 import { enhanceCost, GEAR_BY_ID, gearDefOf, salvageStones } from '@shared/heroes/gear';
+import type { Wallet } from '@shared/heroes/types';
 import { preloadHeroModels } from './render/gltf-model';
 import { store } from './settings';
 
@@ -115,6 +124,17 @@ function optimistic<T extends MutateRes>(patch: (m: MeResponse) => MeResponse | 
     },
   );
 }
+
+function walletDelta(w: Wallet, d: Partial<Wallet>, sign: 1 | -1): Wallet {
+  return {
+    gold: w.gold + sign * (d.gold ?? 0),
+    gems: w.gems + sign * (d.gems ?? 0),
+    tickets: w.tickets + sign * (d.tickets ?? 0),
+    exp: w.exp + sign * (d.exp ?? 0),
+    stones: w.stones + sign * (d.stones ?? 0),
+  };
+}
+const COST_KEYS = ['gold', 'gems', 'tickets', 'exp', 'stones'] as const;
 
 export const api = {
   async register(username: string, password: string) {
@@ -236,6 +256,59 @@ export const api = {
   battle: (r: BattleReq) => mutate<BattleRes>(ROUTES.battle, r),
   sweep: (stage: string, times: number) => mutate<SweepRes>(ROUTES.sweep, { stage, times }),
   afkClaim: () => mutate<AfkClaimRes>(ROUTES.afkClaim, {}),
+  /* ---- tháp: dùng seed của battleStart('tower') ---- */
+  towerBattle: (r: TowerBattleReq) => mutate<TowerBattleRes>(ROUTES.towerBattle, r),
+  /* ---- nhiệm vụ: cộng thưởng + đánh dấu đã nhận ngay, server đối chiếu sau (lỗi thì tải lại) ---- */
+  questClaim: (id: string) =>
+    optimistic<QuestClaimRes>(
+      (m) => {
+        const q = m.quests;
+        if (!q) return null;
+        if (id === 'bonus') {
+          if (q.bonusClaimed || !q.list.every((x) => x.claimed)) return null;
+          return { ...m, wallet: walletDelta(m.wallet, QUEST_BONUS, 1), quests: { ...q, bonusClaimed: true } };
+        }
+        const def = QUEST_BY_ID[id];
+        const st = q.list.find((x) => x.id === id);
+        if (!def || !st || st.claimed || st.progress < def.target) return null;
+        return {
+          ...m,
+          wallet: walletDelta(m.wallet, def.reward, 1),
+          quests: { ...q, list: q.list.map((x) => (x.id === id ? { ...x, claimed: true } : x)) },
+        };
+      },
+      ROUTES.questClaim,
+      { id } satisfies QuestClaimReq,
+    ),
+  /* ---- cửa hàng: trừ tiền + tăng bộ đếm ngay (rương trang bị thì chờ server báo món rớt) ---- */
+  shopBuy: (item: string, times = 1, hero?: string) =>
+    optimistic<ShopBuyRes>(
+      (m) => {
+        const it = SHOP_BY_ID[item];
+        if (!it) return null;
+        const bought = m.shop?.[item] ?? 0;
+        let n = Math.min(times, it.limit - bought);
+        for (const k of COST_KEYS) {
+          const c = it.cost[k] ?? 0;
+          if (c > 0) n = Math.min(n, Math.floor(m.wallet[k] / c));
+        }
+        if (n <= 0) return null;
+        let next: MeResponse = { ...m, shop: { ...(m.shop ?? {}), [item]: bought + n } };
+        next.wallet = walletDelta(m.wallet, Object.fromEntries(COST_KEYS.map((k) => [k, (it.cost[k] ?? 0) * n])) as Partial<Wallet>, -1);
+        const g = it.give;
+        if (g.kind === 'wallet') {
+          next.wallet = walletDelta(next.wallet, Object.fromEntries(COST_KEYS.map((k) => [k, (g.give[k] ?? 0) * n])) as Partial<Wallet>, 1);
+        } else if (g.kind === 'stamina') {
+          next = { ...next, profile: { ...next.profile, stamina: next.profile.stamina + g.amount * n } };
+        } else if (g.kind === 'shards') {
+          if (!hero || !m.heroes.some((h) => h.id === hero)) return null;
+          next = { ...next, heroes: next.heroes.map((h) => (h.id === hero ? { ...h, shards: h.shards + g.amount * n } : h)) };
+        }
+        return next;
+      },
+      ROUTES.shopBuy,
+      { item, times, hero } satisfies ShopBuyReq,
+    ),
   async leaderboard(): Promise<LeaderRow[]> {
     const r = await req<LeaderRow[] | { rows?: LeaderRow[] }>(ROUTES.leaderboard);
     return Array.isArray(r) ? r : (r?.rows ?? []);

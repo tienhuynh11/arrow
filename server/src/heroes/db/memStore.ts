@@ -1,7 +1,7 @@
 // HeroStore trong RAM — dùng cho test và khi chạy local không có DATABASE_URL (mất khi khởi động lại).
 // Mỗi thao tác chạy đồng bộ trọn vẹn trên BẢN SAO rồi mới ghi đè nên tương đương một giao dịch (ném lỗi = không ghi gì).
 
-import { assertWallet, bestStage, ledgerOf, newState, STARTER_WALLET } from '../rules.js';
+import { assertWallet, bestStage, ledgerOf, newState, rollDay, STARTER_WALLET } from '../rules.js';
 import { StoreError, type HState, type HeroStore, type LeaderEntry, type LedgerRow, type MutateOpts, type RunRow } from './store.js';
 
 export class HeroMemStore implements HeroStore {
@@ -36,6 +36,7 @@ export class HeroMemStore implements HeroStore {
       }
     }
     const before = { ...s.wallet };
+    rollDay(s, now.getTime()); // sang ngày mới: reset Tháp/nhiệm vụ/cửa hàng + tính "đăng nhập"
     const out = fn(s);
     assertWallet(s);
     for (const def of s.newGear) s.gear.push({ uid: this.nextGearUid++, def, level: 0, hero: null });

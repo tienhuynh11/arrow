@@ -4,6 +4,8 @@
 import type { BattleInput, BattleEvent } from './battle.js';
 import type { PityState, Pull } from './gacha.js';
 import type { GearInst } from './gear.js';
+import type { QuestsView } from './quests.js';
+import type { TowerState } from './tower.js';
 import type { OwnedHero, Wallet } from './types.js';
 
 export const ROUTES = {
@@ -23,6 +25,9 @@ export const ROUTES = {
   gearUnequip: 'gear-unequip',
   gearUpgrade: 'gear-upgrade',
   gearSalvage: 'gear-salvage',
+  towerBattle: 'tower-battle',
+  questClaim: 'quest-claim',
+  shopBuy: 'shop-buy',
   leaderboard: 'leaderboard',
 } as const;
 
@@ -52,6 +57,12 @@ export interface MeResponse {
   heroes: OwnedHero[];
   /** kho trang bị (kể cả món đang mặc: `hero` ≠ null) */
   gear: GearInst[];
+  /** Tháp: tầng cao nhất đã qua + lượt thử còn lại hôm nay (đã tính reset ngày) */
+  tower: TowerState;
+  /** nhiệm vụ hôm nay (đã tính reset ngày; luôn đủ mọi QUEST_DEFS) */
+  quests: QuestsView;
+  /** số lần đã mua hôm nay theo id mặt hàng (đã tính reset ngày) */
+  shop: Record<string, number>;
   /** SQUAD_COUNT đội, mỗi đội SQUAD_SIZE ô chứa id tướng ('' = trống) */
   squads: string[][];
   activeSquad: number;
@@ -182,4 +193,42 @@ export interface GearSalvageReq {
 }
 export interface GearSalvageRes extends MutateRes {
   stones: number;
+}
+
+/* ------------------------------ THÁP / NHIỆM VỤ / CỬA HÀNG ------------------------------ */
+/** đánh tầng kế tiếp (tower.floor + 1). Dùng seed từ battle-start (body `{stage:'tower'}`), server chạy lại trận như /battle.
+ *  Thua cũng tốn 1 lượt. Hết lượt → 400. */
+export interface TowerBattleReq {
+  squad: number;
+  seed: number;
+  inputs: BattleInput[];
+  auto: boolean;
+}
+export interface TowerBattleRes extends MutateRes {
+  win: boolean;
+  /** tầng vừa đánh */
+  floor: number;
+  /** thưởng thực nhận (0 nếu thua) */
+  reward: { gold: number; exp: number; xp: number; gems: number; stones: number };
+  /** id GearDef rớt (đã vào kho) */
+  drops: string[];
+  levelUp: boolean;
+}
+/** nhận thưởng một nhiệm vụ đã đủ tiến trình; id = 'bonus' để nhận thưởng thêm khi đã nhận hết */
+export interface QuestClaimReq {
+  id: string;
+}
+export interface QuestClaimRes extends MutateRes {
+  reward: Partial<Wallet>;
+}
+/** mua hàng; `hero` bắt buộc với mặt hàng mảnh tướng; `times` mặc định 1 (dừng khi chạm giới hạn ngày/hết tiền → lỗi nếu 0 lần) */
+export interface ShopBuyReq {
+  item: string;
+  times?: number;
+  hero?: string;
+}
+export interface ShopBuyRes extends MutateRes {
+  bought: number;
+  /** id GearDef nhận được (rương trang bị) */
+  drops: string[];
 }

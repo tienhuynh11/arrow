@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import pg from 'pg';
-import type { BattleRes, MeResponse, SummonRes, SweepRes, AfkClaimRes, LeaderRow } from '../../shared/heroes/api.js';
+import type { BattleRes, MeResponse, SummonRes, SweepRes, AfkClaimRes, LeaderRow, QuestClaimRes, ShopBuyRes, TowerBattleRes } from '../../shared/heroes/api.js';
 import { AFK_CAP_MS, SQUAD_SIZE, STAMINA_MAX } from '../../shared/heroes/config.js';
 import { DUPE_SHARDS, accountXpToNext, levelCapOf, levelUpCost, levelUpPlan } from '../../shared/heroes/formulas.js';
 import { HERO_BY_ID, STARTER_HEROES } from '../../shared/heroes/heroes.js';
@@ -16,12 +16,15 @@ import { _resetRateLimits } from '../src/monkey/accounts.js';
 import { loadDotEnv, useStore } from '../src/monkey/db/index.js';
 import { MemStore } from '../src/monkey/db/memStore.js';
 import { PgStore } from '../src/monkey/db/pgStore.js';
-import { handleHeroesApi, _resetHeroesApi } from '../src/heroes/api.js';
+import { handleHeroesApi, _resetHeroesApi, _setHeroesClock } from '../src/heroes/api.js';
 import { HeroMemStore } from '../src/heroes/db/memStore.js';
 import { HeroPgStore } from '../src/heroes/db/pgStore.js';
 import { useHeroStore } from '../src/heroes/db/index.js';
 import { StoreError } from '../src/heroes/db/store.js';
-import { newState, opBattle, opSummon } from '../src/heroes/rules.js';
+import { bumpQuest, newState, opBattle, opQuestClaim, opShopBuy, opSummon, opTowerBattle, rollDay } from '../src/heroes/rules.js';
+import { QUEST_BONUS, QUEST_DEFS, dayKey } from '../../shared/heroes/quests.js';
+import { SHOP_ITEMS } from '../../shared/heroes/shop.js';
+import { TOWER_MAX_FLOOR, TOWER_TRIES, towerReward } from '../../shared/heroes/tower.js';
 import { GEAR_BY_ID, GEAR_CAP, MAX_GEAR_LEVEL, STARTER_GEAR, enhanceCost, salvageStones, sumGear } from '../../shared/heroes/gear.js';
 
 let fails = 0;
@@ -571,6 +574,286 @@ console.log('— trang bị —');
   ok(walletSum(sw3.j.me), 'ví không âm');
 }
 
+/* ------------------------------------------------------------------ */
+// Nhiệm vụ / Tháp / Cửa hàng: dùng đồng hồ giả (_setHeroesClock) để thử qua ngày (reset 00:00 giờ VN = 17:00 UTC)
+const DAY = 86_400_000;
+const D0 = Date.UTC(2030, 0, 15, 17, 0, 0); // đầu một ngày VN
+let T = D0 + 3_600_000;
+_setHeroesClock(() => T);
+const ed = <U>(id: number, fn: (s: import('../src/heroes/db/store.js').HState) => U) => mem.mutate(id, new Date(T), 'test', fn);
+const claim = (tok: string, id: string) => post<QuestClaimRes>('quest-claim', { id }, tok);
+const buy = (tok: string, body: unknown) => post<ShopBuyRes>('shop-buy', body, tok);
+const qp = (m: MeResponse, id: string) => m.quests.list.find((x) => x.id === id)!;
+const strong = (id: number) => ed(id, (s) => void Object.values(s.heroes).forEach((h) => ((h.level = 60), (h.star = 5))));
+async function tfight(tok: string, extra: Record<string, unknown> = {}, squad = 0) {
+  const st = await post<{ seed: number }>('battle-start', {}, tok);
+  const r = await post<TowerBattleRes>('tower-battle', { squad, seed: st.j.seed, inputs: [], auto: true, ...extra }, tok);
+  return { seed: st.j.seed, r };
+}
+const sumW = (xs: Partial<Record<string, number>>[]) => xs.reduce((a, x) => { for (const [k, v] of Object.entries(x)) a[k] = (a[k] ?? 0) + (v ?? 0); return a; }, {} as Record<string, number>);
+
+console.log('— nhiệm vụ hằng ngày —');
+{
+  const QA = await newUser('nguoiQA');
+  const m0 = QA.me;
+  ok(m0.quests.day === dayKey(T) && m0.quests.list.length === QUEST_DEFS.length && QUEST_DEFS.every((d, i) => m0.quests.list[i].id === d.id), 'me: đủ mọi QUEST_DEFS theo thứ tự, day = dayKey(now)');
+  ok(qp(m0, 'q_login').progress === 1 && QUEST_DEFS.filter((d) => d.kind !== 'login').every((d) => qp(m0, d.id).progress === 0 && !qp(m0, d.id).claimed) && !m0.quests.bonusClaimed, 'đăng nhập tự tính 1, nhiệm vụ khác 0, chưa nhận');
+  ok(m0.tower.floor === 0 && m0.tower.tries === TOWER_TRIES && SHOP_ITEMS.every((i) => m0.shop[i.id] === 0), 'me: tháp tầng 0 đủ lượt, cửa hàng đã mua 0');
+  ok((await claim(QA.token, 'q_win')).status === 400, 'chưa đủ tiến trình → không nhận được');
+  ok((await claim(QA.token, 'bonus')).status === 400, 'chưa nhận hết → không nhận thưởng thêm');
+  ok((await claim(QA.token, 'q_khong_co')).status === 404 && (await post('quest-claim', {}, QA.token)).status === 400 && (await post('quest-claim', { id: 'q_login' })).status === 401, 'id lạ → 404, thiếu id → 400, không token → 401');
+  const w0 = (await getMe(QA.token)).wallet;
+  const c1 = await claim(QA.token, 'q_login');
+  ok(c1.status === 200 && c1.j.reward.gold === 500 && c1.j.reward.tickets === 1 && c1.j.me.wallet.gold === w0.gold + 500 && c1.j.me.wallet.tickets === w0.tickets + 1 && qp(c1.j.me, 'q_login').claimed, 'nhận Điểm danh: trả đúng thưởng, đánh dấu đã nhận');
+  const c2 = await claim(QA.token, 'q_login');
+  ok(c2.status === 400 && (await getMe(QA.token)).wallet.gold === w0.gold + 500, 'nhận lần hai → 400, không trả thêm');
+  ok(mem.ledger.some((l) => l.accountId === QA.id && l.kind === 'quest' && l.delta.gold === 500), 'ledger ghi kind quest');
+
+  // hooks
+  const QH = await newUser('nguoiQH');
+  await ed(QH.id, (s) => void (s.progress['1-1'] = { stage: '1-1', stars: 3, clears: 1 }));
+  let r: any = await post<SweepRes>('sweep', { stage: '1-1', times: 2 }, QH.token);
+  ok(qp(r.j.me, 'q_win').progress === 2, 'quét x2 → win +2');
+  r = await post<SweepRes>('sweep', { stage: '1-1', times: 5 }, QH.token);
+  ok(qp(r.j.me, 'q_win').progress === 3, 'quét thêm x5 → chặn ở target (3)');
+  const QC = await newUser('nguoiQC');
+  let wf = await fight(QC.token, '1-1');
+  for (let i = 0; i < 4 && wf.r.status === 200 && !wf.r.j.win; i++) wf = await fight(QC.token, '1-1');
+  ok(wf.r.j.win && qp(wf.r.j.me, 'q_win').progress === 1, 'thắng 1 trận chiến dịch → win +1 đúng 1');
+  const QL = await newUser('nguoiQL');
+  await ed(QL.id, (s) => {
+    for (let i = 0; i < 29; i++) s.progress[`${Math.floor(i / 10) + 1}-${(i % 10) + 1}`] = { stage: `${Math.floor(i / 10) + 1}-${(i % 10) + 1}`, stars: 1, clears: 1 };
+    s.squads[1] = [STARTER_HEROES[0], '', '', '', ''];
+  });
+  const lost = await fight(QL.token, '3-10', 1);
+  ok(lost.r.status === 200 && !lost.r.j.win && qp(lost.r.j.me, 'q_win').progress === 0, 'thua trận → không tính win');
+  // triệu hồi: x1 qua API, x10 bằng op (chặn target)
+  const sm = await S(QH.token, { count: 1 });
+  ok(qp(sm.j.me, 'q_summon').progress === 1, 'triệu hồi x1 → summon 1 (= target)');
+  {
+    const st = newState(1, T);
+    st.wallet.tickets = 50;
+    rollDay(st, T);
+    opSummon(st, 'standard', 10, 'tickets', (n) => Math.floor(Math.random() * n));
+    ok(st.quests.q_summon.progress === 1, 'x10 cộng 10 nhưng chặn ở target 1');
+    bumpQuest(st, 'win', 2);
+    bumpQuest(st, 'win', 5);
+    ok(st.quests.q_win.progress === 3, 'bumpQuest chặn ở target');
+    bumpQuest(st, 'levelup', 0);
+    ok(st.quests.q_level === undefined, 'bumpQuest n=0 không tạo hàng');
+  }
+  // lên cấp: đếm số cấp THỰC SỰ nâng
+  const QV = await newUser('nguoiQV');
+  await ed(QV.id, (s) => ((s.wallet.gold = 1_000_000), (s.wallet.exp = 1_000_000), (s.heroes[STARTER_HEROES[0]].star = 3)));
+  const l2 = await post<{ me: MeResponse; gained: number }>('level-up', { hero: STARTER_HEROES[0], times: 2 }, QV.token);
+  ok(l2.j.gained === 2 && qp(l2.j.me, 'q_level').progress === 2, 'lên 2 cấp → levelup +2');
+  const l3 = await post<{ me: MeResponse; gained: number }>('level-up', { hero: STARTER_HEROES[0], times: 4 }, QV.token);
+  ok(l3.j.gained === 4 && qp(l3.j.me, 'q_level').progress === 3, 'lên thêm 4 cấp → chặn ở target 3');
+  const QP = await newUser('nguoiQP');
+  await ed(QP.id, (s) => (s.wallet.gold = 0));
+  ok((await post('level-up', { hero: STARTER_HEROES[0] }, QP.token)).status === 400 && qp(await getMe(QP.token), 'q_level').progress === 0, 'lên cấp thất bại (hết vàng) → không cộng tiến trình');
+  // trang bị: đếm số cấp thực sự
+  const QG = await newUser('nguoiQG');
+  await ed(QG.id, (s) => ((s.wallet.gold = 1_000_000), (s.wallet.stones = 1000)));
+  const gu = QG.me.gear[0].uid;
+  const g1 = await post<{ me: MeResponse; gained: number }>('gear-upgrade', { uid: gu }, QG.token);
+  ok(g1.j.gained === 1 && qp(g1.j.me, 'q_gear').progress === 1, 'cường hoá 1 cấp → gear +1');
+  const g2 = await post<{ me: MeResponse; gained: number }>('gear-upgrade', { uid: gu, times: 3 }, QG.token);
+  ok(g2.j.gained === 3 && qp(g2.j.me, 'q_gear').progress === 2, 'cường hoá thêm 3 cấp → chặn ở target 2');
+
+  // nhận đủ mọi nhiệm vụ + thưởng thêm
+  const QB = await newUser('nguoiQB');
+  await ed(QB.id, (s) => void QUEST_DEFS.forEach((d) => (s.quests[d.id] = { progress: d.target, claimed: false })));
+  const wb = (await getMe(QB.token)).wallet;
+  const first = await claim(QB.token, 'q_win');
+  ok(first.status === 200 && first.j.me.wallet.gold === wb.gold + 800 && first.j.me.wallet.exp === wb.exp + 100, 'nhận q_win: +800 vàng +100 EXP đúng');
+  ok((await claim(QB.token, 'bonus')).status === 400, 'còn nhiệm vụ chưa nhận → bonus bị từ chối');
+  let last: any = first;
+  for (const d of QUEST_DEFS) if (d.id !== 'q_win') last = await claim(QB.token, d.id);
+  const sumRewards = sumW(QUEST_DEFS.map((d) => d.reward));
+  ok(QUEST_DEFS.every((d) => qp(last.j.me, d.id).claimed) && Object.entries(sumRewards).every(([k, v]) => last.j.me.wallet[k as 'gold'] === wb[k as 'gold'] + v), 'nhận hết: ví tăng đúng tổng thưởng mọi nhiệm vụ');
+  const bw = last.j.me.wallet;
+  const bo = await claim(QB.token, 'bonus');
+  ok(bo.status === 200 && bo.j.me.wallet.gems === bw.gems + QUEST_BONUS.gems! && bo.j.me.wallet.tickets === bw.tickets + QUEST_BONUS.tickets! && bo.j.me.quests.bonusClaimed, 'thưởng thêm sau khi nhận hết: đúng QUEST_BONUS');
+  ok((await claim(QB.token, 'bonus')).status === 400 && (await getMe(QB.token)).wallet.gems === bo.j.me.wallet.gems, 'thưởng thêm không nhận kép');
+  ok(walletSum(bo.j.me), 'ví không âm');
+
+  // qua ngày: lười, không timer
+  T += DAY;
+  const nd = await getMe(QB.token);
+  ok(nd.quests.day === dayKey(T) && nd.quests.list.every((q) => !q.claimed && q.progress === (q.id === 'q_login' ? 1 : 0)) && !nd.quests.bonusClaimed, 'qua ngày: nhiệm vụ reset (chỉ đăng nhập = 1), bonus reset — ngay cả khi mới chỉ xem');
+  ok(nd.tower.tries === TOWER_TRIES && SHOP_ITEMS.every((i) => nd.shop[i.id] === 0), 'qua ngày: lượt tháp + cửa hàng reset');
+  const again = await claim(QB.token, 'q_login');
+  ok(again.status === 200 && again.j.me.wallet.gold === nd.wallet.gold + 500, 'ngày mới nhận Điểm danh được lại');
+  const row = await mem.view(QB.id, new Date(T), (s) => s);
+  ok(row.day === dayKey(T) && Object.keys(row.quests).length <= QUEST_DEFS.length && !row.questBonus, 'trạng thái ngày cũ đã bị dọn khi ghi');
+  // nhảy xa nhiều ngày vẫn ổn
+  T += 5 * DAY;
+  const far = qp(await getMe(QB.token), 'q_login');
+  ok(far.progress === 1 && !far.claimed, 'nhảy 5 ngày: vẫn reset đúng');
+  T -= 5 * DAY;
+}
+
+console.log('— Tháp —');
+{
+  const TW = await newUser('nguoiTW');
+  await strong(TW.id);
+  ok((await post('tower-battle', { squad: 0, seed: 123, inputs: [], auto: true }, TW.token)).status === 400 && (await getMe(TW.token)).tower.tries === TOWER_TRIES, 'chưa có seed → 400, không tốn lượt');
+  ok((await post('tower-battle', { squad: 0, seed: 123, inputs: [], auto: true })).status === 401, 'không token → 401');
+  const m0 = await getMe(TW.token);
+  const f1 = await tfight(TW.token);
+  const r1 = towerReward(1);
+  ok(f1.r.status === 200 && f1.r.j.win && f1.r.j.floor === 1, 'đội mạnh thắng tầng 1');
+  ok(f1.r.j.reward.gold === r1.gold && f1.r.j.reward.exp === r1.exp && f1.r.j.reward.xp === r1.xp && f1.r.j.reward.gems === 0 && f1.r.j.reward.stones === 0, 'thưởng đúng towerReward(1)');
+  ok(f1.r.j.me.wallet.gold === m0.wallet.gold + r1.gold && f1.r.j.me.wallet.exp === m0.wallet.exp + r1.exp, 'ví cộng đúng vàng + EXP bình');
+  ok(f1.r.j.levelUp || f1.r.j.me.profile.xp === m0.profile.xp + r1.xp, 'XP tài khoản cộng đúng');
+  ok(f1.r.j.me.tower.floor === 1 && f1.r.j.me.tower.tries === TOWER_TRIES - 1 && f1.r.j.drops.length === 0 && f1.r.j.me.gear.length === m0.gear.length, 'thắng: lên tầng 1, còn 4 lượt, tầng thường không rớt đồ');
+  ok(mem.runs.some((x) => x.accountId === TW.id && x.stage === 't-1' && x.win), 'ghi h_runs stage t-1');
+  ok(mem.ledger.some((l) => l.accountId === TW.id && l.kind === 'tower' && l.delta.gold === r1.gold), 'ledger kind tower');
+  const reuse = await post('tower-battle', { squad: 0, seed: f1.seed, inputs: [], auto: true }, TW.token);
+  ok(reuse.status === 400 && (await getMe(TW.token)).tower.tries === TOWER_TRIES - 1, 'seed dùng lại → 400, không tốn lượt');
+  const f2 = await tfight(TW.token, { floor: 50, stage: 't-99' });
+  ok(f2.r.j.floor === 2 && f2.r.j.me.tower.floor === 2, 'client gửi floor/stage giả bị bỏ qua: chỉ đánh tầng kế tiếp');
+  await tfight(TW.token);
+  await tfight(TW.token);
+  const gBefore = (await getMe(TW.token)).gear.length;
+  const w4 = (await getMe(TW.token)).wallet;
+  const f5 = await tfight(TW.token);
+  const r5 = towerReward(5);
+  ok(f5.r.j.win && f5.r.j.floor === 5 && f5.r.j.reward.gems === r5.gems && f5.r.j.me.wallet.gems === w4.gems + r5.gems && f5.r.j.me.wallet.gold === w4.gold + r5.gold, 'tầng 5: +50 kim cương + vàng đúng');
+  ok(f5.r.j.drops.length >= 1 && f5.r.j.drops.length <= 2 && f5.r.j.me.gear.length === gBefore + f5.r.j.drops.length && f5.r.j.drops.every((d) => !!GEAR_BY_ID[d]), 'tầng 5: rớt 1–2 món, vào kho đúng số');
+  ok(f5.r.j.me.tower.tries === 0 && qp(f5.r.j.me, 'q_tower').progress === 1, 'hết 5 lượt; nhiệm vụ Tháp = 1 (chặn target)');
+  const f6 = await tfight(TW.token);
+  ok(f6.r.status === 400 && /lượt/.test((f6.r.j as any).error ?? '') && (await getMe(TW.token)).tower.floor === 5, 'hết lượt → 400, tầng không đổi');
+  T += DAY;
+  const nm = await getMe(TW.token);
+  ok(nm.tower.tries === TOWER_TRIES && nm.tower.floor === 5, 'qua ngày: lượt về 5, tầng giữ nguyên');
+  const f6b = await tfight(TW.token);
+  ok(f6b.r.j.win && f6b.r.j.floor === 6 && f6b.r.j.me.tower.tries === TOWER_TRIES - 1, 'ngày mới đánh tiếp tầng 6, tốn 1 lượt');
+  // thua vẫn tốn lượt
+  const TL = await newUser('nguoiTL');
+  await ed(TL.id, (s) => void (s.towerFloor = 59));
+  const lw = (await getMe(TL.token)).wallet;
+  const lf = await tfight(TL.token);
+  ok(lf.r.status === 200 && !lf.r.j.win && lf.r.j.floor === 60 && lf.r.j.me.tower.floor === 59 && lf.r.j.me.tower.tries === TOWER_TRIES - 1, 'thua: vẫn tốn 1 lượt, không lên tầng');
+  ok(lf.r.j.reward.gold === 0 && lf.r.j.drops.length === 0 && JSON.stringify(lf.r.j.me.wallet) === JSON.stringify(lw) && qp(lf.r.j.me, 'q_tower').progress === 1, 'thua: không thưởng, nhưng nhiệm vụ Tháp vẫn tính');
+  ok(mem.runs.some((x) => x.accountId === TL.id && x.stage === 't-60' && !x.win), 'ghi h_runs thua t-60');
+  for (let i = 0; i < 4; i++) await tfight(TL.token);
+  const lz = await tfight(TL.token);
+  ok(lz.r.status === 400 && (await getMe(TL.token)).tower.tries === 0, 'thua đủ 5 lần → hết lượt');
+  // tầng boss (10): 2 lần rớt đồ + đá
+  const TB = await newUser('nguoiTB');
+  await strong(TB.id);
+  await ed(TB.id, (s) => void (s.towerFloor = 9));
+  const bw = await getMe(TB.token);
+  const fb = await tfight(TB.token);
+  const rb = towerReward(10);
+  ok(fb.r.j.win && fb.r.j.floor === 10 && fb.r.j.reward.gems === 100 && fb.r.j.reward.stones === 10 && fb.r.j.me.wallet.stones === bw.wallet.stones + 10 && fb.r.j.me.wallet.gems === bw.wallet.gems + 100, 'tầng 10: +100 kim cương +10 đá');
+  ok(rb.gearRolls === 2 && fb.r.j.drops.length >= 4 && fb.r.j.drops.length <= 6 && fb.r.j.me.gear.length === bw.gear.length + fb.r.j.drops.length, 'tầng 10: 2 lần rớt (boss) → 4–6 món vào kho');
+  // kho đầy: dư đổi ra đá, drops chỉ liệt kê món đã vào
+  await ed(TB.id, (s) => {
+    s.towerFloor = 4;
+    while (s.gear.length + s.newGear.length < GEAR_CAP) s.newGear.push('helmet_forest_R');
+  });
+  const cw = await getMe(TB.token);
+  const fc = await tfight(TB.token);
+  ok(fc.r.j.win && fc.r.j.drops.length === 0 && fc.r.j.me.gear.length === GEAR_CAP && fc.r.j.me.wallet.stones >= cw.wallet.stones + 2, 'kho đầy: không món nào vào kho, đổi ra đá');
+  // tầng tối đa
+  await ed(TB.id, (s) => void (s.towerFloor = TOWER_MAX_FLOOR));
+  const t0 = (await getMe(TB.token)).tower.tries;
+  const mx = await tfight(TB.token);
+  ok(mx.r.status === 400 && /chinh phục/.test((mx.r.j as any).error ?? '') && (await getMe(TB.token)).tower.tries === t0, 'đã hết tháp → 400, không tốn lượt');
+  ok(walletSum(await getMe(TB.token)), 'ví không âm');
+  // đội rỗng
+  const TE = await newUser('nguoiTE');
+  const em = await tfight(TE.token, {}, 2);
+  ok(em.r.status === 400 && (await getMe(TE.token)).tower.tries === TOWER_TRIES, 'đội rỗng → 400, không tốn lượt');
+}
+
+console.log('— cửa hàng —');
+{
+  const SH = await newUser('nguoiSH');
+  const rich = () => ed(SH.id, (s) => ((s.wallet.gold = 1_000_000), (s.wallet.gems = 100_000), (s.wallet.tickets = 0)));
+  await rich();
+  const b0 = await getMe(SH.token);
+  const p1 = await buy(SH.token, { item: 'exp_pack', times: 3 });
+  ok(p1.status === 200 && p1.j.bought === 3 && p1.j.me.wallet.gold === b0.wallet.gold - 1800 && p1.j.me.wallet.exp === b0.wallet.exp + 600 && p1.j.me.shop.exp_pack === 3, 'mua Bình EXP x3: trừ 1800 vàng, +600 EXP, đếm 3');
+  const p2 = await buy(SH.token, { item: 'exp_pack' });
+  ok(p2.j.bought === 1 && p2.j.me.shop.exp_pack === 4, 'times mặc định 1');
+  const p3 = await buy(SH.token, { item: 'exp_pack', times: 100 });
+  ok(p3.status === 200 && p3.j.bought === 6 && p3.j.me.shop.exp_pack === 10, 'vượt giới hạn ngày: chỉ mua phần còn lại (6), tổng 10');
+  const p4 = await buy(SH.token, { item: 'exp_pack' });
+  ok(p4.status === 400 && (await getMe(SH.token)).shop.exp_pack === 10, 'hết giới hạn ngày → 400');
+  ok((await buy(SH.token, { item: 'khong_co' })).status === 404 && (await buy(SH.token, { item: 'exp_pack', times: 0 })).status === 400 && (await buy(SH.token, { item: 'exp_pack', times: 101 })).status === 400 && (await buy(SH.token, { item: 'exp_pack', times: 1.5 })).status === 400 && (await buy(SH.token, {})).status === 400 && (await buy('x', { item: 'exp_pack' })).status === 401, 'mặt hàng lạ 404; times sai / thiếu item 400; token sai 401');
+  // mua một phần khi thiếu tiền
+  await ed(SH.id, (s) => ((s.wallet.gold = 7000), (s.wallet.stones = 0), (s.shop = {})));
+  const pp = await buy(SH.token, { item: 'stone_pack', times: 10 });
+  ok(pp.status === 200 && pp.j.bought === 4 && pp.j.me.wallet.gold === 1000 && pp.j.me.wallet.stones === 40 && pp.j.me.shop.stone_pack === 4, 'thiếu tiền: mua 4/10 (1500 vàng/gói), ví còn 1000, +40 đá');
+  await ed(SH.id, (s) => (s.wallet.gold = 100));
+  const zero = await buy(SH.token, { item: 'stone_pack' });
+  const wz = await getMe(SH.token);
+  ok(zero.status === 400 && wz.wallet.gold === 100 && wz.shop.stone_pack === 4 && walletSum(wz), 'không đủ tiền cho 1 lần → 400, ví giữ nguyên, không âm');
+  ok(mem.ledger.some((l) => l.accountId === SH.id && l.kind === 'shop' && (l.delta.gold ?? 0) < 0), 'ledger kind shop');
+  // mảnh tướng: cần tướng đã sở hữu
+  await rich();
+  const sh0 = (await getMe(SH.token)).heroes.find((h) => h.id === STARTER_HEROES[0])!.shards;
+  const g0 = (await getMe(SH.token)).wallet.gold;
+  ok((await buy(SH.token, { item: 'shard_pack' })).status === 400 && (await buy(SH.token, { item: 'shard_pack', hero: missing })).status === 400 && (await getMe(SH.token)).wallet.gold === g0, 'mảnh tướng: thiếu hero / hero chưa sở hữu → 400, không trừ tiền');
+  const sp = await buy(SH.token, { item: 'shard_pack', hero: STARTER_HEROES[0], times: 2 });
+  ok(sp.status === 200 && sp.j.bought === 2 && sp.j.me.heroes.find((h) => h.id === STARTER_HEROES[0])!.shards === sh0 + 20 && sp.j.me.wallet.gold === g0 - 5000, 'mảnh tướng x2: +20 mảnh, -5000 vàng');
+  // vé: item ví khác
+  const tk = await buy(SH.token, { item: 'ticket_pack', times: 3 });
+  ok(tk.j.me.wallet.tickets === 3 && tk.j.bought === 3, 'vé triệu hồi x3');
+  // thể lực: vượt trần được, không hồi/decay
+  await rich();
+  const st1 = await buy(SH.token, { item: 'stamina_pack' });
+  ok(st1.status === 200 && st1.j.me.profile.stamina === STAMINA_MAX + 60, `thể lực đầy ${STAMINA_MAX} + 60 = ${STAMINA_MAX + 60} (vượt trần)`);
+  T += 3 * 3_600_000;
+  ok((await getMe(SH.token)).profile.stamina === STAMINA_MAX + 60, 'phần vượt trần giữ nguyên theo thời gian');
+  const st2 = await buy(SH.token, { item: 'stamina_pack', times: 5 });
+  ok(st2.j.bought === 2 && st2.j.me.profile.stamina === STAMINA_MAX + 180, 'giới hạn 3/ngày: mua thêm 2 → +120, tổng +180');
+  await ed(SH.id, (s) => ((s.progress['1-1'] = { stage: '1-1', stars: 3, clears: 1 }), (s.wallet.gold = 1000)));
+  const swp = await post<SweepRes>('sweep', { stage: '1-1', times: 2 }, SH.token);
+  ok(swp.status === 200 && swp.j.me.profile.stamina === STAMINA_MAX + 180 - 12, 'quét tiêu từ phần vượt trần đúng');
+  const SL = await newUser('nguoiSL');
+  await ed(SL.id, (s) => ((s.stamina = 50), (s.staminaAt = T), (s.wallet.gems = 1000)));
+  const sl = await buy(SL.token, { item: 'stamina_pack' });
+  ok(sl.j.me.profile.stamina === 110, 'thể lực 50 + 60 = 110');
+  T += 6 * 60_000;
+  ok((await getMe(SL.token)).profile.stamina === 111, 'dưới trần vẫn tiếp tục hồi (1 điểm / 6 phút)');
+  T += 3_600_000;
+  ok((await getMe(SL.token)).profile.stamina === STAMINA_MAX, 'rồi dừng ở trần, không vượt');
+  // rương trang bị
+  await rich();
+  const cg0 = await getMe(SH.token);
+  const ch = await buy(SH.token, { item: 'gear_chest' });
+  ok(ch.status === 200 && ch.j.bought === 1 && ch.j.drops.length === 1 && !!GEAR_BY_ID[ch.j.drops[0]] && ch.j.me.gear.length === cg0.gear.length + 1 && ch.j.me.gear[ch.j.me.gear.length - 1].def === ch.j.drops[0] && ch.j.me.wallet.gems === cg0.wallet.gems - 200, 'rương trang bị: +1 món vào kho, -200 kim cương');
+  const ch3 = await buy(SH.token, { item: 'gear_chest', times: 3 });
+  ok(ch3.j.bought === 3 && ch3.j.drops.length === 3 && ch3.j.me.gear.length === cg0.gear.length + 4, 'rương x3: 3 món');
+  await ed(SH.id, (s) => {
+    s.shop = {};
+    while (s.gear.length + s.newGear.length < GEAR_CAP) s.newGear.push('helmet_forest_R');
+  });
+  const capW = (await getMe(SH.token)).wallet;
+  const cc = await buy(SH.token, { item: 'gear_chest', times: 2 });
+  ok(cc.status === 200 && cc.j.bought === 2 && cc.j.drops.length === 0 && cc.j.me.gear.length === GEAR_CAP && cc.j.me.wallet.stones >= capW.stones + 4 && cc.j.me.wallet.gems === capW.gems - 400, 'kho đầy: rương vẫn bán, món đổi ra đá, drops rỗng');
+  // sang ngày mới → mua lại được
+  await ed(SH.id, (s) => (s.shop = { exp_pack: 10 }));
+  ok((await buy(SH.token, { item: 'exp_pack' })).status === 400, 'đang đạt giới hạn');
+  T += DAY;
+  const nd = await getMe(SH.token);
+  ok(nd.shop.exp_pack === 0, 'qua ngày: bộ đếm mua reset');
+  await rich();
+  ok((await buy(SH.token, { item: 'exp_pack', times: 2 })).j.bought === 2, 'qua ngày mua lại được');
+  ok(walletSum(await getMe(SH.token)), 'ví không âm sau chuỗi mua');
+  // song song: không vượt giới hạn
+  await ed(SH.id, (s) => ((s.shop = {}), (s.wallet.gold = 1_000_000)));
+  const par = await Promise.all(Array.from({ length: 4 }, () => buy(SH.token, { item: 'ticket_pack', times: 2 })));
+  const bs = par.filter((x) => x.status === 200).reduce((a, x) => a + x.j.bought, 0);
+  ok(bs === 3 && (await getMe(SH.token)).shop.ticket_pack === 3, 'mua song song: tổng đúng bằng giới hạn ngày (3)');
+}
+_setHeroesClock(null);
+
 ok(mem.ledger.every((l) => Object.values(l.delta).every((v) => Number.isInteger(v))), 'ledger toàn số nguyên');
 server.close();
 
@@ -662,6 +945,51 @@ if (process.env.DATABASE_URL) {
     ok(rb && (await hs.view(id, nowD, (s) => s.gear.length)) === 5, 'PG: lỗi giữa chừng → rollback cả thao tác trang bị');
     const gl = (await q(`SELECT count(*)::int AS n FROM $Sh_gear WHERE account_id=$1`, [id])).rows[0].n;
     ok(gl === 5, 'PG: bảng h_gear có đúng 5 dòng của tài khoản');
+    // v3: tháp + nhiệm vụ + cửa hàng, qua ngày (đồng hồ truyền thẳng vào store)
+    {
+      const d1 = new Date(Date.UTC(2031, 5, 1, 3, 0, 0));
+      const d2 = new Date(d1.getTime() + 86_400_000);
+      await hs.mutate(id, d1, 'test', (s) => {
+        s.wallet.gold += 100000;
+        s.towerFloor = 7;
+        s.towerTries -= 2;
+      });
+      await hs.mutate(id, d1, 'shop', (s) => void opShopBuy(s, d1.getTime(), 'exp_pack', 3, undefined, rnd));
+      const v1 = await hs.view(id, d1, (s) => s);
+      ok(v1.towerFloor === 7 && v1.towerTries === TOWER_TRIES - 2 && v1.shop.exp_pack === 3 && v1.day === dayKey(d1.getTime()) && v1.quests.q_login?.progress === 1, 'PG: tháp / mua hàng / đăng nhập được lưu và nạp lại');
+      await hs.mutate(id, d1, 'quest', (s) => void opQuestClaim(s, 'q_login'));
+      const q1 = (await q(`SELECT quest_id, claimed FROM $Sh_quest WHERE account_id=$1`, [id])).rows;
+      ok(q1.length === 1 && q1[0].quest_id === 'q_login' && q1[0].claimed, 'PG: h_quest ghi nhận thưởng đã nhận');
+      await hs.mutate(id, d1, 'test', (s) => void QUEST_DEFS.forEach((d) => (s.quests[d.id] = { progress: d.target, claimed: true })));
+      await hs.mutate(id, d1, 'quest', (s) => void opQuestClaim(s, 'bonus'));
+      ok((await hs.view(id, d1, (s) => s.questBonus)) === true && (await q(`SELECT 1 FROM $Sh_quest WHERE account_id=$1 AND quest_id='bonus'`, [id])).rows.length === 1, 'PG: thưởng thêm lưu bằng hàng quest_id=bonus');
+      const mid = await hs.view(id, d2, (s) => s);
+      ok(mid.day !== dayKey(d2.getTime()), 'PG: view không ghi (ngày cũ vẫn nằm trong DB cho tới thao tác ghi kế)');
+      await hs.mutate(id, d2, 'test', (s) => void (s.wallet.gold += 1));
+      const v2 = await hs.view(id, d2, (s) => s);
+      ok(v2.day === dayKey(d2.getTime()) && v2.towerFloor === 7 && v2.towerTries === TOWER_TRIES && v2.towerDay === dayKey(d2.getTime()) && !v2.questBonus && Object.keys(v2.shop).length === 0 && v2.quests.q_login?.progress === 1 && !v2.quests.q_login.claimed, 'PG: qua ngày reset lượt tháp / nhiệm vụ / bonus / cửa hàng, giữ tầng');
+      const old = (await q(`SELECT (SELECT count(*)::int FROM $Sh_quest WHERE account_id=$1 AND day<>$2) AS a, (SELECT count(*)::int FROM $Sh_shop_buy WHERE account_id=$1 AND day<>$2) AS b`, [id, dayKey(d2.getTime())])).rows[0];
+      ok(old.a === 0 && old.b === 0, 'PG: hàng của ngày cũ đã bị xoá');
+      // thua tháp: đội yếu — tốn lượt, không lên tầng, ghi h_runs 't-N'
+      await hs.mutate(id, d2, 'test', (s) => {
+        for (const h of Object.values(s.heroes)) (h.level = 1), (h.star = 1);
+        s.towerFloor = 59;
+      });
+      const to = await hs.mutate(id, d2, 'tower', (s) => opTowerBattle(s, 0, 4242, [], true, rnd));
+      const v3 = await hs.view(id, d2, (s) => s);
+      ok(!to.win && v3.towerFloor === 59 && v3.towerTries === TOWER_TRIES - 1 && v3.quests.q_tower?.progress === 1, 'PG: thua tháp vẫn tốn lượt + tính nhiệm vụ');
+      ok((await q(`SELECT count(*)::int AS n FROM $Sh_runs WHERE account_id=$1 AND stage='t-60' AND win=false`, [id])).rows[0].n === 1, 'PG: ghi h_runs t-60');
+      let sh = false;
+      try {
+        await hs.mutate(id, d2, 'shop', (s) => {
+          s.wallet.gold = 0;
+          opShopBuy(s, d2.getTime(), 'exp_pack', 1, undefined, rnd);
+        });
+      } catch {
+        sh = true;
+      }
+      ok(sh && (await hs.view(id, d2, (s) => s.wallet.gold)) > 0, 'PG: mua thiếu tiền → lỗi, rollback');
+    }
   } catch (e) {
     ok(false, 'PG: lỗi ' + (e instanceof Error ? e.message.replace(/postgres(?:ql)?:\/\/\S+/gi, '<url>') : String(e)));
   } finally {

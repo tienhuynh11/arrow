@@ -10,7 +10,7 @@ type IconName =
   | 'battle' | 'gear' | 'back' | 'lock' | 'close' | 'check' | 'pause' | 'play' | 'ffwd' | 'auto' | 'sword' | 'shield' | 'heart'
   | 'clock' | 'up' | 'down' | 'leaf' | 'rock' | 'drop' | 'sun' | 'moon' | 'wand' | 'bow' | 'plus' | 'note' | 'crown'
   | 'sparkle' | 'logout' | 'info' | 'chest' | 'skip' | 'user' | 'sound' | 'mute' | 'filter' | 'search'
-  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag';
+  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop';
 
 const PATHS: Record<IconName, JSX.Element> = {
   gold: (
@@ -266,6 +266,31 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M5 8.500A3 3 0 0 1 8 6h8a3 3 0 0 1 3 2.500L20 19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" fill="#d79a5b" {...st} />
       <path d="M8 13h8v3.500H8z" fill="#f2c88f" stroke={INK} stroke-width="1.400" stroke-linejoin="round" />
       <path d="M12 12v2.500" stroke={INK} stroke-width="1.600" stroke-linecap="round" />
+    </>
+  ),
+  tower: (
+    <>
+      <path d="M6 9V3.5h2.6V6h2V3.5h2.8V6h2V3.5H18V9z" fill="#9db2d6" {...st} />
+      <path d="M7 9h10v12H7z" fill="#c9d3e6" {...st} />
+      <path d="M10.2 21v-4a1.8 1.8 0 0 1 3.6 0v4" fill="#8a4ee0" stroke={INK} stroke-width="1.4" stroke-linejoin="round" />
+      <path d="M9.5 12.2h1.6M13 12.2h1.6" stroke={INK} stroke-width="1.8" stroke-linecap="round" />
+      <path d="M12 3.5V1" stroke={INK} stroke-width="1.6" stroke-linecap="round" />
+      <path d="M12 1.2h4l-1.2 1.2L16 3.6h-4z" fill="#ff5c6c" stroke={INK} stroke-width="1" stroke-linejoin="round" />
+    </>
+  ),
+  quest: (
+    <>
+      <rect x="4.5" y="3" width="15" height="18" rx="2.5" fill="#fff3c4" {...st} />
+      <path d="M8 8.2l1.3 1.3 2.2-2.4M8 14l1.3 1.3 2.2-2.4" fill="none" stroke="#35b84a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M13.5 8.5h3M13.5 14.3h3" stroke={INK} stroke-width="1.8" stroke-linecap="round" />
+    </>
+  ),
+  shop: (
+    <>
+      <path d="M4.5 10.5V20h15v-9.5" fill="#ffd9a0" {...st} />
+      <path d="M3 10 4.8 4h14.4L21 10z" fill="#ff7a7a" {...st} />
+      <path d="M3 10a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" fill="#fff" stroke={INK} stroke-width="1.8" stroke-linejoin="round" />
+      <rect x="9.5" y="14" width="5" height="6" rx="1" fill="#3fa7ff" stroke={INK} stroke-width="1.4" />
     </>
   ),
 };

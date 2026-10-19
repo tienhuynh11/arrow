@@ -10,6 +10,10 @@ import { mulberry32 } from '../../shared/heroes/rng.js';
 import { SKILL_LIST, skillOf } from '../../shared/heroes/skills.js';
 import { STAGES, afkReward, staminaNow, stageSetup, starsOf } from '../../shared/heroes/stages.js';
 import type { OwnedHero } from '../../shared/heroes/types.js';
+import { MONSTERS } from '../../shared/heroes/stages.js';
+import { QUEST_DEFS, dayKey, nextDayStart } from '../../shared/heroes/quests.js';
+import { SHOP_ITEMS } from '../../shared/heroes/shop.js';
+import { TOWER_MAX_FLOOR, towerReward, towerStage } from '../../shared/heroes/tower.js';
 
 let fails = 0;
 const ok = (cond: boolean, msg: string) => {
@@ -260,6 +264,57 @@ console.log('— trang bị (gear.ts) —');
   ok(STARTER_GEAR.length === 4 && STARTER_GEAR.every((id) => GEAR_BY_ID[id]?.rarity === 'R') && new Set(STARTER_GEAR.map((id) => GEAR_BY_ID[id].slot)).size === 4, 'quà khởi đầu: 4 món R, mỗi ô một món');
   const base = heroUnit(owned(STARTER_HEROES[0]), 0), boosted = heroUnit(owned(STARTER_HEROES[0]), 0, { hp: 100, atk: 10, def: 5, spd: 0 });
   ok(boosted.stats.hp === base.stats.hp + 100 && boosted.stats.atk === base.stats.atk + 10 && boosted.stats.def === base.stats.def + 5, 'heroUnit cộng bonus trang bị');
+}
+
+console.log('— Tháp / mốc ngày —');
+{
+  ok(JSON.stringify(towerStage(37)) === JSON.stringify(towerStage(37)) && towerStage(1).id === 't-1' && towerStage(100).id === 't-100', 'towerStage deterministic, id t-N');
+  ok(towerStage(0).n === 1 && towerStage(999).n === TOWER_MAX_FLOOR, 'towerStage chặn tầng ngoài 1..100');
+  let valid = true, mon = true, sizes = true, bossOk = true;
+  let prevGold = -1, mono = true;
+  for (let f = 1; f <= TOWER_MAX_FLOOR; f++) {
+    const st = towerStage(f);
+    if (st.n !== f || st.index !== f - 1 || st.waves.length !== (f % 10 === 0 ? 3 : 2) || st.chapter < 1 || st.chapter > 3 || st.level < 1 || st.level > 60 || st.diff <= 0) valid = false;
+    for (const w of st.waves) {
+      if (w.length < 2 || w.length > 5) sizes = false;
+      for (const m of w) if (!MONSTERS.some((x) => x.id === m)) mon = false;
+    }
+    if (st.boss !== (f % 10 === 0) || (st.boss && st.waves[st.waves.length - 1][0] !== 'mk_chua')) bossOk = false;
+    const r = towerReward(f);
+    if (r.gold <= prevGold) mono = false;
+    prevGold = r.gold;
+  }
+  ok(valid, '100 tầng đều dựng StageDef hợp lệ (đợt, chương, cấp, độ khó)');
+  ok(sizes && mon, 'mọi đợt 2..5 quái, quái đều có trong MONSTERS');
+  ok(bossOk, 'tầng bội 10 là boss (3 đợt, đợt cuối có mk_chua)');
+  ok(mono, 'vàng thưởng tăng dần theo tầng');
+  ok(towerReward(5).gearRolls === 1 && towerReward(10).gearRolls === 2 && towerReward(7).gearRolls === 0 && towerReward(10).stones === 10 && towerReward(5).gems === 50 && towerReward(10).gems === 100, 'thưởng mốc tầng 5/10');
+  const d17 = Date.UTC(2030, 0, 15, 17, 0, 0);
+  ok(dayKey(d17 - 1) + 1 === dayKey(d17) && dayKey(d17) === dayKey(d17 + 86_399_999) && dayKey(d17 + 86_400_000) === dayKey(d17) + 1, 'dayKey đổi đúng lúc 17:00 UTC (00:00 giờ VN)');
+  ok(nextDayStart(d17 - 1) === d17 && nextDayStart(d17) === d17 + 86_400_000 && nextDayStart(d17 + 5000) === d17 + 86_400_000, 'nextDayStart = đầu ngày kế tiếp');
+  ok(QUEST_DEFS.length >= 5 && new Set(QUEST_DEFS.map((q) => q.id)).size === QUEST_DEFS.length && SHOP_ITEMS.every((i) => i.limit > 0), 'định nghĩa nhiệm vụ / cửa hàng hợp lệ');
+}
+
+console.log('— cân bằng Tháp (báo cáo, không ép chặt) —');
+{
+  const teamAt = (lv: number, star: number) => STARTER_HEROES.map((id, i) => heroUnit(owned(id, lv, star), i));
+  const floors = [1, 5, 10, 20, 30, 40, 50, 60, 80, 100];
+  const need: Record<number, number> = {};
+  for (const f of floors) {
+    let lv = 1;
+    for (; lv <= 60; lv++) {
+      if (simulate(stageSetup(towerStage(f), teamAt(lv, Math.min(5, 1 + Math.floor(lv / 12))), 500 + f), [], true).win) break;
+    }
+    need[f] = lv;
+  }
+  console.log('  cấp tối thiểu của đội khởi đầu (sao theo cấp) để qua tầng:', floors.map((f) => `${f}:${need[f] > 60 ? '>60' : need[f]}`).join('  '));
+  const wins100 = [1, 2, 3, 4, 5].filter((k) => simulate(stageSetup(towerStage(100), teamAt(60, 5), 900 + k), [], true).win).length;
+  const wins10 = [1, 2, 3].filter((k) => simulate(stageSetup(towerStage(10), teamAt(1, 1), 700 + k), [], true).win).length;
+  console.log(`  đội cấp 60, 5 sao, không trang bị thắng tầng 100: ${wins100}/5 seed; đội cấp 1 thắng tầng 10: ${wins10}/3 seed`);
+  if (wins100 > 0) console.log('  CẢNH BÁO: tầng 100 bị đội cấp 60 5 sao không đồ hạ được (quá dễ)');
+  if (need[10] > 40) console.log('  CẢNH BÁO: tầng 10 cần cấp > 40 (quá khó)');
+  ok(need[1] <= 5, 'tầng 1 dễ (đội khởi đầu cấp ≤ 5 là qua)');
+  ok(need[100] >= need[10], 'tầng cao khó hơn tầng thấp');
 }
 
 console.log(fails ? `\n${fails} LỖI` : '\nTất cả đạt');

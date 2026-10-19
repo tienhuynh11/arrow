@@ -5,6 +5,8 @@ import { HERO_BY_ID, HEROES } from '@shared/heroes/heroes';
 import { afkReward, STAGES, type StageDef } from '@shared/heroes/stages';
 import type { EffectType, HeroDef, OwnedHero, SkillDef, SkillTarget, Stats } from '@shared/heroes/types';
 import type { MeResponse } from '@shared/heroes/api';
+import { QUEST_DEFS, type QuestState } from '@shared/heroes/quests';
+import { TOWER_MAX_FLOOR } from '@shared/heroes/tower';
 import { addStats, enhanceCost, gearDefOf, gearStats, GEAR_BY_ID, GEAR_SLOTS, sumGear, ZERO_STATS, type GearInst, type GearSlot } from '@shared/heroes/gear';
 import { me, serverNow } from './api';
 
@@ -144,4 +146,42 @@ export function describeSkill(s: SkillDef): string {
 
 export function defOf(id: string): HeroDef {
   return HERO_BY_ID[id];
+}
+
+/* ------------------------------ THÁP / NHIỆM VỤ / CỬA HÀNG (phòng thủ: server cũ có thể chưa trả các trường này) ------------------------------ */
+export function towerOf(m: MeResponse): { floor: number; tries: number } {
+  const t = m.tower;
+  return { floor: Math.max(0, Math.min(TOWER_MAX_FLOOR, t?.floor ?? 0)), tries: Math.max(0, t?.tries ?? 0) };
+}
+/** tháp còn đánh được (còn lượt và chưa hết tầng) */
+export function towerPlayable(m: MeResponse): boolean {
+  const t = towerOf(m);
+  return t.tries > 0 && t.floor < TOWER_MAX_FLOOR;
+}
+/** luôn đủ mọi nhiệm vụ trong QUEST_DEFS, theo đúng thứ tự */
+export function questList(m: MeResponse): (QuestState & { claimable: boolean })[] {
+  const by = new Map((m.quests?.list ?? []).map((q) => [q.id, q]));
+  return QUEST_DEFS.map((d) => {
+    const q = by.get(d.id);
+    const progress = q?.progress ?? 0;
+    const claimed = !!q?.claimed;
+    return { id: d.id, progress, claimed, claimable: !claimed && progress >= d.target };
+  });
+}
+export function bonusState(m: MeResponse): { claimed: boolean; claimable: boolean } {
+  const claimed = !!m.quests?.bonusClaimed;
+  return { claimed, claimable: !claimed && questList(m).every((q) => q.claimed) };
+}
+/** số mục có thể nhận (nhiệm vụ + rương thưởng thêm) */
+export function questClaimable(m: MeResponse): number {
+  return questList(m).filter((q) => q.claimable).length + (bonusState(m).claimable ? 1 : 0);
+}
+export function shopBought(m: MeResponse): Record<string, number> {
+  return m.shop ?? {};
+}
+/** chấm đỏ ở Hub: Tháp còn lượt, nhiệm vụ có thể nhận (cửa hàng không có chấm) */
+export function hubBadges(m: MeResponse): { tower: boolean; quests: number; total: number } {
+  const tower = towerPlayable(m);
+  const quests = questClaimable(m);
+  return { tower, quests, total: (tower ? 1 : 0) + quests };
 }

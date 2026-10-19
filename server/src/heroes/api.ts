@@ -14,13 +14,20 @@ import { login, logout, register, resolveToken } from '../monkey/accounts.js';
 import { storeReady } from '../monkey/db/index.js';
 import { StoreError, heroStoreReady, type HState, type HeroStore } from './db/index.js';
 import {
-  MAX_BATTLE_INPUTS, MAX_SWEEP, buildMe, opAfkClaim, opBattle, opGearEquip, opGearSalvage, opGearUnequip, opGearUpgrade, opGrant, opLevelUp, opSetSquad, opStarUp, opSummon, opSweep,
+  MAX_BATTLE_INPUTS, MAX_SWEEP, buildMe, opAfkClaim, opBattle, opGearEquip, opGearSalvage, opGearUnequip, opGearUpgrade, opGrant, opLevelUp, opQuestClaim, opSetSquad, opShopBuy, opStarUp, opSummon, opSweep, opTowerBattle,
 } from './rules.js';
 
 const MAX_BODY = 16 * 1024;
 /** seed trận có hiệu lực 10 phút */
 export const SEED_TTL_MS = 10 * 60_000;
 const SEED_MAX = 2 ** 32;
+
+/** đồng hồ server; test thay bằng giờ giả để thử qua ngày (reset 00:00 giờ VN) */
+let clock: () => number = Date.now;
+export function _setHeroesClock(fn: (() => number) | null) {
+  clock = fn ?? Date.now;
+}
+const nowDate = () => new Date(clock());
 
 const checkAdmin = createAdminCheck(() => process.env.MONKEY_ADMIN_KEY || null);
 
@@ -95,13 +102,13 @@ async function usernameOf(id: number): Promise<string> {
   return acc.username;
 }
 
-async function meOf(store: HeroStore, id: number, now = new Date()): Promise<MeResponse> {
+async function meOf(store: HeroStore, id: number, now = nowDate()): Promise<MeResponse> {
   const name = await usernameOf(id);
   return store.view(id, now, (s) => buildMe(s, name, now));
 }
 /** chạy một thao tác thay đổi + dựng hồ sơ mới trong cùng giao dịch */
 async function act<T extends object>(store: HeroStore, id: number, kind: string, op: (s: HState, nowMs: number) => T) {
-  const now = new Date();
+  const now = nowDate();
   const name = await usernameOf(id);
   // hồ sơ dựng SAU giao dịch: món trang bị mới chỉ có uid khi store đã ghi (xem HState.newGear)
   const r = await store.mutate(id, now, kind, (s) => op(s, now.getTime()));
@@ -175,7 +182,7 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
       if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new HttpError(400, 'Khoá yêu cầu không hợp lệ');
       const count: 1 | 10 = b.count;
       const pay: 'tickets' | 'gems' = b.pay;
-      const pulls = await store.mutate(id, new Date(), 'summon', (s) => opSummon(s, banner, count, pay, (n) => randomInt(n)), {
+      const pulls = await store.mutate(id, nowDate(), 'summon', (s) => opSummon(s, banner, count, pay, (n) => randomInt(n)), {
         idem: { key, tag: `${banner}|${count}|${pay}` },
       });
       return json(res, 200, { me: await meOf(store, id), pulls });
@@ -205,7 +212,7 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
     }
     case ROUTES.battleStart: {
       const id = await auth(req);
-      const e = issueSeed(id, Date.now());
+      const e = issueSeed(id, clock());
       return json(res, 200, { seed: e.seed, expires: e.expires });
     }
     case ROUTES.battle: {
@@ -217,8 +224,32 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
       const inputs = parseInputs(b.inputs);
       const auto = b.auto === true;
       // seed phải do server cấp cho CHÍNH tài khoản này và dùng đúng một lần (kiểm tra + xoá đồng bộ, trước mọi await kế tiếp)
-      if (!takeSeed(id, seed, Date.now())) throw new HttpError(400, 'Hạt giống trận không hợp lệ hoặc đã hết hạn — hãy bắt đầu trận mới');
+      if (!takeSeed(id, seed, clock())) throw new HttpError(400, 'Hạt giống trận không hợp lệ hoặc đã hết hạn — hãy bắt đầu trận mới');
       return json(res, 200, await act(store, id, 'battle', (s) => opBattle(s, stage, squad, seed, inputs, auto, (n) => randomInt(n))));
+    }
+    case ROUTES.towerBattle: {
+      const id = await auth(req);
+      const b = await read();
+      const squad = int(b.squad, 'Đội', 0, 100);
+      const seed = int(b.seed, 'Hạt giống', 0, SEED_MAX - 1);
+      const inputs = parseInputs(b.inputs);
+      const auto = b.auto === true;
+      // cùng cơ chế seed với /battle (battle-start cấp, dùng một lần)
+      if (!takeSeed(id, seed, clock())) throw new HttpError(400, 'Hạt giống trận không hợp lệ hoặc đã hết hạn — hãy bắt đầu trận mới');
+      return json(res, 200, await act(store, id, 'tower', (s) => opTowerBattle(s, squad, seed, inputs, auto, (n) => randomInt(n))));
+    }
+    case ROUTES.questClaim: {
+      const id = await auth(req);
+      const qid = str((await read()).id, 'Nhiệm vụ', 40, 1);
+      return json(res, 200, await act(store, id, 'quest', (s) => ({ reward: opQuestClaim(s, qid) })));
+    }
+    case ROUTES.shopBuy: {
+      const id = await auth(req);
+      const b = await read();
+      const item = str(b.item, 'Mặt hàng', 40, 1);
+      const times = b.times === undefined ? 1 : int(b.times, 'Số lần mua', 1, 100);
+      const hero = b.hero === undefined ? undefined : str(b.hero, 'Tướng', 40, 1);
+      return json(res, 200, await act(store, id, 'shop', (s, now) => opShopBuy(s, now, item, times, hero, (n) => randomInt(n))));
     }
     case ROUTES.sweep: {
       const id = await auth(req);

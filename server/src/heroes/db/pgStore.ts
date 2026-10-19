@@ -7,7 +7,7 @@ import type { PityState } from '../../../../shared/heroes/gacha.js';
 import { STAGES_PER_CHAPTER } from '../../../../shared/heroes/stages.js';
 import type { Wallet } from '../../../../shared/heroes/types.js';
 import { SQUAD_COUNT, SQUAD_SIZE } from '../../../../shared/heroes/config.js';
-import { assertWallet, ledgerOf, newState, STARTER_WALLET } from '../rules.js';
+import { assertWallet, ledgerOf, newState, rollDay, STARTER_WALLET } from '../rules.js';
 import { migrateHeroes } from './migrations.js';
 import { StoreError, type HState, type HeroStore, type LeaderEntry, type MutateOpts } from './store.js';
 
@@ -49,7 +49,8 @@ export class HeroPgStore implements HeroStore {
   private async load(c: Q, id: number, lock: boolean): Promise<HState | null> {
     const S = this.S;
     const pr = await c.query(
-      `SELECT gold, gems, tickets, exp, stones, level, xp, stamina, ${msOf('stamina_at')} AS stamina_at, ${msOf('afk_since')} AS afk_since, active_squad, pity
+      `SELECT gold, gems, tickets, exp, stones, level, xp, stamina, ${msOf('stamina_at')} AS stamina_at, ${msOf('afk_since')} AS afk_since, active_squad, pity,
+              tower_floor, tower_day, tower_tries
        FROM ${S}h_profile WHERE account_id = $1${lock ? ' FOR UPDATE' : ''}`,
       [id],
     );
@@ -60,6 +61,8 @@ export class HeroPgStore implements HeroStore {
     const sq = await c.query(`SELECT idx, slots FROM ${S}h_squads WHERE account_id = $1`, [id]);
     const sp = await c.query(`SELECT stage, stars, clears FROM ${S}h_stage_progress WHERE account_id = $1`, [id]);
     const gr = await c.query(`SELECT uid::int AS uid, def_id, level, hero_id FROM ${S}h_gear WHERE account_id = $1 ORDER BY uid`, [id]);
+    const qr = await c.query(`SELECT day, quest_id, progress, claimed FROM ${S}h_quest WHERE account_id = $1`, [id]);
+    const sh = await c.query(`SELECT day, item_id, count FROM ${S}h_shop_buy WHERE account_id = $1`, [id]);
     const squads: string[][] = Array.from({ length: SQUAD_COUNT }, () => Array<string>(SQUAD_SIZE).fill(''));
     for (const r of sq.rows) if (r.idx >= 0 && r.idx < SQUAD_COUNT) squads[r.idx] = r.slots as string[];
     const s: HState = {
@@ -68,7 +71,16 @@ export class HeroPgStore implements HeroStore {
       level: p.level, xp: p.xp, stamina: p.stamina, staminaAt: p.stamina_at, afkSince: p.afk_since,
       activeSquad: p.active_squad, pity: (p.pity ?? {}) as Record<string, PityState>,
       heroes: {}, squads, progress: {}, runs: [], gear: [], newGear: [],
+      towerFloor: p.tower_floor, towerDay: p.tower_day, towerTries: p.tower_tries, day: 0, quests: {}, questBonus: false, shop: {},
     };
+    // nhiệm vụ/cửa hàng: chỉ lấy ngày mới nhất (hàng cũ hơn sẽ bị xoá khi ghi)
+    s.day = Math.max(0, ...qr.rows.map((r) => r.day as number), ...sh.rows.map((r) => r.day as number));
+    for (const r of qr.rows) {
+      if (r.day !== s.day) continue;
+      if (r.quest_id === 'bonus') s.questBonus = r.claimed;
+      else s.quests[r.quest_id] = { progress: r.progress, claimed: r.claimed };
+    }
+    for (const r of sh.rows) if (r.day === s.day) s.shop[r.item_id] = r.count;
     for (const r of gr.rows) s.gear.push({ uid: r.uid, def: r.def_id, level: r.level, hero: r.hero_id ?? null });
     for (const r of hs.rows) s.heroes[r.hero_id] = { id: r.hero_id, level: r.level, star: r.star, shards: r.shards };
     for (const r of sp.rows) s.progress[r.stage] = { stage: r.stage, stars: r.stars, clears: r.clears };
@@ -106,10 +118,33 @@ export class HeroPgStore implements HeroStore {
     const id = s.accountId;
     await c.query(
       `UPDATE ${S}h_profile SET gold=$2, gems=$3, tickets=$4, exp=$5, stones=$6, level=$7, xp=$8, stamina=$9,
-         stamina_at=to_timestamp($10::float8 / 1000.0), afk_since=to_timestamp($11::float8 / 1000.0), active_squad=$12, pity=$13::jsonb
+         stamina_at=to_timestamp($10::float8 / 1000.0), afk_since=to_timestamp($11::float8 / 1000.0), active_squad=$12, pity=$13::jsonb,
+         tower_floor=$14, tower_day=$15, tower_tries=$16
        WHERE account_id=$1`,
-      [id, s.wallet.gold, s.wallet.gems, s.wallet.tickets, s.wallet.exp, s.wallet.stones, s.level, s.xp, s.stamina, s.staminaAt, s.afkSince, s.activeSquad, JSON.stringify(s.pity)],
+      [id, s.wallet.gold, s.wallet.gems, s.wallet.tickets, s.wallet.exp, s.wallet.stones, s.level, s.xp, s.stamina, s.staminaAt, s.afkSince, s.activeSquad, JSON.stringify(s.pity), s.towerFloor, s.towerDay, s.towerTries],
     );
+    // nhiệm vụ + mua hàng: xoá ngày cũ, ghi ngày hiện tại (hàng 'bonus' = thưởng thêm)
+    await c.query(`DELETE FROM ${S}h_quest WHERE account_id = $1 AND day <> $2`, [id, s.day]);
+    await c.query(`DELETE FROM ${S}h_shop_buy WHERE account_id = $1 AND day <> $2`, [id, s.day]);
+    const qs = Object.entries(s.quests).map(([q, v]) => ({ q, progress: v.progress, claimed: v.claimed }));
+    if (s.questBonus) qs.push({ q: 'bonus', progress: 0, claimed: true });
+    if (qs.length) {
+      await c.query(
+        `INSERT INTO ${S}h_quest (account_id, day, quest_id, progress, claimed)
+         SELECT $1, $2, t.q, t.p, t.c FROM unnest($3::text[], $4::int[], $5::boolean[]) AS t(q, p, c)
+         ON CONFLICT (account_id, day, quest_id) DO UPDATE SET progress = EXCLUDED.progress, claimed = EXCLUDED.claimed`,
+        [id, s.day, qs.map((x) => x.q), qs.map((x) => x.progress), qs.map((x) => x.claimed)],
+      );
+    }
+    const bought = Object.entries(s.shop);
+    if (bought.length) {
+      await c.query(
+        `INSERT INTO ${S}h_shop_buy (account_id, day, item_id, count)
+         SELECT $1, $2, t.i, t.n FROM unnest($3::text[], $4::int[]) AS t(i, n)
+         ON CONFLICT (account_id, day, item_id) DO UPDATE SET count = EXCLUDED.count`,
+        [id, s.day, bought.map(([i]) => i), bought.map(([, n]) => n)],
+      );
+    }
     const hs = Object.values(s.heroes);
     if (hs.length) {
       await c.query(
@@ -183,6 +218,7 @@ export class HeroPgStore implements HeroStore {
         }
       }
       const before = { ...s.wallet };
+      rollDay(s, now.getTime()); // sang ngày mới: reset Tháp/nhiệm vụ/cửa hàng + tính "đăng nhập"
       const out = fn(s);
       assertWallet(s);
       await this.save(c, s, before, kind, fresh);
