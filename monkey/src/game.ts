@@ -2,13 +2,21 @@
 
 import * as THREE from 'three';
 import { GameModel } from '@shared/monkey/client';
-import { CLASSES, MK_NO, MK_VUA, MONKEYS, headY, reloadTicks, weaponOf } from '@shared/monkey/content';
+import { CLASSES, MK_NO, MK_VUA, MONKEYS, headY, weaponOf } from '@shared/monkey/content';
 import { PLAYER_SPAWNS, rayWorld } from '@shared/monkey/map';
 import {
   FX_BUILD, FX_EXPLODE, FX_HEAL, FX_PICK, FX_PLAYERHIT, FX_REPAIR, FX_ROAR, FX_SHOCK, FX_SLAM, FX_SPLAT, FX_STOMP,
   PF_ADS, PF_BRACE, PF_DOWN_MASK, PF_REVIVING, PF_SPRINT, SnapData, decodeSnap, type SMsg,
 } from '@shared/monkey/proto';
-import { B_USE, EYE_Y, P_G, P_K, P_Q, P_X, SHOULDER, type Cmd } from '@shared/monkey/sim';
+import { B_USE, EYE_Y, P_G, P_K, P_Q, P_U1, P_U2, P_W1, P_W2, P_X, SHOULDER, curReloadTicks, curWeapon, type Cmd } from '@shared/monkey/sim';
+import type { GroundLoot } from '@shared/monkey/gear';
+import type { QuickSlot } from '@shared/monkey/proto';
+import type { WeaponDef } from '@shared/monkey/content';
+import { api } from './api';
+import { STAT_KEYS, defOf, equippedMap, fmtStat, statInfo } from './gearlib';
+import { LootRenderer } from './render/loot';
+import { makeGunModel } from './render/avatars';
+import { CAM_MODES, saveSettings, type CamMode } from './settings';
 import * as A from './audio';
 import { Input } from './input';
 import { net } from './net';
@@ -27,6 +35,17 @@ const tmpV2 = new THREE.Vector3();
 const AVATAR_DETAIL_D2 = 25 * 25;
 /** màu vệt đạn theo idx người chơi (10 màu nhạt, đủ MAX_PLAYERS) */
 const SHOT_COLORS = [0xfff2a8, 0xa8ffcb, 0xffd0a0, 0xffb0b0, 0xa8d8ff, 0xe0b8ff, 0xb0fff0, 0xffc0e0, 0xffffff, 0xc8c8ff];
+
+/** thông tin trận ngoài danh sách người chơi */
+export interface GameOpts {
+  /** false = ải (không xu / cửa hàng) */
+  economy: boolean;
+  waves?: number;
+  stageName?: string;
+  /** túi đồ đang nằm trên đất (vào lại giữa trận) */
+  loot?: GroundLoot[];
+}
+type StartP = HudPlayer & { weapons?: WeaponDef[]; quick?: QuickSlot[]; look?: AvatarLook };
 
 export interface Shared3D {
   stage: Stage;
@@ -60,17 +79,46 @@ export class Game {
   private wasDown = 0;
   /** lần chém dao gần nhất của mình (hoạt cảnh cục bộ ngay khi bấm, khớp hồi chiêu ~0.6 s của server) */
   private knifeAt = 0;
+  readonly opts: GameOpts;
+  /** túi đồ trên đất */
+  readonly loot = new LootRenderer();
+  /** súng mang theo của từng người (ải) */
+  private pWeapons = new Map<number, WeaponDef[]>();
+  /** góc camera hiện hành */
 
-  constructor(private s3: Shared3D, readonly input: Input, players: HudPlayer[], me: number) {
+  /** đang ngắm nghía súng */
+  inspecting = false;
+  private inspYaw = 0;
+  private inspDrag: number | null = null;
+  private camBlend = 0;
+  private viewGun: { g: THREE.Group; key: string } | null = null;
+
+  constructor(private s3: Shared3D, readonly input: Input, players: HudPlayer[], me: number, opts: GameOpts = { economy: true }) {
+    this.opts = opts;
     this.players = players;
     this.me = me;
     const meP = players.find((p) => p.idx === me)!;
     const sp = PLAYER_SPAWNS[me] ?? PLAYER_SPAWNS[0];
     // chỉ số đồ (tin start players[i].mods) phải vào mô phỏng dự đoán, nếu không client lệch server
-    this.model = new GameModel(me, meP.cls, sp.x, sp.z, (meP as { mods?: import('@shared/monkey/progression').SimMods }).mods);
+    // ải: súng thật từ đồ (tin start players[i].weapons) cũng phải vào mô phỏng dự đoán
+    const mp = meP as { mods?: import('@shared/monkey/progression').SimMods; weapons?: import('@shared/monkey/content').WeaponDef[] };
+    this.model = new GameModel(me, meP.cls, sp.x, sp.z, mp.mods, undefined, mp.weapons ?? null);
     input.yaw = Math.atan2(sp.x, sp.z);
     input.pitch = -0.12;
-    this.hud = new Hud();
+    const meS = meP as StartP;
+    for (const p of players as StartP[]) if (p.weapons?.length) this.pWeapons.set(p.idx, p.weapons);
+    this.hud = new Hud({ economy: opts.economy, weapons: meS.weapons?.length ? meS.weapons : null, quick: meS.quick ?? [], waves: opts.waves, stageName: opts.stageName });
+    this.hud.onSlot = (k) => {
+      if (k === 'w1') input.press(P_W1);
+      else if (k === 'w2') input.press(P_W2);
+      else if (k === 'u1') input.press(P_U1);
+      else if (k === 'u2') input.press(P_U2);
+      else if (k === 'knife') this.pressKnife();
+      else if (k === 'g' || k === 'x' || k === 'q') this.pressSkill(k);
+      else if (k === 'inspect') this.onInspectKey();
+    };
+    s3.stage.scene.add(this.loot.group);
+    for (const l of opts.loot ?? []) this.addLoot(l);
     this.hud.setPlayers(players, me);
     document.getElementById('app')!.prepend(this.hud.root);
     for (const p of players) {
@@ -174,9 +222,44 @@ export class Game {
         }
         if (m.i === this.me && (m.v ?? 0) > 0) hud.feed(m.j ? `🔪 Đâm lén ×2! (${m.v} trúng)` : `🔪 Chém trúng ${m.v}`, 'gold');
         break;
+      case 'loot': {
+        const g = m as unknown as GroundLoot;
+        this.addLoot({ id: g.id, x: g.x, z: g.z, grade: g.grade, itemId: g.itemId });
+        if (g.grade >= 3) A.sfxLoot(g.grade);
+        break;
+      }
+      case 'unloot':
+        this.loot.remove(m.v ?? -1);
+        this.hud.loot.delete(m.v ?? -1);
+        break;
+      case 'picked': {
+        const mine = m.i === this.me;
+        this.hud.pickup(m.s ?? '', m.j ?? 0, mine ? undefined : name(m.i));
+        if (mine) {
+          A.sfxLoot(m.j ?? 0);
+          const l = this.hud.loot.get(m.v ?? -1);
+          if (l) this.s3.fx.sparks(l.x, 0.6, l.z, 10, 1, 0.9, 0.5, 4);
+        }
+        break;
+      }
+      case 'bagfull':
+        A.sfxDeny();
+        toast('🎒 Ba lô trận đã đầy — không nhặt thêm được');
+        break;
+      case 'use': {
+        const def = defOf(m.s);
+        if (m.i === this.me) {
+          A.sfxHeal();
+          hud.feed(`${def?.name ?? 'Vật phẩm'} · còn ${m.v ?? 0}`, 'good');
+        } else hud.feed(`${name(m.i)} dùng ${def?.name ?? 'vật phẩm'}`, '');
+        break;
+      }
+      case 'out':
+        hud.feed(m.i === this.me ? '☠️ Bạn đã gục hẳn — đồ mang theo bị mất (trừ Túi an toàn)' : `☠️ ${name(m.i)} gục hẳn — rơi mất đồ`, 'bad');
+        break;
       case 'noshop':
         A.sfxDeny();
-        toast('🚫 Ải này không cho nâng cấp giữa trận');
+        toast(this.opts.economy ? '🚫 Ải này không cho nâng cấp giữa trận' : '🚫 Vượt ải không có cửa hàng — chỉ dùng đồ mang theo');
         break;
       case 'nocash':
         A.sfxDeny();
@@ -233,11 +316,12 @@ export class Game {
     this.wasDown = down;
     A.setHeartbeat(!!me && !down && me.hp > 0 && me.hp < me.maxHp * 0.25);
 
-    // ---- camera qua vai ----
+    // ---- camera: qua vai / thứ nhất / xa — tia giữa màn hình luôn trùng tia bắn (gốc shotOrigin, hướng yaw/pitch) ----
     const ads = (this.inp.btn & 2) !== 0 && !down;
+    const mode: CamMode = down ? 'shoulder' : settings.camMode;
     const yaw = input.yaw;
     const pitch = input.pitch;
-    const wantDist = (down ? 4.5 : settings.camDist) * (ads ? 0.62 : 1);
+    const wantDist = mode === 'fps' ? 0 : mode === 'far' ? 7.5 * (ads ? 0.75 : 1) : (down ? 4.5 : settings.camDist) * (ads ? 0.62 : 1);
     this.camDist += (wantDist - this.camDist) * Math.min(1, dt * 10);
     const wantFov = settings.fov * (ads ? 0.78 : 1);
     this.fov += (wantFov - this.fov) * Math.min(1, dt * 12);
@@ -251,10 +335,35 @@ export class Game {
     const ox = m.rx - cy * SHOULDER, oy = m.ry + EYE_Y, oz = m.rz + sy * SHOULDER;
     // va chạm camera với vật cản: kéo vào gần
     let dist = this.camDist;
-    const hit = rayWorld(ox, oy, oz, -dx, -dy, -dz, dist + 0.3);
-    if (hit < dist + 0.3) dist = Math.max(0.4, hit - 0.3);
-    let cx = ox - dx * dist, cyy = oy - dy * dist, cz = oz - dz * dist;
+    let cx: number, cyy: number, cz: number;
+    let lx = 0, ly = 0, lz = 0;
+    let lookAtPt = false;
+    if (mode === 'far') {
+      // cao + xa phía sau, nhìn vào điểm tia bắn chạm vật cản → tâm ngắm vẫn chỉ đúng chỗ đạn tới
+      const reach = Math.min(45, rayWorld(ox, oy, oz, dx, dy, dz, 45));
+      lx = ox + dx * reach; ly = oy + dy * reach; lz = oz + dz * reach;
+      cx = ox - sy * dist; cz = oz - cy * dist; cyy = oy + 2.6 + Math.max(0, -sp) * 2;
+      lookAtPt = true;
+    } else {
+      if (dist > 0.05) {
+        const hit = rayWorld(ox, oy, oz, -dx, -dy, -dz, dist + 0.3);
+        if (hit < dist + 0.3) dist = Math.max(0.4, hit - 0.3);
+      }
+      cx = ox - dx * dist; cyy = oy - dy * dist; cz = oz - dz * dist;
+    }
     if (cyy < 0.25) cyy = 0.25;
+    // ngắm nghía súng: camera vòng ra trước mặt nhân vật, súng xoay chậm
+    if (this.inspecting) {
+      if (this.inspDrag === null) this.inspYaw += dt * 0.35;
+      const a = yaw + Math.PI * 0.82 + this.inspYaw;
+      const meAv0 = this.avatars.get(this.me);
+      if (meAv0) meAv0.muzzleWorld(tmpV2);
+      else tmpV2.set(m.rx, m.ry + 1, m.rz);
+      lx = (m.rx * 0.45 + tmpV2.x * 0.55); ly = m.ry + 0.95; lz = (m.rz * 0.45 + tmpV2.z * 0.55);
+      cx = lx + Math.sin(a) * 1.9; cyy = ly + 0.35; cz = lz + Math.cos(a) * 1.9;
+      lookAtPt = true;
+      this.camBlend = 1;
+    }
     // rung
     this.shake = Math.max(0, this.shake - dt * 2.2);
     const sh = this.shake * this.shake * settings.shake;
@@ -263,8 +372,15 @@ export class Game {
       cyy += (Math.random() - 0.5) * sh * 0.35;
       cz += (Math.random() - 0.5) * sh * 0.35;
     }
-    cam.position.set(cx, cyy, cz);
-    cam.lookAt(cx + dx, cyy + dy, cz + dz);
+    if (this.camBlend > 0) {
+      // chuyển mượt vào / ra chế độ ngắm nghía
+      const k = 1 - Math.exp(-dt * 7);
+      cam.position.lerp(tmpV.set(cx, cyy, cz), this.inspecting ? k : Math.max(k, 1 - this.camBlend));
+      if (!this.inspecting) this.camBlend = Math.max(0, this.camBlend - dt * 3);
+    } else cam.position.set(cx, cyy, cz);
+    if (lookAtPt) cam.lookAt(lx, ly, lz);
+    else cam.lookAt(cam.position.x + dx, cam.position.y + dy, cam.position.z + dz);
+    this.updateViewGun(mode === 'fps' && !this.inspecting && !down, cam, now, ads);
     stage.followShadow(m.rx, m.rz);
 
     // ---- nhân vật ----
@@ -274,22 +390,24 @@ export class Game {
       if (inf) a.setTier(inf.tier);
       if (p.idx === this.me) {
         const sp2 = Math.hypot(m.pred.vx, m.pred.vz);
-        const rl = m.pred.reloadT > 0 ? 1 - m.pred.reloadT / reloadTicks(m.pred.cls, m.pred.tier) : -1;
+        const rl = m.pred.reloadT > 0 ? 1 - m.pred.reloadT / curReloadTicks(m.pred) : -1;
+        this.syncGun(a, p.idx, m.pred.wslot);
         a.update({
           x: m.rx, y: m.ry, z: m.rz, yaw, pitch, dt, t: now / 1000, down, ads,
           sprint: sp2 > 7, brace: m.pred.braceT > 0 && CLASSES[m.pred.cls].id === 'dausi', rage: !!inf && inf.shield > 0,
           reviving: (this.inp.btn & B_USE) !== 0 && !!inf && (inf.flags & PF_REVIVING) !== 0, reload: rl,
         });
-        a.setVisible(dist > 1.1);
+        a.setVisible(this.inspecting || (mode !== 'fps' && dist > 1.1));
       } else if (inf) {
         // xa > 25 m: ẩn chi tiết nhỏ (mắt, kính, nút…) — rẻ, đỡ draw call khi 10 người
         const ddx = m.oX[p.idx] - cam.position.x, ddz = m.oZ[p.idx] - cam.position.z;
         a.setDetail(ddx * ddx + ddz * ddz < AVATAR_DETAIL_D2);
+        this.syncGun(a, p.idx, inf.wslot);
         a.update({
           x: m.oX[p.idx], y: m.oY[p.idx], z: m.oZ[p.idx], yaw: m.oYaw[p.idx], pitch: m.oPitch[p.idx], dt, t: now / 1000,
           down: inf.flags & PF_DOWN_MASK, ads: (inf.flags & PF_ADS) !== 0, sprint: (inf.flags & PF_SPRINT) !== 0,
           brace: (inf.flags & PF_BRACE) !== 0 && CLASSES[p.cls].id === 'dausi', rage: inf.shield > 0, reviving: (inf.flags & PF_REVIVING) !== 0,
-          reload: inf.reloadT > 0 ? 1 - inf.reloadT / reloadTicks(p.cls, inf.tier) : -1,
+          reload: inf.reloadT > 0 ? 1 - inf.reloadT / this.reloadOf(p.idx, p.cls, inf.tier, inf.wslot) : -1,
         });
       }
     }
@@ -300,6 +418,7 @@ export class Game {
     // ---- khỉ, hiệu ứng, cảnh ----
     this.s3.monkeys.update(m, now / 1000, dt, cam.position, cam.quaternion);
     this.s3.fx.update(m, dt, now / 1000);
+    this.loot.update(now / 1000, now);
     this.ambientScreech(now);
     stage.update(now / 1000, dt);
     stage.trackFps(dt, now);
@@ -347,7 +466,7 @@ export class Game {
     for (const e of m.fx) {
       switch (e.k) {
         case 'fire': {
-          const w = weaponOf(m.pred.cls, e.a);
+          const w = m.pred.weapons ? curWeapon(m.pred) : weaponOf(m.pred.cls, e.a);
           A.sfxGun(w.sound, 1, 0);
           meAv.kick();
           meAv.muzzleWorld(tmpV);
@@ -358,8 +477,7 @@ export class Game {
         }
         case 'tracer': {
           meAv.muzzleWorld(tmpV);
-          const tier = m.pred.tier;
-          if (weaponOf(m.pred.cls, tier).splashR > 0) {
+          if (curWeapon(m.pred).splashR > 0) {
             const dx = e.x - tmpV.x, dy = e.y - tmpV.y, dz = e.z - tmpV.z;
             const d = Math.hypot(dx, dy, dz) || 1;
             fx.ownShells.push({ x: tmpV.x, y: tmpV.y, z: tmpV.z, dx: dx / d, dy: dy / d, dz: dz / d, dist: d, t: 0, boom: true });
@@ -421,7 +539,7 @@ export class Game {
           const d = e.x;
           tmpV2.set(tmpV.x + Math.sin(yaw) * Math.cos(pt) * d, tmpV.y + Math.sin(pt) * d, tmpV.z + Math.cos(yaw) * Math.cos(pt) * d);
           const inf = shooter < 100 ? m.info[shooter] : null;
-          const w = inf ? weaponOf(inf.cls, inf.tier) : null;
+          const w = inf ? this.weaponOfP(shooter, inf.cls, inf.tier, inf.wslot) : null;
           if (!w || w.splashR === 0) fx.tracer(tmpV.x, tmpV.y, tmpV.z, tmpV2.x, tmpV2.y, tmpV2.z, shooter >= 100 ? 0x9cff9c : SHOT_COLORS[shooter % SHOT_COLORS.length], 0.07);
           fx.muzzleFlash(tmpV, false, !!w && w.pellets > 1);
           const [vol, pan] = this.spatial(tmpV.x, tmpV.z);
@@ -432,7 +550,7 @@ export class Game {
           this.worldFx(e.a, e.x, e.z, e.b, e.c);
           break;
         case 'reload':
-          A.sfxReload(weaponOf(m.pred.cls, m.pred.tier).pellets > 1 ? 2 : 0);
+          A.sfxReload(curWeapon(m.pred).pellets > 1 ? 2 : 0);
           break;
         case 'jump':
           A.sfxJump();
@@ -547,6 +665,96 @@ export class Game {
     }
   }
 
+  /* ======================= SÚNG THEO MÓN ĐỒ ======================= */
+  private weaponOfP(idx: number, cls: number, tier: number, wslot: number): WeaponDef {
+    const ws = this.pWeapons.get(idx);
+    return ws ? ws[wslot] ?? ws[0] : weaponOf(cls, tier);
+  }
+  private reloadOf(idx: number, cls: number, tier: number, wslot: number) {
+    const w = this.weaponOfP(idx, cls, tier, wslot);
+    return Math.max(1, Math.round(w.reload * (CLASSES[cls]?.reloadMul ?? 1)));
+  }
+  /** avatar cầm đúng khẩu đang chọn (ải), khẩu còn lại đeo sau lưng */
+  private syncGun(a: Avatar, idx: number, wslot: number) {
+    const ws = this.pWeapons.get(idx);
+    if (!ws) return;
+    const w = ws[wslot] ?? ws[0];
+    a.setGun(w.model, w.color);
+    a.showBackGun(ws.length > 1);
+  }
+
+  /* ======================= TÚI ĐỒ DƯỚI ĐẤT ======================= */
+  private addLoot(l: GroundLoot) {
+    this.loot.add(l);
+    this.hud.loot.set(l.id, l);
+  }
+
+  /* ======================= CAMERA ======================= */
+  cycleCamera() {
+    const i = CAM_MODES.findIndex(([m]) => m === settings.camMode);
+    const [next, name] = CAM_MODES[(i + 1) % CAM_MODES.length];
+
+    settings.camMode = next;
+    saveSettings();
+    this.hud.feed(`🎥 Camera: ${name}`, '');
+  }
+
+  /** súng góc nhìn thứ nhất (gắn theo camera; avatar của mình ẩn) */
+  private updateViewGun(on: boolean, cam: THREE.PerspectiveCamera, now: number, ads: boolean) {
+    const w = curWeapon(this.model.pred);
+    const key = `${w.model}|${w.color}`;
+    if (on && (!this.viewGun || this.viewGun.key !== key)) {
+      if (this.viewGun) this.s3.stage.scene.remove(this.viewGun.g);
+      const gm = makeGunModel(w.model, w.color);
+      const g = new THREE.Group();
+      gm.g.scale.setScalar(0.85);
+      g.add(gm.g);
+      this.viewGun = { g, key };
+      this.s3.stage.scene.add(g);
+    }
+    if (!this.viewGun) return;
+    this.viewGun.g.visible = on;
+    if (!on) return;
+    const t = now / 1000;
+    const sp = Math.hypot(this.model.pred.vx, this.model.pred.vz);
+    const bob = Math.min(1, sp / 6) * 0.012;
+    const rl = this.model.pred.reloadT > 0 ? Math.sin(Math.min(1, 1 - this.model.pred.reloadT / curReloadTicks(this.model.pred)) * Math.PI) : 0;
+    // toạ độ trong không gian camera: phải-dưới-trước (ngắm: vào giữa)
+    tmpV.set(ads ? 0 : 0.2, (ads ? -0.13 : -0.2) + Math.sin(t * 9) * bob - rl * 0.12 - this.recoilPitch * 0.4, -0.42 + this.recoilPitch * 0.6);
+    tmpV.applyQuaternion(cam.quaternion).add(cam.position);
+    this.viewGun.g.position.copy(tmpV);
+    this.viewGun.g.quaternion.copy(cam.quaternion);
+    this.viewGun.g.rotateY(Math.PI);
+    this.viewGun.g.rotateX(-rl * 0.6);
+  }
+
+  /** bật / tắt ngắm nghía súng (main.ts lo khoá chuột) */
+  onInspectKey: () => void = () => this.setInspect(!this.inspecting);
+  setInspect(on: boolean) {
+    if (on === this.inspecting) return;
+    const meInf = this.model.info[this.me];
+    if (on && meInf && (meInf.flags & PF_DOWN_MASK)) return;
+    this.inspecting = on;
+    this.inspYaw = 0;
+    if (!on) {
+      this.hud.showInspect(null);
+      return;
+    }
+    const w = curWeapon(this.model.pred);
+    // món đồ thật (để hiện phẩm + dòng phụ) nếu đang đăng nhập
+    const eq = equippedMap(api.me);
+    const it = this.model.pred.weapons ? eq.get(this.model.pred.wslot === 1 ? 'weapon2' : 'weapon1') : undefined;
+    const def = it ? defOf(it.itemId) : undefined;
+    const aff = it ? STAT_KEYS.filter((k) => it.affixes[k]).map((k) => [statInfo(k).name, fmtStat(k, it.affixes[k]!)] as [string, string]) : [];
+    this.hud.showInspect(w, it && def ? { name: def.name, grade: it.grade, affixes: aff } : undefined);
+  }
+  /** kéo chuột khi đang ngắm nghía: xoay */
+  inspectDrag(dx: number | null) {
+    if (dx === null) { this.inspDrag = null; return; }
+    this.inspDrag = dx;
+    this.inspYaw += dx * 0.01;
+  }
+
   /** nút kỹ năng trên màn hình cảm ứng */
   /** nút dao trên màn hình cảm ứng */
   pressKnife() {
@@ -571,6 +779,10 @@ export class Game {
       a.root.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
     }
     this.avatars.clear();
+    this.s3.stage.scene.remove(this.loot.group);
+    this.loot.dispose();
+    if (this.viewGun) this.s3.stage.scene.remove(this.viewGun.g);
+    this.viewGun = null;
     this.s3.fx.clear();
     this.hud.destroy();
   }

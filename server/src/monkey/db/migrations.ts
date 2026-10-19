@@ -110,6 +110,28 @@ CREATE TABLE ${S}event_progress (
   PRIMARY KEY (account_id, event_id)
 );
 `,
+  // v2 — trang bị kiểu VLTK: phẩm 0..4, dòng phụ, chồng (count), ô trang bị (slot NULL = túi/kho), kho (stash).
+  // Nâng từ v1: cột slot (loại đồ v1: helmet/armor/gun/knife/skin) → kind; rarity → grade; subs → affixes;
+  // đồ đang mặc → slot = ô tương ứng (súng → weapon1); dòng phụ cashGain (đã bỏ) → luck; túi vượt 60 món → kho.
+  (S) => `
+DROP INDEX IF EXISTS ${S}items_one_per_slot;
+ALTER TABLE ${S}items RENAME COLUMN slot TO kind;
+ALTER TABLE ${S}items RENAME COLUMN rarity TO grade;
+ALTER TABLE ${S}items RENAME COLUMN subs TO affixes;
+ALTER TABLE ${S}items ADD COLUMN slot text;
+ALTER TABLE ${S}items ADD COLUMN count integer NOT NULL DEFAULT 1;
+ALTER TABLE ${S}items ADD COLUMN stash boolean NOT NULL DEFAULT false;
+UPDATE ${S}items SET slot = CASE kind WHEN 'gun' THEN 'weapon1' ELSE kind END WHERE equipped;
+UPDATE ${S}items SET affixes = (affixes - 'cashGain') || jsonb_build_object('luck', COALESCE((affixes->>'luck')::float8, 0) + (affixes->>'cashGain')::float8)
+  WHERE affixes ? 'cashGain';
+UPDATE ${S}items SET stash = true WHERE uid IN (
+  SELECT uid FROM (SELECT uid, row_number() OVER (PARTITION BY account_id ORDER BY uid) AS rn FROM ${S}items WHERE slot IS NULL) t WHERE rn > 60
+);
+ALTER TABLE ${S}items DROP COLUMN equipped;
+ALTER TABLE ${S}items ADD CONSTRAINT items_count_pos CHECK (count > 0);
+ALTER TABLE ${S}items ADD CONSTRAINT items_grade_rng CHECK (grade BETWEEN 0 AND 4);
+CREATE UNIQUE INDEX items_one_per_eslot ON ${S}items (account_id, slot) WHERE slot IS NOT NULL;
+`,
 ];
 
 /** chạy các migration còn thiếu; lần migrate đầu tiên (DB trống) tạo sẵn sự kiện đầu tiên nếu chưa có sự kiện nào */

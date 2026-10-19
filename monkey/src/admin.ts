@@ -86,19 +86,19 @@ function rewardEditor(r: Reward, onChange: () => void) {
     const items = r.items ?? [];
     items.forEach((it, i) => {
       const def = ITEM_BY_ID[it.itemId];
-      const rar = sel(RARITY.map((x) => [String(x.id), x.name] as [string, string]).filter(([v]) => !def || (Number(v) >= def.minR && Number(v) <= def.maxR)), String(it.rarity), (v) => { it.rarity = Number(v) as Rarity; onChange(); });
+      const rar = sel(RARITY.map((x) => [String(x.id), x.name] as [string, string]).filter(([v]) => !def || (Number(v) >= def.minGrade && Number(v) <= def.maxGrade)), String(it.grade), (v) => { it.grade = Number(v) as Rarity; onChange(); });
       box.append(h('div', { class: 'arow item' },
-        field('Đồ', sel(ITEMS.map((d) => [d.id, `${d.name} (${d.slot})${d.special ? ' ★' : ''}`] as [string, string]), it.itemId, (v) => {
+        field('Đồ', sel(ITEMS.map((d) => [d.id, `${d.name} (${d.kind})${d.special ? ' ★' : ''}`] as [string, string]), it.itemId, (v) => {
           it.itemId = v;
           const d = ITEM_BY_ID[v];
-          if (d) it.rarity = Math.min(d.maxR, Math.max(d.minR, it.rarity)) as Rarity;
+          if (d) it.grade = Math.min(d.maxGrade, Math.max(d.minGrade, it.grade)) as Rarity;
           onChange();
           draw();
         })),
-        field('Độ hiếm', rar),
+        field('Phẩm', rar),
         h('button', { class: 'btn ghost sm', onclick: () => { items.splice(i, 1); if (!items.length) delete r.items; onChange(); draw(); } }, '✕')));
     });
-    box.append(h('button', { class: 'btn ghost sm', onclick: () => { (r.items ??= []).push({ itemId: ITEMS[0].id, rarity: ITEMS[0].minR }); onChange(); draw(); } }, '+ Thêm đồ'));
+    box.append(h('button', { class: 'btn ghost sm', onclick: () => { (r.items ??= []).push({ itemId: ITEMS[0].id, grade: ITEMS[0].minGrade }); onChange(); draw(); } }, '+ Thêm đồ'));
   };
   draw();
   return box;

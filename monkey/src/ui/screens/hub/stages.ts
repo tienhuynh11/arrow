@@ -1,11 +1,16 @@
-// Tab VƯỢT ẢI: 3 chương, mỗi chương là chuỗi 10 nút uốn lượn (sao, khoá, luật đặc biệt) + bảng chi tiết ải.
+// Cửa sổ VƯỢT ẢI (M): 3 chương, mỗi chương là chuỗi 10 nút uốn lượn (sao, khoá, luật đặc biệt) + bảng chi tiết ải:
+// luật mang đồ (chết = mất đồ trừ Túi an toàn), kiểm tra hành trang trước khi vào, bảng rớt theo phẩm.
 
 import type { MeResponse, StageProgress } from '@shared/monkey/api';
 import { mapById } from '@shared/monkey/map';
-import { MODIFIER_INFO, RARITY, SLOTS, STAGES, STAGE_BY_ID, stageUnlocked, type StageDef } from '@shared/monkey/progression';
+import { MODIFIER_INFO, STAGES, STAGE_BY_ID, stageUnlocked, type StageDef } from '@shared/monkey/progression';
+import { api } from '../../../api';
+import { GRADE_COLORS, KIND_ICON, defOf, equippedMap, gradeName, gradeWeights } from '../../../gearlib';
+import type { HubCtx } from '../hub';
 import * as A from '../../../audio';
 import { clear, h, timeStr } from '../../dom';
 import { createRoom } from '../actions';
+import { confirmBox } from '../ctx';
 import { CUR, rewardChips } from '../items';
 
 const CHAPTERS = [
@@ -59,35 +64,60 @@ function pathSvg(n: number, unlockedTo: number) {
   const el = h('div', { class: 'spsvg' });
   el.innerHTML = `<svg viewBox="0 0 1000 300" preserveAspectRatio="none" aria-hidden="true">`
     + `<path d="${d}" fill="none" stroke="rgba(0,0,0,.45)" stroke-width="16" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`
-    + `<path d="${d}" fill="none" stroke="#ffd23f" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 12" vector-effect="non-scaling-stroke"/>`
+    + `<path d="${d}" fill="none" stroke="#f2cc6a" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 12" vector-effect="non-scaling-stroke"/>`
     + (dl ? `<path d="${dl}" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="5" stroke-linecap="round" stroke-dasharray="2 12" vector-effect="non-scaling-stroke"/>` : '')
     + `</svg>`;
   return el;
 }
 
-/** bảng tỉ lệ độ hiếm (thanh màu) */
-function rarityBar(w: readonly number[]) {
-  const tot = w.reduce((a, b) => a + Math.max(0, b), 0) || 1;
-  return h('div', { class: 'rbar', title: w.map((x, i) => `${RARITY[i].name} ${Math.round((Math.max(0, x) / tot) * 100)}%`).join(' · ') },
-    ...w.map((x, i) => h('i', { style: `flex:${Math.max(0, x)};background:${RARITY[i].color}` })));
+
+/** thanh tỉ lệ 5 phẩm + chú thích % */
+function gradeBar(w: readonly number[], legend = false) {
+  const g = gradeWeights(w);
+  const tot = g.reduce((a, b) => a + b, 0) || 1;
+  const bar = h('div', { class: 'gradebar', title: g.map((x, i) => `${gradeName(i)} ${Math.round((x / tot) * 100)}%`).join(' · ') },
+    ...g.map((x, i) => h('i', { style: `flex:${x};background:${GRADE_COLORS[i]}` })));
+  if (!legend) return bar;
+  return h('div', null, bar, h('div', { class: 'gradeleg' }, ...g.map((x, i) => h('span', null, h('i', { style: `background:${GRADE_COLORS[i]}` }), `${gradeName(i)} ${x / tot >= 0.095 ? Math.round((x / tot) * 100) : Math.round((x / tot) * 1000) / 10}%`))));
 }
 
-export function stageDetail(def: StageDef, prog: StageProgress | undefined, unlocked: boolean, opts: { compact?: boolean } = {}) {
+/** kiểm tra hành trang trước khi vào ải */
+function loadoutCheck(ctx?: HubCtx) {
+  const me = api.me;
+  const eq = equippedMap(me);
+  const gun = eq.get('weapon1') ?? eq.get('weapon2');
+  const q = [eq.get('quick1'), eq.get('quick2')].filter(Boolean);
+  const sec = eq.get('secure');
+  const armor = ['helmet', 'armor', 'gloves', 'boots', 'belt'].filter((s) => eq.get(s as never)).length;
+  const name = (u: { itemId: string } | undefined) => (u ? defOf(u.itemId)?.name ?? u.itemId : '');
+  const box = h('div', { class: 'lcheck' },
+    gun ? h('div', { class: 'ok' }, `✔ Súng: ${name(gun)}${eq.get('weapon1') && eq.get('weapon2') ? ` + ${name(eq.get('weapon2'))}` : ''}`)
+      : h('div', { class: 'bad' }, '✖ Chưa mang súng — sẽ chỉ có súng lục cơ bản!'),
+    q.length ? h('div', { class: 'ok' }, `✔ Ô nhanh: ${q.map((x) => `${name(x)} ×${x!.count}`).join(', ')}`)
+      : h('div', { class: 'wn' }, '⚠ Không có vật phẩm tiêu hao (thuốc / lựu đạn) ở ô [3] [4]'),
+    h('div', { class: armor >= 3 ? 'ok' : 'wn' }, `${armor >= 3 ? '✔' : '⚠'} Trang bị phòng thủ: ${armor}/5 món`),
+    sec ? h('div', { class: 'ok' }, `🔒 Túi an toàn giữ: ${name(sec)}`) : h('div', { class: 'wn' }, '⚠ Túi an toàn đang trống — đặt món quý nhất vào đó'));
+  if (ctx) box.append(h('div', { class: 'row2', style: 'margin-top:4px' },
+    h('button', { class: 'vb sm', onclick: () => { ctx.open('chars', 'equip'); ctx.open('inv'); } }, '🧙 Trang bị (C+B)'),
+    h('button', { class: 'vb sm', onclick: () => ctx.open('merchant', 'buy') }, '⚖️ Mua thuốc (N)')));
+  return { box, ok: !!gun };
+}
+
+export function stageDetail(def: StageDef, prog: StageProgress | undefined, unlocked: boolean, opts: { compact?: boolean; ctx?: HubCtx } = {}) {
   const map = mapById(def.map);
-  const d = def.drops;
+  const d = def.drops as unknown as { gold: [number, number]; xp: number; rolls?: { slots?: string[]; kinds?: string[]; chance: number; weights: number[] }[]; shards?: [number, number]; book?: number; grades?: number[]; perKill?: number };
   const box = h('div', { class: 'sdet' });
   const cleared = !!prog && prog.clears > 0;
   box.append(
     h('div', { class: 'sdh' },
       h('div', null,
-        h('div', { class: 'sid' }, def.event ? '🎉 ẢI SỰ KIỆN' : `ẢI ${def.id}`, def.drops.book && def.drops.book >= 0.5 ? h('em', { class: 'boss' }, '👑 BOSS') : null),
+        h('div', { class: 'sid' }, def.event ? '🎉 ẢI SỰ KIỆN' : `ẢI ${def.id}`, d.book && d.book >= 0.5 ? h('em', { class: 'boss' }, '👑 BOSS') : null),
         h('h3', null, def.name),
         h('div', { class: 'smap' }, `${map.emoji} ${map.name}`)),
       starsEl(prog?.stars ?? 0)),
     h('div', { class: 'sfacts' },
       h('span', null, h('b', null, def.waves), ' đợt'),
       h('span', null, 'Độ khó ', h('b', null, `×${def.diff.toFixed(2)}`)),
-      h('span', null, 'Bắt đầu đợt ', h('b', null, def.startWave)),
       prog?.bestSecs ? h('span', null, 'Kỷ lục ', h('b', null, timeStr(prog.bestSecs))) : null,
       prog?.clears ? h('span', null, 'Đã qua ', h('b', null, prog.clears), ' lần') : null),
   );
@@ -95,30 +125,47 @@ export function stageDetail(def: StageDef, prog: StageProgress | undefined, unlo
     box.append(h('div', { class: 'smods' }, ...def.mods.map((m) => h('div', { class: 'smod' }, h('i', null, MODIFIER_INFO[m].icon), h('div', null, h('b', null, MODIFIER_INFO[m].name), h('span', null, MODIFIER_INFO[m].desc))))));
   }
   if (!opts.compact) {
-    box.append(h('div', { class: 'scrit' },
-      h('div', null, starsEl(1, 1), ' Vượt hết đợt'),
-      h('div', null, starsEl(1, 1), ' Đội còn ≥ 50% máu'),
-      h('div', null, starsEl(1, 1), ` Không ai gục & dưới ${timeStr(def.star3Secs)}`)));
+    box.append(h('div', { class: 'hsec' }, 'Luật vượt ải'), h('div', { class: 'parch rules' },
+      h('div', null, h('i', null, '🎒'), h('span', null, 'Mang đồ vào ải và ', h('b', null, 'chỉ dùng đúng đồ đó'), ' — không có cửa hàng giữa trận.')),
+      h('div', null, h('i', null, '🐒'), h('span', null, 'Khỉ bị hạ rơi ', h('b', null, 'túi đồ'), ' có cột sáng theo phẩm — chạy qua để nhặt.')),
+      h('div', null, h('i', null, '☠️'), h('span', { class: 'warnl' }, 'Chết = mất đồ đang mang, trừ Túi an toàn.')),
+      h('div', null, h('i', null, '🏁'), h('span', null, 'Sống sót tới cuối: giữ hết đồ mang vào + đồ nhặt được + rương thưởng.'))));
+    const chk = loadoutCheck(opts.ctx);
+    box.append(h('div', { class: 'hsec' }, 'Kiểm tra hành trang'), h('div', { class: 'box2' }, chk.box));
   }
-  const slots = (r: { slots: string[] }) => (r.slots.length ? r.slots : SLOTS.map((s) => s.id)).map((s) => SLOTS.find((x) => x.id === s)?.icon ?? '').join('');
-  box.append(h('div', { class: 'sdrops' },
-    h('div', { class: 'sdt' }, 'CÓ THỂ RỚT'),
+  // ---- bảng rớt theo phẩm ----
+  const rolls = d.rolls ?? [];
+  const drops = h('div', { class: 'sdrops' }, h('div', { class: 'hsec' }, 'Có thể rớt'),
     h('div', { class: 'rwd' },
       h('span', { class: 'chip gold' }, `${CUR.gold} ${d.gold[0]}–${d.gold[1]}`),
       h('span', { class: 'chip xp' }, `${CUR.xp} ${d.xp} XP`),
       d.shards ? h('span', { class: 'chip' }, `${CUR.shards} ${d.shards[0]}–${d.shards[1]}`) : null,
-      d.book ? h('span', { class: 'chip' }, `${CUR.books} ${Math.round(d.book * 100)}%`) : null),
-    ...d.rolls.map((r) => h('div', { class: 'droll' }, h('span', { class: 'dc' }, `${Math.round(r.chance * 100)}%`), h('span', { class: 'ds' }, slots(r)), rarityBar(r.weights)))));
+      d.book ? h('span', { class: 'chip' }, `${CUR.books} ${Math.round(d.book * 100)}%`) : null));
+  if (d.grades) drops.append(h('div', { style: 'margin-top:6px' }, h('div', { class: 'dim', style: 'font-size:11.5px;margin-bottom:3px' }, `Túi đồ khỉ rơi${d.perKill ? ` (${Math.round(d.perKill * 100)}% mỗi con)` : ''}`), gradeBar(d.grades, true)));
+  rolls.forEach((r, i) => {
+    const kinds = (r.kinds ?? r.slots ?? []) as string[];
+    const icons = kinds.length ? kinds.map((k) => KIND_ICON[(k === 'gun' ? 'gun' : k) as keyof typeof KIND_ICON] ?? '').join('') : 'mọi loại';
+    drops.append(h('div', { style: 'margin-top:6px' },
+      h('div', { class: 'dim', style: 'font-size:11.5px;margin-bottom:3px;display:flex;justify-content:space-between' }, h('span', null, `${i === 0 && !d.grades ? 'Túi đồ khỉ rơi' : 'Rương thưởng'} · ${Math.round(r.chance * 100)}%`), h('span', null, icons)),
+      gradeBar(r.weights, i === 0 || rolls.length === 1)));
+  });
+  box.append(drops);
   box.append(h('div', { class: 'sfirst' + (cleared ? ' got' : '') },
-    h('div', { class: 'sdt' }, cleared ? '✔ THƯỞNG LẦN ĐẦU (ĐÃ NHẬN)' : '🎁 THƯỞNG LẦN ĐẦU'),
+    h('div', { class: 'hsec' }, cleared ? '✔ Thưởng lần đầu (đã nhận)' : '🎁 Thưởng lần đầu'),
     rewardChips(def.first)));
+  const go = (solo: boolean) => () => {
+    const chk = loadoutCheck();
+    const start = () => createRoom({ solo, mode: 'stage', stage: def.id, map: def.map });
+    if (!chk.ok) confirmBox('Chưa mang súng!', 'Bạn chưa trang bị súng nào — vào ải sẽ chỉ có súng lục cơ bản. Vẫn vào?', 'VẪN VÀO', start, true);
+    else start();
+  };
   box.append(h('div', { class: 'row sbtn' },
-    h('button', { class: 'btn big grow', disabled: !unlocked, onclick: () => createRoom({ solo: true, mode: 'stage', stage: def.id, map: def.map }) }, unlocked ? '▶ CHƠI MỘT MÌNH' : '🔒 CHƯA MỞ'),
-    h('button', { class: 'btn green big grow', disabled: !unlocked, onclick: () => createRoom({ solo: false, mode: 'stage', stage: def.id, map: def.map }) }, '👥 TẠO PHÒNG')));
+    h('button', { class: 'vb gold big grow', disabled: !unlocked, onclick: go(true) }, unlocked ? '▶ MỘT MÌNH' : '🔒 CHƯA MỞ'),
+    h('button', { class: 'vb big grow', disabled: !unlocked, onclick: go(false) }, '👥 TẠO PHÒNG')));
   return box;
 }
 
-export function renderStagesTab(body: HTMLElement, me: MeResponse) {
+export function renderStagesTab(body: HTMLElement, me: MeResponse, ctx?: HubCtx) {
   const prog = progressMap(me);
   const cleared = clearedSet(me);
   // mặc định: chương + ải xa nhất đã mở
@@ -128,9 +175,10 @@ export function renderStagesTab(body: HTMLElement, me: MeResponse) {
     selected = last.id;
     chapter = last.chapter - 1;
   }
-  const wrap = h('div', { class: 'stab' });
+  body.style.overflow = 'hidden';
+  const wrap = h('div', { class: 'vstage' });
   const left = h('div', { class: 'smapcol' });
-  const right = h('div', { class: 'card sdetcard' });
+  const right = h('div', { class: 'sdetcol', 'data-keep-scroll': '1' });
   const draw = () => {
     clear(left);
     clear(right);
@@ -168,7 +216,7 @@ export function renderStagesTab(body: HTMLElement, me: MeResponse) {
     });
     left.append(path);
     const def = STAGE_BY_ID[selected!];
-    right.append(stageDetail(def, prog.get(def.id), stageUnlocked(def.id, cleared)));
+    right.append(stageDetail(def, prog.get(def.id), stageUnlocked(def.id, cleared), { ctx }));
   };
   draw();
   wrap.append(left, right);

@@ -1,6 +1,9 @@
 // Cài đặt người chơi: chuột, camera, âm thanh, đồ hoạ, phím, cảm ứng. Lưu localStorage (bọc try/catch).
 
 export type Quality = 'auto' | 'high' | 'medium' | 'low';
+/** góc camera: qua vai (mặc định) · góc nhìn thứ nhất · xa trên cao */
+export type CamMode = 'shoulder' | 'fps' | 'far';
+export const CAM_MODES: [CamMode, string][] = [['shoulder', 'Qua vai'], ['fps', 'Thứ nhất'], ['far', 'Xa / trên cao']];
 
 export const ACTIONS = [
   ['forward', 'Đi tới'],
@@ -15,6 +18,12 @@ export const ACTIONS = [
   ['skillX', 'Kỹ năng 2'],
   ['ult', 'Tuyệt chiêu'],
   ['knife', 'Chém dao'],
+  ['weapon1', 'Rút súng 1 (ải)'],
+  ['weapon2', 'Rút súng 2 (ải)'],
+  ['item1', 'Dùng vật phẩm ô 3 (ải)'],
+  ['item2', 'Dùng vật phẩm ô 4 (ải)'],
+  ['camera', 'Đổi góc camera'],
+  ['inspect', 'Ngắm nghía súng'],
   ['buyWeapon', 'Nâng bậc súng'],
   ['buyHp', 'Nâng máu'],
   ['shop', 'Mở cửa hàng'],
@@ -33,6 +42,7 @@ export interface Settings {
   fov: number;
   camDist: number;
   adsToggle: boolean;
+  camMode: CamMode;
   master: number;
   sfx: number;
   ambient: number;
@@ -62,6 +72,12 @@ export const DEFAULT_KEYS: Record<Action, string> = {
   skillX: 'KeyX',
   ult: 'KeyQ',
   knife: 'KeyF',
+  weapon1: 'Digit1',
+  weapon2: 'Digit2',
+  item1: 'Digit3',
+  item2: 'Digit4',
+  camera: 'KeyT',
+  inspect: 'KeyI',
   buyWeapon: 'KeyV',
   buyHp: 'KeyC',
   shop: 'KeyB',
@@ -79,6 +95,7 @@ export const DEFAULTS: Settings = {
   fov: 78,
   camDist: 3.6,
   adsToggle: false,
+  camMode: 'shoulder',
   master: 0.8,
   sfx: 0.9,
   ambient: 0.5,
@@ -127,6 +144,7 @@ function load(): Settings {
   s.touchScale = clampN(s.touchScale, 0.7, 1.4);
   s.keyTurn = clampN(s.keyTurn, 40, 360);
   if (!['auto', 'high', 'medium', 'low'].includes(s.quality)) s.quality = 'auto';
+  if (!CAM_MODES.some(([m]) => m === s.camMode)) s.camMode = 'shoulder';
   return s;
 }
 

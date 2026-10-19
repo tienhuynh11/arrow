@@ -1,125 +1,113 @@
-// Tab KHO ĐỒ: hàng ô đang mặc + lưới đồ (màu theo độ hiếm, lọc theo ô) + bảng chi tiết (so sánh, Mặc/Tháo/Nâng cấp/Phân rã)
-// + chế độ chọn nhiều để phân rã hàng loạt.
+// Cửa sổ HÀNH TRANG (B): lưới 6 cột × 60 ô + tab Kho (200 ô). Kéo thả giữa ô, lên paperdoll (mặc), về lại (tháo),
+// sang kho, vào ô bán. Chuột phải / nháy đúp: mặc nhanh. Shift + bấm: chuyển hành trang ↔ kho. Cảm ứng: chạm = menu.
 
 import type { MeResponse } from '@shared/monkey/api';
-import { ITEM_BY_ID, ITEM_MAX_LEVEL, RARITY, SLOTS, itemStats, salvageValue, upgradeCost, type ItemInst, type Slot } from '@shared/monkey/progression';
+import type { ItemKind } from '@shared/monkey/gear';
 import { api } from '../../../api';
 import * as A from '../../../audio';
-import { clear, fmt, h } from '../../dom';
-import { slotGhostSvg } from '../../icons';
+import { ITEM_MAX_LEVEL, UPGRADE_STONE, upgradeCost, upgradeStones } from '@shared/monkey/progression';
+import { BAG_SIZE, STASH_SIZE, bagItems, invOf, defOf, gridOf, sortGrid, starterEligible, starterKit, stashItems, type Inv } from '../../../gearlib';
+import { fmt, h } from '../../dom';
+import { ctxMenu, draggable, dropTarget, type DragSrc } from '../../dnd';
+import { bindTip, itemTip } from '../../tooltip';
 import { act } from '../actions';
-import { confirmBox } from '../ctx';
-import { CUR, instTile, rarityColor, statList } from '../items';
+import type { HubCtx } from '../hub';
+import { CUR, itemEl } from '../items';
+import { doEquip, doStash, gridDrop } from './gearops';
+import { addSell, sellPick } from './merchant';
 
-let filter: Slot | 'all' = 'all';
-let selUid: number | null = null;
-let multi = false;
-const picked = new Set<number>();
+type Filt = 'all' | 'gear' | 'gun' | 'use' | 'mat';
+let filt: Filt = 'all';
+const FILTS: { id: Filt; name: string; kinds: ItemKind[] | null }[] = [
+  { id: 'all', name: 'Tất cả', kinds: null },
+  { id: 'gun', name: 'Vũ khí', kinds: ['gun', 'knife'] },
+  { id: 'gear', name: 'Trang bị', kinds: ['helmet', 'armor', 'gloves', 'boots', 'belt', 'amulet', 'ring', 'skin'] },
+  { id: 'use', name: 'Tiêu hao', kinds: ['consumable'] },
+  { id: 'mat', name: 'Khác', kinds: ['material'] },
+];
 
-function sortItems(list: ItemInst[]) {
-  const order: Record<Slot, number> = { helmet: 0, armor: 1, gun: 2, knife: 3, skin: 4 };
-  return [...list].sort((a, b) => Number(b.equipped) - Number(a.equipped) || b.rarity - a.rarity || b.level - a.level
-    || (order[ITEM_BY_ID[a.itemId]?.slot ?? 'skin'] - order[ITEM_BY_ID[b.itemId]?.slot ?? 'skin']) || b.uid - a.uid);
+export function bagTabs(me: MeResponse) {
+  return [{ id: 'bag', name: `Hành trang ${bagItems(me).length}/${BAG_SIZE}` }, { id: 'stash', name: `Kho ${stashItems(me).length}/${STASH_SIZE}` }];
 }
 
-export function renderInvTab(body: HTMLElement, me: MeResponse) {
-  const items = me.items;
-  const bySlot = new Map<Slot, ItemInst>();
-  for (const it of items) if (it.equipped) { const d = ITEM_BY_ID[it.itemId]; if (d) bySlot.set(d.slot, it); }
-  for (const u of [...picked]) if (!items.some((i) => i.uid === u && !i.equipped)) picked.delete(u);
-  if (selUid !== null && !items.some((i) => i.uid === selUid)) selUid = null;
-  if (selUid === null) selUid = (bySlot.values().next().value as ItemInst | undefined)?.uid ?? items[0]?.uid ?? null;
+function itemActions(it: Inv, which: 'bag' | 'stash', ctx: HubCtx, me: MeResponse) {
+  const def = defOf(it.itemId);
+  const wearable = !!def && def.kind !== 'material';
+  const up = def && def.kind !== 'consumable' && def.kind !== 'material' && it.level < ITEM_MAX_LEVEL;
+  const gold = up ? upgradeCost(it.grade, it.level) : 0;
+  const stones = up ? upgradeStones(it.level) : 0;
+  const have = invOf(me).filter((i) => i.itemId === UPGRADE_STONE).reduce((a, i) => a + i.count, 0);
+  return [
+    { label: '⬆ Mặc / dùng', on: () => void doEquip(it), disabled: !wearable },
+    { label: '🔒 Cất vào Túi an toàn', on: () => void doEquip(it, 'secure') },
+    which === 'bag' ? { label: '📦 Cất vào kho', on: () => void doStash(it, true) } : { label: '🎒 Lấy ra hành trang', on: () => void doStash(it, false) },
+    { label: '🪙 Bán (Thương nhân)', on: () => { addSell(it.uid); ctx.open('merchant', 'sell'); } },
+    ...(up ? [{ label: `✨ Cường hoá +${it.level} (🪙${fmt(gold)} · 💎${stones}/${have} đá)`, disabled: me.profile.gold < gold || have < stones, on: () => void act(api.upgradeItem(it.uid), `${def!.name} lên +${it.level}!`) }] : []),
+  ];
+}
 
-  const redraw = () => { clear(body); renderInvTab(body, me); };
-
-  // ---- hàng đang mặc ----
-  const eqRow = h('div', { class: 'eqrow' }, ...SLOTS.map((s) => {
-    const it = bySlot.get(s.id);
-    if (it) return h('div', { class: 'eqs' }, instTile(it, { size: 58, sel: it.uid === selUid && !multi, onclick: () => { multi = false; selUid = it.uid; A.sfxUi(); redraw(); } }), h('span', null, s.name));
-    const ghost = h('div', { class: 'itile empty', style: '--sz:58px' });
-    ghost.innerHTML = slotGhostSvg(s.id);
-    return h('div', { class: 'eqs' }, ghost, h('span', null, s.name));
-  }));
-
-  // ---- lọc ----
-  const count = (s: Slot | 'all') => items.filter((i) => s === 'all' || ITEM_BY_ID[i.itemId]?.slot === s).length;
-  const filters = h('div', { class: 'ifilt' },
-    ...[{ id: 'all' as const, icon: '🎒', name: 'Tất cả' }, ...SLOTS].map((s) => h('button', { class: filter === s.id ? 'on' : '', onclick: () => { filter = s.id; A.sfxUi(); redraw(); } }, `${s.icon} ${s.name}`, h('em', null, count(s.id)))),
-    h('div', { class: 'grow' }),
-    h('button', { class: `msel${multi ? ' on' : ''}`, onclick: () => { multi = !multi; picked.clear(); A.sfxUi(); redraw(); } }, multi ? '✕ Thôi chọn' : '☑ Chọn nhiều'));
-
-  const shown = sortItems(items.filter((i) => filter === 'all' || ITEM_BY_ID[i.itemId]?.slot === filter));
-  const grid = h('div', { class: 'igrid' });
-  if (!shown.length) grid.append(h('div', { class: 'empty' }, items.length ? 'Không có món nào ở ô này.' : 'Kho trống — vượt ải để nhặt đồ!'));
-  for (const it of shown) {
-    grid.append(instTile(it, {
-      sel: multi ? picked.has(it.uid) : it.uid === selUid,
-      cls: multi && it.equipped ? 'dis' : '',
-      onclick: () => {
-        if (multi) {
-          if (it.equipped) return;
-          if (picked.has(it.uid)) picked.delete(it.uid);
-          else picked.add(it.uid);
-        } else selUid = it.uid;
-        A.sfxUi();
-        redraw();
-      },
-    }));
-  }
-
-  const left = h('div', { class: 'card invl' }, eqRow, filters, grid);
-  const right = h('div', { class: 'card invr' });
-
-  if (multi) {
-    const list = items.filter((i) => picked.has(i.uid));
-    const gold = list.reduce((a, i) => a + salvageValue(i), 0);
-    right.append(
-      h('h3', { class: 'ittl' }, '♻️ PHÂN RÃ HÀNG LOẠT'),
-      h('p', { class: 'idesc' }, 'Bấm vào các món trong kho để chọn. Đồ đang mặc không phân rã được.'),
-      h('div', { class: 'msum' }, h('b', null, list.length), ' món đã chọn', h('br'), 'Nhận về ', h('b', { class: 'gold' }, `${CUR.gold} ${fmt(gold)}`)),
-      h('div', { class: 'col' },
-        ...([0, 1] as const).map((r) => h('button', { class: 'btn ghost sm', onclick: () => { for (const i of items) if (!i.equipped && i.rarity <= r && (filter === 'all' || ITEM_BY_ID[i.itemId]?.slot === filter)) picked.add(i.uid); redraw(); } }, `+ Chọn mọi đồ ${r === 0 ? 'Thường' : 'Thường & Hiếm'}`)),
-        h('button', { class: 'btn ghost sm', disabled: !picked.size, onclick: () => { picked.clear(); redraw(); } }, 'Bỏ chọn hết'),
-        h('button', { class: 'btn red', disabled: !list.length, onclick: () => {
-          const hi = list.some((i) => i.rarity >= 2);
-          confirmBox('Phân rã đồ?', `Phân rã ${list.length} món${hi ? ' (có đồ Sử thi/Huyền thoại!)' : ''} để nhận ${fmt(gold)} vàng. Không hoàn tác được.`, 'PHÂN RÃ', async () => {
-            if (await act(api.salvage([...picked]), `+${fmt(gold)} vàng`)) { picked.clear(); multi = false; }
-          }, true);
-        } }, `♻️ PHÂN RÃ ${list.length || ''}`)));
-  } else {
-    const it = items.find((i) => i.uid === selUid);
-    const def = it ? ITEM_BY_ID[it.itemId] : undefined;
-    if (!it || !def) {
-      right.append(h('div', { class: 'empty' }, 'Chọn một món để xem chi tiết.'));
-    } else {
-      const cur = bySlot.get(def.slot);
-      const cmp = cur && cur.uid !== it.uid ? itemStats(cur) : null;
-      const maxed = it.level >= ITEM_MAX_LEVEL;
-      const cost = upgradeCost(it.rarity, it.level);
-      const sv = salvageValue(it);
-      const big = instTile(it, { size: 96 });
-      right.append(
-        h('div', { class: 'ihead', style: `--rc:${rarityColor(it.rarity)}` }, big,
-          h('div', null,
-            h('h3', { class: 'ittl' }, def.name),
-            h('div', { class: 'irar', style: `color:${rarityColor(it.rarity)}` }, RARITY[it.rarity].name, ' · ', SLOTS.find((s) => s.id === def.slot)?.name ?? ''),
-            h('div', { class: 'ilv' }, `Cấp ${it.level}/${ITEM_MAX_LEVEL}`, h('span', { class: 'pips' }, ...Array.from({ length: ITEM_MAX_LEVEL }, (_, i) => h('i', { class: i < it.level ? 'on' : '' })))),
-            it.equipped ? h('div', { class: 'ieq' }, '✔ Đang mặc') : null)),
-        h('p', { class: 'idesc' }, def.desc),
-        h('div', { class: 'sdt' }, cmp ? 'CHỈ SỐ (so với món đang mặc)' : 'CHỈ SỐ'),
-        statList(itemStats(it), cmp),
-        h('div', { class: 'iact' },
-          it.equipped
-            ? h('button', { class: 'btn ghost', onclick: () => act(api.unequip(def.slot)) }, '⬇ THÁO')
-            : h('button', { class: 'btn green', onclick: () => act(api.equip(it.uid), `Đã mặc ${def.name}`) }, '⬆ MẶC'),
-          h('button', { class: 'btn', disabled: maxed || me.profile.gold < cost, title: maxed ? 'Đã tối đa' : me.profile.gold < cost ? 'Thiếu vàng' : 'Mỗi cấp +8% chỉ số chính', onclick: () => act(api.upgradeItem(it.uid), `${def.name} lên cấp ${it.level + 1}!`) },
-            maxed ? 'TỐI ĐA' : `⬆ NÂNG ${CUR.gold}${fmt(cost)}`),
-          h('button', { class: 'btn red', disabled: it.equipped, title: it.equipped ? 'Tháo ra trước' : '', onclick: () => {
-            const go = () => act(api.salvage([it.uid]), `+${fmt(sv)} vàng`);
-            if (it.rarity >= 2 || it.level > 1) confirmBox('Phân rã?', `Phân rã ${def.name} (${RARITY[it.rarity].name}, cấp ${it.level}) để nhận ${fmt(sv)} vàng?`, 'PHÂN RÃ', go, true);
-            else go();
-          } }, `♻️ ${CUR.gold}${fmt(sv)}`)));
+function grid(me: MeResponse, which: 'bag' | 'stash', ctx: HubCtx) {
+  const list = which === 'bag' ? bagItems(me) : stashItems(me);
+  const size = which === 'bag' ? BAG_SIZE : STASH_SIZE;
+  const cells = gridOf(list, which, size);
+  const kinds = FILTS.find((f) => f.id === filt)?.kinds ?? null;
+  const merchantSell = ctx.isOpen('merchant') && ctx.tab('merchant') === 'sell';
+  const g = h('div', { class: `bgrid${which === 'stash' ? ' st' : ''}`, 'data-keep-scroll': '1' });
+  cells.forEach((it, i) => {
+    const cell = h('div', { class: 'cell' });
+    if (it) {
+      const def = defOf(it.itemId);
+      const dim = kinds && def && !kinds.includes(def.kind);
+      const el = itemEl(it, { cls: `${dim ? 'locked' : ''}${sellPick.has(it.uid) ? ' pick' : ''}` });
+      cell.append(el);
+      bindTip(el, () => itemTip(it, { hint: merchantSell ? 'Chuột phải: thêm vào danh sách bán' : which === 'bag' ? 'Bấm: menu · Chuột phải / nháy đúp: mặc · Shift+bấm: cất kho · Kéo thả để di chuyển' : 'Chuột phải: lấy ra hành trang · Kéo thả để di chuyển' }));
+      draggable(el, (): DragSrc => ({ from: which, it, cell: i }), {
+        onQuick: () => {
+          if (merchantSell) { addSell(it.uid); A.sfxUi(); ctx.redraw(); return; }
+          if (which === 'stash') void doStash(it, false);
+          else void doEquip(it);
+        },
+        onTap: (e) => {
+          if (e.shiftKey) { void doStash(it, which === 'bag'); return; }
+          ctxMenu(e.clientX, e.clientY, itemActions(it, which, ctx, me));
+        },
+      });
     }
+    dropTarget(cell, (s) => !(s.from === which && s.cell === i), (s) => gridDrop(which, i, it, s, ctx.redraw));
+    g.append(cell);
+  });
+  return g;
+}
+
+export function renderBagWin(body: HTMLElement, me: MeResponse, ctx: HubCtx) {
+  const tab = (ctx.tab('inv') ?? 'bag') as 'bag' | 'stash';
+  const list = tab === 'bag' ? bagItems(me) : stashItems(me);
+  body.style.overflow = 'hidden';
+  const wrap = h('div', { class: 'bagw' });
+  if (tab === 'bag' && starterEligible(me)) {
+    const kit = starterKit();
+    wrap.append(h('div', { class: 'starter' }, h('span', { style: 'font-size:20px' }, '🎁'),
+      h('span', { class: 'grow' }, h('b', null, 'Bộ tân binh'), kit.length ? ` — ${kit.length} món: súng, giáp, thuốc…` : ' — súng, giáp và thuốc để vào ải'),
+      h('button', { class: 'vb gold sm', onclick: () => act(api.claimStarter(), '🎁 Đã nhận bộ tân binh — mở Nhân vật (C) để mặc!') }, 'NHẬN')));
   }
-  body.append(h('div', { class: 'itab' }, left, right));
+  wrap.append(h('div', { class: 'bagtools' },
+    h('div', { class: 'bagfilt' }, ...FILTS.map((f) => h('button', { class: f.id === filt ? 'on' : '', onclick: () => { filt = f.id; A.sfxUi(); ctx.redraw(); } }, f.name))),
+    h('span', { class: 'grow' }),
+    h('button', { class: 'vb sm', title: 'Sắp xếp theo loại / phẩm', onclick: () => { sortGrid(list, tab); A.sfxUi(); ctx.redraw(); } }, '⇅ Xếp')));
+  wrap.append(grid(me, tab, ctx));
+  // ô thả nhanh
+  const toOther = h('div', { class: 'dropz' }, tab === 'bag' ? '📦 Thả vào đây: cất kho' : '🎒 Thả vào đây: lấy ra hành trang');
+  dropTarget(toOther, (s) => s.from !== (tab === 'bag' ? 'stash' : 'bag'), (s) => {
+    if (s.from === 'equip') gridDrop(tab === 'bag' ? 'stash' : 'bag', 9999, null, s, ctx.redraw);
+    else void doStash(s.it, tab === 'bag');
+  });
+  const sellZ = h('div', { class: 'dropz sell' }, '🪙 Thả vào đây: bán');
+  dropTarget(sellZ, (s) => s.from !== 'equip', (s) => { addSell(s.it.uid); ctx.open('merchant', 'sell'); });
+  wrap.append(h('div', { class: 'dropbar' }, toOther, sellZ));
+  body.append(wrap);
+  const foot = h('div', null,
+    h('span', null, CUR.gold, ' ', h('b', { style: 'color:var(--gold-hi)' }, fmt(me.profile.gold))),
+    h('span', { class: 'grow' }),
+    h('span', { class: 'dim' }, tab === 'bag' ? `${list.length}/${BAG_SIZE} ô` : `${list.length}/${STASH_SIZE} ô`));
+  return foot;
 }

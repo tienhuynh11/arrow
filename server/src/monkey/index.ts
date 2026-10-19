@@ -17,7 +17,7 @@ import { STAGE_BY_ID } from '../../../shared/monkey/progression.js';
 import { MonkeyRoom, type MConn, type MPlayer } from './room.js';
 import { isMapChoice } from '../../../shared/monkey/map.js';
 import { resolveAccount } from './accounts.js';
-import { setOnlineCounter } from './api.js';
+import { setInventoryBusyCheck, setOnlineCounter } from './api.js';
 
 const MAX_ROOMS = 40;
 const rooms = new Map<string, MonkeyRoom>();
@@ -82,6 +82,15 @@ export function sessionAccount(s: { accountId: number | null; username: string |
 
 let onlineConns = 0;
 setOnlineCounter(() => onlineConns);
+// đang ở phòng vượt ải (sảnh chờ hoặc đang đánh) → khoá kho đồ: không tháo/bán đồ mang theo để né mất đồ,
+// và đồ mặc lúc vào phòng chính là đồ dùng trong trận
+setInventoryBusyCheck((accountId) => {
+  for (const r of rooms.values()) {
+    if (r.disposed || r.mode !== 'stage' || r.phase === 'over') continue;
+    if (r.players.some((p) => p && p.accountId === accountId)) return true;
+  }
+  return false;
+});
 
 const cmdBuf: Cmd[] = [];
 for (let i = 0; i < 16; i++) cmdBuf.push({ seq: 0, mx: 0, mz: 0, yaw: 0, pitch: 0, btn: 0, vt: 0 });

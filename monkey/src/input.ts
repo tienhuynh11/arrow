@@ -1,8 +1,10 @@
 // Điều khiển: bàn phím + chuột (Pointer Lock) và cảm ứng (cần ảo + kéo để ngắm + nút).
 // Trả về input mỗi khung hình theo trục cục bộ (mx phải+, mz tới+), góc nhìn và nút bấm.
 
-import { B_ADS, B_FIRE, B_JUMP, B_RELOAD, B_SPRINT, B_USE, P_C, P_G, P_K, P_Q, P_V, P_X } from '@shared/monkey/sim';
+import { B_ADS, B_FIRE, B_JUMP, B_RELOAD, B_SPRINT, B_USE, P_C, P_G, P_K, P_Q, P_U1, P_U2, P_V, P_W1, P_W2, P_X } from '@shared/monkey/sim';
 import { settings, type Action } from './settings';
+
+export type InputAction = 'shop' | 'scoresOn' | 'scoresOff' | 'pause' | 'touchpad' | 'camera' | 'inspect';
 
 export class Input {
   yaw = 0; // radian
@@ -15,7 +17,7 @@ export class Input {
   locked = false;
   enabled = false;
   /** callback hành động giao diện */
-  onAction: (a: 'shop' | 'scoresOn' | 'scoresOff' | 'pause' | 'touchpad') => void = () => {};
+  onAction: (a: InputAction) => void = () => {};
   /** đổi chế độ điều khiển (chuột ↔ cảm ứng) — giao diện bật/tắt nút ảo theo */
   onMode: (touch: boolean) => void = () => {};
   /** false = chưa được điều khiển (ví dụ chưa vào toàn màn hình) → bỏ qua mọi thao tác */
@@ -204,6 +206,12 @@ export class Input {
     if (code === k.skillX) this.pressed |= P_X;
     if (code === k.ult) this.pressed |= P_Q;
     if (code === k.knife) this.pressed |= P_K;
+    if (code === k.weapon1) this.pressed |= P_W1;
+    if (code === k.weapon2) this.pressed |= P_W2;
+    if (code === k.item1) this.pressed |= P_U1;
+    if (code === k.item2) this.pressed |= P_U2;
+    if (code === k.camera) this.onAction('camera');
+    if (code === k.inspect) this.onAction('inspect');
     if (code === k.buyWeapon) this.pressed |= P_V;
     if (code === k.buyHp) this.pressed |= P_C;
     if (code === k.shop) this.onAction('shop');

@@ -3,14 +3,17 @@
 
 import type { RunReward } from '@shared/monkey/api';
 import { CLASSES } from '@shared/monkey/content';
-import { ITEM_BY_ID, RARITY, STAGE_BY_ID, nextStage } from '@shared/monkey/progression';
+import { STAGE_BY_ID, nextStage } from '@shared/monkey/progression';
+import type { ExtractResult } from '@shared/monkey/gear';
+import { defOf, dropInst, gradeColor, gradeName, invOf, normInst, sellPrice, type Inv } from '../../gearlib';
+import { bindTip, itemTip } from '../tooltip';
 import { api } from '../../api';
 import * as A from '../../audio';
 import { CLASS_ICON, fmt, h, timeStr } from '../dom';
 import { createRoom } from './actions';
 import { S, closeModal, send, type OverMsgX, type VictoryMsg } from './ctx';
 import { boardTable } from './home';
-import { CUR, itemTile, rarityColor, rewardChips } from './items';
+import { CUR, itemEl, itemTile, rewardChips } from './items';
 
 let timers: number[] = [];
 function later(ms: number, fn: () => void) {
@@ -68,16 +71,17 @@ function lootBlock(rw: RunReward | undefined, startMs: number, opts: { chest: bo
     later(t, () => drops.append(h('div', { class: 'vnone' }, 'Lần này không rớt đồ — thử lại để cầu may!')));
   }
   for (const it of items) {
-    const def = ITEM_BY_ID[it.itemId];
+    const def = defOf(it.itemId);
+    const g = it.grade;
     later(t, () => {
-      const card = h('div', { class: `vdrop r${it.rarity}`, style: `--rc:${rarityColor(it.rarity)}` },
-        itemTile(it.itemId, it.rarity, { size: 64 }),
+      const card = h('div', { class: `vdrop r${g}`, style: `--rc:${gradeColor(g)}` },
+        itemTile(it.itemId, g, { size: 'big', count: it.count }),
         h('b', null, def?.name ?? it.itemId),
-        h('span', { style: `color:${rarityColor(it.rarity)}` }, RARITY[it.rarity].name));
+        h('span', { style: `color:${gradeColor(g)}` }, gradeName(g)));
       drops.append(card);
-      A.sfxLoot(it.rarity);
+      A.sfxLoot(g);
     });
-    t += it.rarity >= 3 ? 700 : 380;
+    t += g >= 3 ? 700 : 380;
   }
   later(t, () => {
     countUp(gold, r.gold ?? 0, 900, '+');
@@ -92,6 +96,49 @@ function lootBlock(rw: RunReward | undefined, startMs: number, opts: { chest: bo
     t += 400;
   }
   return { box, endMs: t };
+}
+
+/** đồ của mình trước trận (uid → món) để hiện đồ giữ / mất */
+let gearSnap = new Map<number, Inv>();
+/** gọi lúc vào trận: chụp lại đồ đang mặc (hồ sơ sẽ đổi sau trận) */
+export function snapGear() {
+  gearSnap = new Map(invOf(api.me).map((i) => [i.uid, i]));
+}
+
+function cellOf(it: Inv, lost: boolean) {
+  const cell = h('div', { class: 'cell' });
+  const el = itemEl(it);
+  cell.append(el);
+  bindTip(el, () => itemTip(it, { lost, noCompare: true }));
+  return cell;
+}
+
+/** tổng kết mang đồ: SỐNG SÓT / GỤC NGÃ + đồ giữ / mất (gạch đỏ) / nhặt được */
+function extractBlock(ex: ExtractResult | undefined, rw: RunReward | undefined, won: boolean) {
+  if (!ex) return null;
+  const box = h('div', { class: 'xbox' });
+  box.append(h('div', { class: `xbanner ${ex.survived ? 'ok' : 'bad'}` }, ex.survived ? 'SỐNG SÓT ✔' : 'GỤC NGÃ ✖'),
+    h('div', { class: 'xsub' }, ex.survived
+      ? 'Bạn mang được toàn bộ đồ về — kể cả đồ nhặt trong ải.'
+      : won ? 'Đội đã thắng nhưng bạn gục giữa đường: đồ đang mang đã mất, trừ Túi an toàn.' : 'Đồ đang mang đã mất — chỉ Túi an toàn còn lại.'));
+  const inst = (u: number) => gearSnap.get(u) ?? invOf(api.me).find((i) => i.uid === u);
+  const kept = ex.kept.map(inst).filter((x): x is Inv => !!x);
+  const lost = ex.lost.map(inst).filter((x): x is Inv => !!x);
+  const looted = ex.looted.map((d) => dropInst(d));
+  const items = (rw?.reward?.items ?? []).map((x) => normInst({ ...x, level: 1, slot: null, stash: false }));
+  const col = (title: string, list: Inv[], cls: string, empty: string, isLost: boolean) => h('div', { class: `xcol ${cls}` },
+    h('div', { class: 'hsec' }, title),
+    h('div', { class: 'xl' }, ...(list.length ? list.map((i) => cellOf(i, isLost)) : [h('span', { class: 'none' }, empty)])));
+  const lostVal = lost.reduce((a, i) => a + sellPrice(i), 0);
+  box.append(h('div', { class: 'xres' },
+    col(`✔ Giữ lại (${kept.length})`, kept, 'kept', 'Không có', false),
+    col(`✖ Mất (${lost.length})${lostVal ? ` · ~${fmt(lostVal)} vàng` : ''}`, lost, 'lost', 'Không mất gì 🎉', true),
+    col(`🎒 Nhặt được (${looted.length})`, ex.survived ? (items.length ? items : looted) : looted, ex.survived ? 'loot' : 'lost', 'Chưa nhặt được gì', !ex.survived)));
+  const used = Object.entries(ex.usedConsumables ?? {}).filter(([, n]) => n > 0);
+  if (used.length) box.append(h('div', { class: 'dim', style: 'font-size:12px;margin-top:6px;text-align:center' }, 'Đã dùng: ', used.map(([id, n]) => `${defOf(id)?.name ?? id} ×${n}`).join(' · ')));
+  if (rw?.overflowGold) box.append(h('div', { class: 'dim', style: 'font-size:12px;margin-top:4px;text-align:center' }, `Kho đầy — ${fmt(rw.overflowGold)} vàng đổi từ đồ không còn chỗ chứa`));
+  if (!ex.survived && kept.some((k) => k.slot === 'secure')) box.append(h('div', { class: 'xsafe', style: 'text-align:center;font-size:12px;margin-top:4px' }, '🔒 Túi an toàn đã giữ món quý của bạn'));
+  return box;
 }
 
 function teamBlock(rewards: RunReward[], names: Map<number, { name: string; cls: number }>) {
@@ -131,7 +178,9 @@ export function showVictory(m: VictoryMsg) {
     h('span', null, '⏱ ', h('b', null, timeStr(m.secs))),
     h('span', null, '🌊 ', h('b', null, `${m.wave} đợt`)),
     mine?.firstClear ? h('span', { class: 'vfirst' }, '🏅 LẦN ĐẦU VƯỢT ẢI') : null);
-  const loot = lootBlock(mine, 400 + m.stars * 450 + 200, { chest: true });
+  const myEx = mine?.extract;
+  const exBox = extractBlock(myEx, mine, true);
+  const loot = lootBlock(myEx && !myEx.survived ? undefined : mine, 400 + m.stars * 450 + 200, { chest: true });
   const btns = h('div', { class: 'row vbtns' });
   const goNext = () => {
     if (!nextDef) return;
@@ -152,7 +201,7 @@ export function showVictory(m: VictoryMsg) {
     h('div', { class: 'vrays' }),
     h('h1', { class: 'vttl' }, 'CHIẾN THẮNG!'),
     h('div', { class: 'vsub' }, def ? (def.event ? `🎉 ${def.name}` : `Ải ${def.id} · ${def.name}`) : m.stage),
-    stars, facts, loot.box,
+    stars, facts, exBox, myEx && !myEx.survived ? null : h('div', { class: 'hsec' }, '🎁 Rương thưởng'), myEx && !myEx.survived ? null : loot.box,
     teamBlock(m.rewards, playerNames()),
     btns));
   app.append(el);
@@ -180,6 +229,8 @@ export function showOver(m: OverMsgX) {
   }
   const mineBoard = m.board.find((e) => e.score === m.score && e.wave === m.wave && e.kills === m.kills) ?? null;
   const mine = m.rewards?.find((r) => r.idx === S.meIdx);
+  const myEx = mine?.extract;
+  const exBox = extractBlock(myEx, mine, false);
   const consol = m.rewards ? h('div', { class: 'consol' }, h('div', { class: 'sdt' }, '🎁 THƯỞNG AN ỦI'), lootBlock(mine, 300, { chest: false }).box) : null;
   const right = stageDef
     ? h('div', null, h('h3', { class: 'sdt' }, 'ẢI'), h('div', { class: 'ostage' }, h('b', null, stageDef.event ? `🎉 ${stageDef.name}` : `${stageDef.id} · ${stageDef.name}`), h('span', null, `Đạt ${m.wave}/${stageDef.waves} đợt — thử nâng đồ, nâng kỹ năng rồi quay lại!`)), consol)
@@ -188,6 +239,7 @@ export function showOver(m: OverMsgX) {
   const el = h('div', { class: 'over' }, h('div', { class: 'card' },
     h('h1', { class: 'ttl' }, stageDef ? 'THẤT BẠI!' : solo ? 'BẠN ĐÃ GỤC!' : 'CẢ ĐỘI ĐÃ GỤC!'),
     m.rank > 0 ? h('div', { class: 'rank' }, `🏆 Hạng #${m.rank} bảng ${solo ? 'Một mình' : 'Đồng đội'}`) : null,
+    exBox,
     h('div', { class: 'big3' },
       h('div', null, h('b', null, m.wave), h('span', null, 'ĐỢT ĐẠT TỚI')),
       h('div', null, h('b', null, fmt(m.score)), h('span', null, 'ĐIỂM ĐỘI')),

@@ -4,6 +4,7 @@
 import { AI_MS } from '../../shared/monkey/config.js';
 import { GameModel } from '../../shared/monkey/client.js';
 import { PLAYER_SPAWNS } from '../../shared/monkey/map.js';
+import { STAGE_BY_ID } from '../../shared/monkey/progression.js';
 import { SnapData, decodeCmds, decodeSnap, encodeCmds, type SMsg } from '../../shared/monkey/proto.js';
 import type { Cmd } from '../../shared/monkey/sim.js';
 import { MonkeyRoom, type MConn, type MPlayer } from '../src/monkey/room.js';
@@ -22,6 +23,10 @@ export interface SimCfg {
   /** gọi mỗi tick server (đo đạc) */
   onTick?: (room: MonkeyRoom, clients: SimClient[], now: number) => void;
   onRoom?: (room: MonkeyRoom) => void;
+  /** vượt ải: id ải (bỏ trống = vô tận) */
+  stage?: string;
+  /** gán trang bị cho bot thứ i trước khi vào trận (ải: weapons/quick/carried…) */
+  loadout?: (i: number) => unknown;
   onModel?: (cl: SimClient) => void;
 }
 
@@ -108,10 +113,11 @@ export function runSim(cfg: SimCfg): SimResult {
       if (m.t === 'start') {
         const me = m.players.find((p) => p.idx === cl.idx)!;
         const sp = PLAYER_SPAWNS[cl.idx];
-        cl.model = new GameModel(cl.idx, me.cls, sp.x, sp.z);
+        cl.model = new GameModel(cl.idx, me.cls, sp.x, sp.z, me.mods, m.stage ? STAGE_BY_ID[m.stage] : undefined, me.weapons ?? null);
         cl.model.rttMs = cfg.rtt;
+        cl.brain.economy = m.economy;
         cfg.onModel?.(cl);
-      } else if (m.t === 'over') cl.over = m;
+      } else if (m.t === 'over' || m.t === 'victory') cl.over = m;
       else if (m.t === 'wave') cl.waves.push(m);
       else if (m.t === 'ev') {
         cl.events.push(m);
@@ -127,6 +133,16 @@ export function runSim(cfg: SimCfg): SimResult {
     cl.model.onSnap(snap, now);
   }
 
+  if (cfg.stage) {
+    room.mode = 'stage';
+    room.stageId = cfg.stage;
+  }
+  if (cfg.loadout) {
+    for (const p of players) {
+      (p as { loadout: unknown }).loadout = cfg.loadout(p.idx);
+      p.loadoutCls = p.cls;
+    }
+  }
   cfg.onRoom?.(room);
   room.begin();
   const wantMs = cfg.seconds * 1000;

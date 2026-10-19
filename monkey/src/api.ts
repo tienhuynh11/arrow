@@ -2,8 +2,10 @@
 // Token phiên lưu localStorage 'monkey-token'; hồ sơ `me` được cache + báo cho người đăng ký.
 
 import { API, type AuthRes, type LeaderRow, type MeResponse, type MutateRes } from '@shared/monkey/api';
-import type { Reward, SkillKey, Slot } from '@shared/monkey/progression';
+import type { Reward, SkillKey } from '@shared/monkey/progression';
+import type { EquipSlot } from '@shared/monkey/gear';
 import { store } from './settings';
+
 
 const BASE = import.meta.env.BASE_URL;
 const TOKEN_KEY = 'monkey-token';
@@ -133,8 +135,15 @@ export const api = {
     return applyMe(await req<MeResponse>(API.me));
   },
 
-  equip: (uid: number) => mutate(API.equip, { uid }),
-  unequip: (slot: Slot) => mutate(API.unequip, { slot }),
+  /** mặc món `uid` vào ô (v2: ô trang bị kiểu VLTK) */
+  equip: (uid: number, slot: EquipSlot) => mutate(API.equip, { uid, slot }),
+  unequip: (slot: EquipSlot) => mutate(API.unequip, { slot }),
+  /** chuyển món giữa ba lô và kho (stash = true → vào kho) */
+  stash: (uid: number, stash: boolean) => mutate(stash ? API.stash : API.bag, { uid }),
+  sell: (uids: number[]) => mutate(API.sell, { uids }),
+  /** mua SHOP_STOCK[idx] × qty */
+  buy: (idx: number, qty = 1) => mutate(API.buy, { idx, qty }),
+  claimStarter: () => mutate(API.claimStarter, {}),
   upgradeItem: (uid: number) => mutate(API.upgradeItem, { uid }),
   salvage: (uids: number[]) => mutate(API.salvage, { uids }),
   unlockChar: (cls: number) => mutate(API.unlockChar, { cls }),

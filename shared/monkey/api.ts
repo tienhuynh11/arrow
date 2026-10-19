@@ -1,7 +1,8 @@
 // Hợp đồng REST (/monkey/api/*) + phần mở rộng WebSocket cho tài khoản, kho đồ, ải, sự kiện.
 // Client gửi header `Authorization: Bearer <token>` cho mọi route cần đăng nhập.
 
-import type { ItemInst, Rarity, Reward, SkillKey, Slot, Stats } from './progression.js';
+import type { ExtractResult, Grade } from './gear.js';
+import type { EquipSlot, ItemInst, Reward, ShopEntry, SkillKey } from './progression.js';
 
 /* ======================= HỒ SƠ ======================= */
 export interface Profile {
@@ -68,10 +69,20 @@ export interface MeResponse {
 /* ======================= REST ======================= */
 export interface AuthReq { username: string; password: string }
 export interface AuthRes { token: string; me: MeResponse }
-export interface EquipReq { uid: number }
-export interface UnequipReq { slot: Slot }
+/** mặc món `uid` vào ô `slot` (SLOT_ACCEPTS + cấp yêu cầu; món cũ ở ô đó đổi chỗ / về túi) */
+export interface EquipReq { uid: number; slot: EquipSlot }
+export interface UnequipReq { slot: EquipSlot }
+/** chuyển món sang kho / về túi */
+export interface MoveItemReq { uid: number }
 export interface UpgradeItemReq { uid: number }
-export interface SalvageReq { uids: number[] }
+/** bán cho thương nhân (granted.gold = vàng nhận) */
+export interface SellReq { uids: number[] }
+/** @deprecated v1 — như SellReq */
+export type SalvageReq = SellReq;
+/** mua SHOP_STOCK[idx] × qty (granted.gold = vàng đã tiêu) */
+export interface BuyReq { idx: number; qty: number }
+/** GET shop-stock */
+export interface ShopStockRes { stock: ShopEntry[] }
 export interface UnlockCharReq { cls: number }
 export interface SelectCharReq { cls: number }
 export interface UpgradeSkillReq { cls: number; skill: SkillKey }
@@ -100,10 +111,16 @@ export const API = {
   login: 'api/login',
   logout: 'api/logout',
   me: 'api/me',
-  equip: 'api/equip',
-  unequip: 'api/unequip',
-  upgradeItem: 'api/upgrade-item',
-  salvage: 'api/salvage',
+  equip: 'api/equip', // POST {uid, slot}
+  unequip: 'api/unequip', // POST {slot}
+  stash: 'api/stash', // POST {uid} → vào kho
+  bag: 'api/bag', // POST {uid} → về túi
+  sell: 'api/sell', // POST {uids}
+  buy: 'api/buy', // POST {idx, qty}
+  claimStarter: 'api/claim-starter', // POST {}
+  shopStock: 'api/shop-stock', // GET → ShopStockRes
+  upgradeItem: 'api/upgrade-item', // POST {uid} — vàng + Đá Cường Hoá
+  salvage: 'api/salvage', // @deprecated = sell
   unlockChar: 'api/unlock-char',
   selectChar: 'api/select-char',
   upgradeSkill: 'api/upgrade-skill',
@@ -120,12 +137,18 @@ export const API = {
 /** gửi ngay sau khi kết nối nếu đã đăng nhập: {t:'auth', token} → server trả {t:'authed', username} hoặc {t:'err'} */
 export interface WsAuth { t: 'auth'; token: string }
 
+/** món trong kết quả trận (đã có uid trong kho) */
+export interface RunRewardItem { uid: number; itemId: string; grade: Grade; affixes: ItemInst['affixes']; count: number }
 /** kết quả trận cho từng người (tin 'victory' và 'over' mang theo khi chơi có tài khoản) */
 export interface RunReward {
   idx: number;
-  /** null = khách, không có thưởng */
-  reward: (Reward & { items?: { uid: number; itemId: string; rarity: Rarity; subs: Stats }[] }) | null;
+  /** null = khách, không có thưởng. items = món mới/đổi trong kho (có uid) */
+  reward: (Omit<Reward, 'items'> & { items?: RunRewardItem[] }) | null;
   levelUps: number;
   newLevel: number;
   firstClear: boolean;
+  /** (chỉ ải mang đồ) kết quả mang đồ: lost = uid đồ đã thực sự mất */
+  extract?: ExtractResult;
+  /** (chỉ ải mang đồ) vàng đổi từ đồ không còn chỗ chứa */
+  overflowGold?: number;
 }

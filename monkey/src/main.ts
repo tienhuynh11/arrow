@@ -4,10 +4,12 @@
 
 import './styles.css';
 import './ui/screens/screens.css';
+import './ui/vltk.css';
 import { GameModel } from '@shared/monkey/client';
 import { CLASSES, MK_CHAY, MK_DOT, MK_NAU, MK_NEM, MK_NO, MK_TRANG } from '@shared/monkey/content';
 import { GAME_TITLE } from '@shared/monkey/config';
-import { ST_MOVE, ST_THROW, ST_WIND, type StartPlayer } from '@shared/monkey/proto';
+import { ST_MOVE, ST_THROW, ST_WIND, type SMsg } from '@shared/monkey/proto';
+import { P_U1, P_U2, P_W1, P_W2 } from '@shared/monkey/sim';
 import { MAP_RANDOM, isMapChoice, setActiveMap } from '@shared/monkey/map';
 import { STAGE_BY_ID } from '@shared/monkey/progression';
 import { api, onMe, setLoggedOutHandler } from './api';
@@ -27,10 +29,10 @@ import { Chat } from './ui/chat';
 import { S, closeModal, confirmBox, modal, nav, send } from './ui/screens/ctx';
 import { renderHome } from './ui/screens/home';
 import { renderLogin } from './ui/screens/login';
-import { renderHub } from './ui/screens/hub';
+import { hubWinOpen, renderHub } from './ui/screens/hub';
 import { disposeCharsTab } from './ui/screens/hub/chars';
 import { renderLobby } from './ui/screens/lobby';
-import { clearResultTimers, showOver, showVictory } from './ui/screens/results';
+import { clearResultTimers, showOver, showVictory, snapGear } from './ui/screens/results';
 import { showHelp } from './ui/screens/help';
 
 const app = document.getElementById('app')!;
@@ -168,7 +170,7 @@ net.onJson = (m) => {
     case 'lb':
       S.lb = { solo: m.solo, team: m.team };
       if (S.screen === 'home') renderHome();
-      else if (S.screen === 'hub' && S.hubTab === 'endless' && !S.modalClose) renderHub();
+      else if (hubWinOpen('endless') && !S.modalClose) renderHub();
       return;
     case 'joined':
       S.meIdx = m.idx;
@@ -190,7 +192,7 @@ net.onJson = (m) => {
       setActiveMap(m.map);
       stage.setMap(m.map);
       if (m.stage) S.lastStage = m.stage;
-      startGame(m.players, m.stage);
+      startGame(m);
       return;
     case 'chat':
       chat.add(m.i, m.n, m.m);
@@ -230,7 +232,10 @@ let touchUi: HTMLElement | null = null;
 let shopOpen = false;
 let pauseEl: HTMLElement | null = null;
 
-function startGame(players: StartPlayer[], stageId?: string) {
+function startGame(msg: Extract<SMsg, { t: 'start' }>) {
+  const players = msg.players;
+  const stageId = msg.stage;
+  const sdef = stageId ? STAGE_BY_ID[stageId] : undefined;
   closeModal();
   leaveHub();
   endGame();
@@ -238,7 +243,16 @@ function startGame(players: StartPlayer[], stageId?: string) {
   app.replaceChildren();
   S.screen = 'game';
   document.body.classList.add('ingame');
-  game = new Game({ stage, monkeys, fx }, input, players, S.meIdx);
+  snapGear();
+  game = new Game({ stage, monkeys, fx }, input, players, S.meIdx, {
+    economy: msg.economy !== false,
+    waves: msg.waves ?? sdef?.waves,
+    stageName: sdef ? (sdef.event ? sdef.name : `${sdef.id} ${sdef.name}`) : undefined,
+    loot: msg.loot,
+  });
+  game.hud.onSystem = (t, c) => chat.system(t, c);
+  game.onInspectKey = () => toggleInspect();
+  if (!game.opts.economy) chat.system('Vượt ải: chỉ dùng đồ mang theo · gục hẳn = mất đồ (trừ Túi an toàn).', '#f2cc6a');
   // ải: độ khó + luật vào waveSpec phía client cho khớp server
   if (stageId && STAGE_BY_ID[stageId]) game.model.stage = STAGE_BY_ID[stageId];
   buildTouch();
@@ -248,6 +262,7 @@ function startGame(players: StartPlayer[], stageId?: string) {
 
 /** hết trận (thua / thắng): dừng điều khiển, gỡ nút cảm ứng + tạm dừng; cảnh vẫn vẽ phía sau */
 function stopForResults() {
+  inspectExit?.();
   closeModal();
   game?.stop();
   touchUi?.remove();
@@ -339,7 +354,7 @@ function refreshPrompt() {
 
 // bấm bất kỳ đâu trên màn chơi (kể cả lúc khoá chuột vừa bị trình duyệt từ chối) → vào lại
 document.addEventListener('pointerdown', (e) => {
-  if (!inGameFree()) return;
+  if (!inGameFree() || game?.inspecting) return;
   if ((e.target as HTMLElement | null)?.closest('button, input, select, a, .card')) return;
   if (!fsOk() || (!input.touch && !document.pointerLockElement)) enterPlay();
 }, true);
@@ -365,13 +380,55 @@ input.onAction = (a) => {
     return;
   }
   if (!game || S.screen !== 'game') return;
-  if (a === 'shop') toggleShop();
+  if (a === 'camera') { game.cycleCamera(); return; }
+  if (a === 'inspect') { toggleInspect(); return; }
+  if (a === 'shop') { if (game.opts.economy) toggleShop(); else game.hud.feed('🚫 Vượt ải không có cửa hàng — chỉ dùng đồ mang theo', 'bad'); }
   else if (a === 'scoresOn') game.hud.showScores(true, game.model);
   else if (a === 'scoresOff') game.hud.showScores(false, null);
   else if (a === 'pause') {
+    // đang ngắm nghía: thoát chuột là chuyện bình thường, không tạm dừng
+    if (game.inspecting) return;
     if (!shopOpen && !S.modalClose) showPause();
   }
 };
+
+/** ngắm nghía súng: nhả chuột để kéo xoay; I / Esc thoát */
+function toggleInspect() {
+  if (!game || S.screen !== 'game' || shopOpen || pauseEl || S.modalClose) return;
+  const g = game;
+  if (!g.inspecting) {
+    g.setInspect(true);
+    if (!g.inspecting) return;
+    input.enabled = false;
+    input.resetKeys();
+    input.unlock();
+    let lastX: number | null = null;
+    const down = (e: PointerEvent) => { lastX = e.clientX; };
+    const move = (e: PointerEvent) => { if (lastX !== null) { g.inspectDrag(e.clientX - lastX); lastX = e.clientX; } };
+    const up = () => { lastX = null; g.inspectDrag(null); };
+    const key = (e: KeyboardEvent) => {
+      if (e.code === 'Escape' || e.code === settings.keys.inspect) { e.preventDefault(); e.stopPropagation(); exit(); }
+    };
+    const exit = () => {
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('keydown', key, true);
+      inspectExit = null;
+      g.setInspect(false);
+      if (game === g && S.screen === 'game') {
+        input.enabled = true;
+        enterPlay();
+      }
+    };
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('keydown', key, true);
+    inspectExit = exit;
+  } else inspectExit?.();
+}
+let inspectExit: (() => void) | null = null;
 
 function toggleShop() {
   if (!game) return;
@@ -443,11 +500,13 @@ function buildTouch() {
   const sx = btn(CLASSES[g.model.pred.cls].x.icon, 'small', 'right:196px;bottom:72px');
   const sq = btn(CLASSES[g.model.pred.cls].q.icon, 'small', 'right:24px;bottom:30px');
   const knife = btn('🔪', 'small', 'right:196px;bottom:126px');
-  const shop = btn('🛒', 'small', 'left:12px;top:180px');
+  const eco = g.opts.economy;
+  const shop = btn(eco ? '🛒' : '⇄', 'small', 'left:12px;top:180px');
   const pause = btn('⏸', 'small', 'left:12px;top:236px');
-  const upW = btn('🔫⬆', 'small', 'left:64px;top:180px');
-  const upH = btn('❤️⬆', 'small', 'left:64px;top:236px');
-  touchUi = h('div', { class: 'touch', style: `--ts:${settings.touchScale}` }, zl, zr, base, fire, jump, reload, use, sg, sx, sq, knife, shop, pause, upW, upH);
+  const upW = btn(eco ? '🔫⬆' : '3', 'small', 'left:64px;top:180px');
+  const upH = btn(eco ? '❤️⬆' : '4', 'small', 'left:64px;top:236px');
+  const camB = btn('🎥', 'small', 'left:116px;top:236px');
+  touchUi = h('div', { class: 'touch', style: `--ts:${settings.touchScale}` }, zl, zr, base, fire, jump, reload, use, sg, sx, sq, knife, shop, pause, upW, upH, camB);
   app.append(touchUi);
   input.bindTouch(zl, zr, knob, base);
   input.holdButton(fire, (v) => (input.touchFire = v));
@@ -458,13 +517,21 @@ function buildTouch() {
   input.tapButton(sx, () => g.pressSkill('x'));
   input.tapButton(sq, () => g.pressSkill('q'));
   input.tapButton(knife, () => g.pressKnife());
-  input.tapButton(shop, () => toggleShop());
   input.tapButton(pause, () => showPause());
-  input.tapButton(upW, () => net.send({ t: 'buy', item: 'weapon' }));
-  input.tapButton(upH, () => net.send({ t: 'buy', item: 'hp' }));
+  input.tapButton(camB, () => g.cycleCamera());
+  if (eco) {
+    input.tapButton(shop, () => toggleShop());
+    input.tapButton(upW, () => net.send({ t: 'buy', item: 'weapon' }));
+    input.tapButton(upH, () => net.send({ t: 'buy', item: 'hp' }));
+  } else {
+    input.tapButton(shop, () => input.press(g.model.pred.wslot === 0 ? P_W2 : P_W1));
+    input.tapButton(upW, () => input.press(P_U1));
+    input.tapButton(upH, () => input.press(P_U2));
+  }
 }
 
 function endGame() {
+  inspectExit?.();
   document.body.classList.remove('ingame');
   if (game) {
     game.destroy();
@@ -608,7 +675,7 @@ function loop(now: number) {
 requestAnimationFrame(loop);
 
 /* ======================= KHỞI ĐỘNG ======================= */
-if (api.loggedIn) renderHub('stages');
+if (api.loggedIn) renderHub();
 else renderLogin(S.pendingJoin ? `Bạn được mời vào phòng ${S.pendingJoin.toUpperCase()} — đăng nhập hoặc chơi khách để vào.` : undefined);
 if (SHOW === null) askFullscreen();
 document.title = GAME_TITLE;

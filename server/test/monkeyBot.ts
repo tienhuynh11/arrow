@@ -3,9 +3,10 @@
 
 import { GameModel } from '../../shared/monkey/client.js';
 import { CLASSES, HP_TIER_COST, MAX_HP_TIER, MAX_TIER, ULT_KILLS, bodyY, weaponOf } from '../../shared/monkey/content.js';
+import { curWeapon } from '../../shared/monkey/sim.js';
 import { ARENA } from '../../shared/monkey/map.js';
 import { FX_SHOCK, PF_DOWN_MASK } from '../../shared/monkey/proto.js';
-import { B_FIRE, B_JUMP, B_RELOAD, B_SPRINT, B_USE, EYE_Y, P_C, P_G, P_Q, P_V, P_X } from '../../shared/monkey/sim.js';
+import { B_FIRE, B_JUMP, B_RELOAD, B_SPRINT, B_USE, EYE_Y, P_C, P_G, P_Q, P_U1, P_U2, P_V, P_W1, P_W2, P_X } from '../../shared/monkey/sim.js';
 
 export interface BotInput { mx: number; mz: number; yaw: number; pitch: number; btn: number }
 
@@ -24,6 +25,11 @@ export class BotBrain {
   private lastBuy = 0;
   private rng: () => number;
   wantBreakReady = false;
+  /** false = ải (không xu: không mua, kỹ năng miễn phí, dùng vật phẩm ô nhanh) */
+  economy = true;
+  /** ải: đổi súng mỗi N ms (0 = không đổi) */
+  swapEvery = 0;
+  private lastSwap = 0;
 
   constructor(seed: number, skill = 0.6) {
     let a = seed >>> 0 || 7;
@@ -86,7 +92,7 @@ export class BotBrain {
       this.yawRad += dyaw * 0.35 + (this.rng() - 0.5) * this.aimNoise;
       this.pitchRad += (tp - this.pitchRad) * 0.35 + (this.rng() - 0.5) * this.aimNoise * 0.5;
       const aimed = Math.abs(dyaw) < 0.12;
-      const w = weaponOf(me?.cls ?? 0, me?.tier ?? 0);
+      const w = curWeapon(m.pred);
       if (aimed && d < w.range * 0.9 && !down) out.btn |= B_FIRE;
       // thả diều: lùi ra khi khỉ áp sát, đi ngang
       if (now - this.strafeAt > 1800 + this.rng() * 1500) { this.strafe = -this.strafe; this.strafeAt = now; }
@@ -104,7 +110,7 @@ export class BotBrain {
       // không thấy khỉ: về gần giữa sân
       const d = Math.hypot(x, z);
       if (d > 8) { wantX = -x / d; wantZ = -z / d; }
-      if (me && me.ammo < weaponOf(me.cls, me.tier).mag * 0.6) out.btn |= B_RELOAD;
+      if (me && me.ammo < curWeapon(m.pred).mag * 0.6) out.btn |= B_RELOAD;
     }
     // né mép sân
     const edge = ARENA - 4;
@@ -148,7 +154,14 @@ export class BotBrain {
     out.pitch = Math.max(-13000, Math.min(13000, Math.round((this.pitchRad / (Math.PI * 2)) * 65536)));
 
     // ---- mua sắm + kỹ năng ----
-    if (me && !down && now - this.lastBuy > 700) {
+    if (me && !this.economy && now - this.lastBuy > 700) {
+      // ải: không xu — kỹ năng miễn phí theo hồi chiêu, vật phẩm khi máu thấp / gục
+      if (down === 1 && (me.q1 > 0 || me.q2 > 0)) { out.btn |= me.q1 > 0 ? P_U1 : P_U2; this.lastBuy = now; }
+      else if (!down && me.hp < me.maxHp * 0.4 && (me.q1 > 0 || me.q2 > 0)) { out.btn |= me.q1 > 0 ? P_U1 : P_U2; this.lastBuy = now; }
+      else if (!down && near >= 3 && me.cdG === 0) { out.btn |= P_G; this.lastBuy = now; }
+      else if (!down && near >= 4 && me.cdX === 0) { out.btn |= P_X; this.lastBuy = now; }
+      else if (!down && me.ult >= 255 && near >= 3) { out.btn |= P_Q; this.lastBuy = now; }
+    } else if (me && !down && now - this.lastBuy > 700) {
       const cls = CLASSES[me.cls];
       const wc = me.tier < MAX_TIER ? weaponOf(me.cls, me.tier + 1).cost : 1e9;
       const hc = me.hpTier < MAX_HP_TIER ? HP_TIER_COST[me.hpTier + 1] : 1e9;
@@ -158,6 +171,10 @@ export class BotBrain {
       else if (near >= 4 && me.cdX === 0 && me.cash >= cls.x.cost + 150) { out.btn |= P_X; this.lastBuy = now; }
       else if (me.ult >= 255 && near >= 3) { out.btn |= P_Q; this.lastBuy = now; }
       void ULT_KILLS;
+    }
+    if (this.swapEvery > 0 && !down && (m.pred.weapons?.length ?? 0) > 1 && now - this.lastSwap > this.swapEvery) {
+      this.lastSwap = now;
+      out.btn |= m.pred.wslot === 0 ? P_W2 : P_W1;
     }
     this.wantBreakReady = m.phase === 2;
     return out;

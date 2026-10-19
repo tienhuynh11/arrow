@@ -171,6 +171,8 @@ export class MonkeyWorld {
   pVZ = new Float64Array(MAXP);
   pT = new Float64Array(MAXP);
   pDmg = new Float64Array(MAXP);
+  /** bán kính nổ của lựu đạn (vật phẩm có thể khác 4,2m) */
+  pRad = new Float64Array(MAXP);
   private nextPid = 1;
 
   ents: Ent[] = [];
@@ -369,7 +371,7 @@ export class MonkeyWorld {
   }
 
   /* ======================= ĐẠN BAY ======================= */
-  spawnProjectile(kind: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, dmg: number) {
+  spawnProjectile(kind: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, dmg: number, rad = 4.2) {
     let s = -1;
     for (let i = 0; i < MAXP; i++) if (!this.pAlive[i]) { s = i; break; }
     if (s < 0) return;
@@ -387,6 +389,7 @@ export class MonkeyWorld {
     this.pVZ[s] = Math.round(vz * QV) / QV;
     this.pT[s] = life;
     this.pDmg[s] = dmg;
+    this.pRad[s] = rad;
     if (this.pjNewN < 64) this.pjNew[this.pjNewN++] = s;
   }
 
@@ -416,7 +419,7 @@ export class MonkeyWorld {
           else { this.pX[s] = nx; this.pZ[s] = nz; }
           this.pY[s] = ny;
           if (this.pT[s] <= 0) {
-            this.explode(this.pX[s], this.pZ[s], 4.2, this.pDmg[s], this.pOwner[s], 0);
+            this.explode(this.pX[s], this.pZ[s], this.pRad[s], this.pDmg[s], this.pOwner[s], 0);
             this.endProjectile(s);
             done = true;
           }

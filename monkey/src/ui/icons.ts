@@ -3,7 +3,8 @@
 
 import { MAX_TIER, weaponOf } from '@shared/monkey/content';
 import type { WeaponDef, WeaponModel } from '@shared/monkey/content';
-import type { ItemDef, Slot } from '@shared/monkey/progression';
+import type { EquipSlot } from '@shared/monkey/gear';
+import type { Look } from '../gearlib';
 
 export type GunModel = WeaponModel;
 
@@ -292,8 +293,73 @@ function skinArt(B: string, a: number) {
     + gloss('M20 22 Q24 19 28 21');
 }
 
-/** SVG một món đồ theo ItemDef.look (màu = look.color) */
-export function itemSvg(def: ItemDef | undefined, cls = 'itpic'): string {
+function glovesArt(B: string, c: number, a: number) {
+  return `<path d="M14 54 L14 30 Q14 24 19 24 L19 14 Q19 10 23 10 Q27 10 27 14 L27 22 L28 10 Q28 6 32 6 Q36 6 36 10 L36 22 L37 12 Q37 8 41 8 Q45 8 45 12 L45 30 L50 22 Q53 18 56 21 Q58 24 55 28 L46 44 L46 54 Z" fill="${B}"/>`
+    + `<rect x="12" y="48" width="36" height="9" rx="2" fill="${hex(a)}"/>`
+    + `<path d="M27 22 V30 M36 22 V30" stroke-width="1.2" opacity=".5"/>`
+    + gloss('M18 30 Q18 26 22 26') + `<path d="M16 52 h28" stroke="${shade(c, 0.5)}" stroke-width="1.5" opacity=".6"/>`;
+}
+function bootsArt(B: string, c: number, a: number) {
+  return `<path d="M18 6 L36 6 L36 38 Q36 42 42 43 L56 46 Q60 47 60 52 L60 56 L12 56 L12 46 Q16 42 18 36 Z" fill="${B}"/>`
+    + `<path d="M12 52 H60 V57 H12 Z" fill="${shade(c, -0.5)}"/>`
+    + `<path d="M18 14 H36" stroke="${hex(a)}" stroke-width="3"/><path d="M20 22 l12 0 M20 28 l12 0" stroke-width="1.3" opacity=".55"/>`
+    + gloss('M22 10 V32');
+}
+function beltArt(B: string, c: number, a: number) {
+  return `<path d="M4 26 Q32 18 60 26 L60 38 Q32 30 4 38 Z" fill="${B}"/>`
+    + `<rect x="22" y="20" width="20" height="20" rx="3" fill="${hex(a)}"/><rect x="27" y="25" width="10" height="10" rx="1.5" fill="${shade(c, -0.4)}"/>`
+    + `<path d="M32 25 V35" stroke-width="2"/>`
+    + `<path d="M8 33 h8 M48 31 h8" stroke-dasharray="2 2" stroke-width="1.2" opacity=".6"/>` + gloss('M8 28 Q20 24 22 24');
+}
+function amuletArt(B: string, a: number) {
+  return `<path d="M12 6 Q12 30 30 38 M52 6 Q52 30 34 38" fill="none" stroke="${hex(a)}" stroke-width="2.5" stroke-dasharray="3 1.5"/>`
+    + `<path d="M32 30 L46 44 L32 60 L18 44 Z" fill="${B}"/>`
+    + `<path d="M32 36 L40 44 L32 54 L24 44 Z" fill="#fff" fill-opacity=".25" stroke="none"/>`
+    + `<circle cx="32" cy="32" r="4" fill="${hex(a)}"/>` + gloss('M25 42 L31 36');
+}
+function ringArt(B: string, a: number) {
+  return `<ellipse cx="32" cy="40" rx="20" ry="16" fill="none" stroke="${OL}" stroke-width="9"/>`
+    + `<ellipse cx="32" cy="40" rx="20" ry="16" fill="none" stroke="${hex(a)}" stroke-width="6"/>`
+    + `<path d="M20 30 Q26 26 32 26" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width="2"/>`
+    + `<path d="M32 6 L42 16 L32 28 L22 16 Z" fill="${B}"/>` + `<path d="M27 15 L32 10 L37 15" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="1.8"/>`;
+}
+function consumableArt(kind: string, B: string, c: number) {
+  switch (kind) {
+    case 'grenade':
+      return `<circle cx="30" cy="38" r="17" fill="${B}"/>`
+        + `<path d="M17 32 H43 M15 40 H45 M18 48 H42 M30 21 V55" stroke-width="1.2" opacity=".45"/>`
+        + `<rect x="25" y="14" width="12" height="8" rx="1.5" fill="#6b7280"/><path d="M37 16 Q50 12 50 24" fill="none" stroke="#9ca3af" stroke-width="2.5"/>`
+        + `<circle cx="50" cy="26" r="3" fill="none" stroke="#9ca3af" stroke-width="2"/>` + gloss('M20 32 Q22 26 28 24');
+    case 'shield':
+      return `<path d="M32 6 L54 14 Q54 42 32 58 Q10 42 10 14 Z" fill="${B}"/>`
+        + `<path d="M32 14 L46 19 Q46 38 32 50 Q18 38 18 19 Z" fill="#fff" fill-opacity=".2" stroke="none"/>`
+        + `<path d="M32 18 V46 M22 28 H42" stroke="#fff" stroke-width="3" opacity=".8"/>`;
+    case 'speed':
+      return `<path d="M36 4 L14 36 H30 L24 60 L50 24 H34 Z" fill="${B}"/>` + gloss('M32 10 L20 32');
+    case 'revive':
+      return `<path d="M32 56 C10 42 6 30 10 20 C14 10 26 9 32 18 C38 9 50 10 54 20 C58 30 54 42 32 56 Z" fill="${B}"/>`
+        + `<path d="M14 34 H24 L28 26 L34 42 L38 32 H50" fill="none" stroke="#fff" stroke-width="3"/>`;
+    case 'heal':
+    default:
+      return `<path d="M24 6 H40 V14 L48 26 V54 Q48 58 44 58 H20 Q16 58 16 54 V26 L24 14 Z" fill="#cbd5e1" fill-opacity=".35"/>`
+        + `<path d="M17 32 H47 V54 Q47 57 44 57 H20 Q17 57 17 54 Z" fill="${B}" stroke="none"/>`
+        + `<rect x="23" y="4" width="18" height="6" rx="2" fill="#8b5a2b"/>`
+        + `<path d="M32 36 V52 M24 44 H40" stroke="#fff" stroke-width="4"/>` + gloss('M21 28 V50') + `<circle cx="40" cy="38" r="2" fill="${shade(c, 0.6)}" stroke="none"/>`;
+  }
+}
+function materialArt(B: string, c: number) {
+  return `<path d="M32 4 L50 18 L46 46 L32 60 L18 46 L14 18 Z" fill="${B}"/>`
+    + `<path d="M32 4 L32 60 M14 18 L50 18 M18 46 L46 46 M14 18 L32 32 L50 18 M18 46 L32 32 L46 46" stroke-width="1" opacity=".45"/>`
+    + `<path d="M22 14 L30 10" stroke="#fff" stroke-opacity=".7" stroke-width="2"/>` + `<circle cx="40" cy="26" r="2" fill="${shade(c, 0.8)}" stroke="none"/>`;
+}
+
+const GUN_MODELS = ['pistol', 'revolver', 'smg', 'shotgun', 'rifle', 'lmg', 'sniper', 'launcher'];
+
+/** đồ cần vẽ: kind (v2) hoặc slot (v1) + look */
+export interface ArtDef { kind?: string; slot?: string; look: Look; gun?: { model?: string } | unknown; consumable?: { kind: string } | unknown }
+
+/** SVG một món đồ theo loại + look (màu = look.color) */
+export function itemSvg(def: ArtDef | undefined, cls = 'itpic'): string {
   if (!def) return wrapSq(`<text x="32" y="42" text-anchor="middle" font-size="28" stroke="none" fill="#fff">?</text>`, '', cls);
   const id = `it${++uid}`;
   const c = def.look.color;
@@ -302,7 +368,8 @@ export function itemSvg(def: ItemDef | undefined, cls = 'itpic'): string {
     + `<linearGradient id="${id}k" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="${shade(c, -0.3)}"/><stop offset=".5" stop-color="${shade(c, 0.5)}"/><stop offset="1" stop-color="#ffffff"/></linearGradient>`;
   const B = `url(#${id}b)`;
   const shadow = `<ellipse cx="32" cy="59" rx="20" ry="2.4" fill="#000" fill-opacity=".35" stroke="none"/>`;
-  switch (def.slot) {
+  const kind = def.kind ?? def.slot ?? '';
+  switch (kind) {
     case 'helmet':
       return wrapSq(shadow + helmetArt(def.look.kind, B, c, a), defs, cls);
     case 'armor':
@@ -311,20 +378,40 @@ export function itemSvg(def: ItemDef | undefined, cls = 'itpic'): string {
       return wrapSq(shadow + knifeArt(def.look.kind, def.look.accent ?? 0, id), defs, cls);
     case 'skin':
       return wrapSq(shadow + skinArt(B, a), defs, cls);
+    case 'gloves':
+      return wrapSq(shadow + glovesArt(B, c, a), defs, cls);
+    case 'boots':
+      return wrapSq(shadow + bootsArt(B, c, a), defs, cls);
+    case 'belt':
+      return wrapSq(shadow + beltArt(B, c, a), defs, cls);
+    case 'amulet':
+      return wrapSq(shadow + amuletArt(B, a), defs, cls);
+    case 'ring':
+      return wrapSq(shadow + ringArt(B, a), defs, cls);
+    case 'consumable': {
+      const ck = (def.consumable as { kind?: string } | undefined)?.kind ?? def.look.kind;
+      return wrapSq(shadow + consumableArt(ck, B, c), defs, cls);
+    }
+    case 'material':
+      return wrapSq(shadow + materialArt(B, c), defs, cls);
     case 'gun': {
-      const body = gunBody('rifle', `url(#${id}b)`, `url(#${id}m)`, `url(#${id}w)`, hex(a));
+      const gm = (def.gun as { model?: string } | undefined)?.model;
+      const model = (GUN_MODELS.includes(gm ?? '') ? gm : GUN_MODELS.includes(def.look.kind) ? def.look.kind : 'rifle') as GunModel;
+      const body = gunBody(model, `url(#${id}b)`, `url(#${id}m)`, `url(#${id}w)`, hex(a));
       return `<svg class="${cls}" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>${gradDefs(id, c)}</defs>${shadow}`
         + `<g transform="translate(2 18) scale(.5)" stroke="${OL}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">${body}</g></svg>`;
     }
   }
-  return wrapSq('', '', cls);
+  return wrapSq(materialArt(B, c), defs, cls);
 }
 
+const GHOST_KIND: Record<EquipSlot, string> = {
+  weapon1: 'gun', weapon2: 'gun', knife: 'knife', helmet: 'helmet', armor: 'armor', gloves: 'gloves', boots: 'boots', belt: 'belt',
+  amulet: 'amulet', ring1: 'ring', ring2: 'ring', skin: 'skin', quick1: 'consumable', quick2: 'consumable', secure: 'material',
+};
 /** ô trống của một slot (bóng mờ) */
-export function slotGhostSvg(slot: Slot, cls = 'itpic ghost'): string {
-  const ghost: Record<Slot, ItemDef['look']> = {
-    helmet: { kind: 'helmet', color: 0x6b7280 }, armor: { kind: 'vest', color: 0x6b7280 }, gun: { kind: 'gun', color: 0x6b7280 },
-    knife: { kind: 'dagger', color: 0x6b7280 }, skin: { kind: 'skin', color: 0x6b7280, accent: 0x4b5563 },
-  };
-  return itemSvg({ id: 'ghost', slot, name: '', desc: '', minR: 0, maxR: 0, base: {}, subPool: [], look: ghost[slot] }, cls);
+export function slotGhostSvg(slot: EquipSlot, cls = 'itpic ghost'): string {
+  const kind = GHOST_KIND[slot] ?? 'material';
+  const look: Look = { kind: kind === 'helmet' ? 'helmet' : kind === 'armor' ? 'vest' : kind === 'knife' ? 'dagger' : kind === 'gun' ? 'rifle' : kind === 'consumable' ? 'heal' : kind, color: 0x8a8070, accent: 0x5a5244 };
+  return itemSvg({ kind, look }, cls);
 }

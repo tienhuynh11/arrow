@@ -5,32 +5,30 @@
 
 import pg from 'pg';
 import type { EventDef, EventObjective, EventState, LeaderRow, MeResponse, StageProgress } from '../../../../shared/monkey/api.js';
-import { CHAR_UNLOCK, loadoutOf, salvageValue, type ItemInst, type Loadout, type Rarity, type Reward, type SkillKey, type Slot, type Stats } from '../../../../shared/monkey/progression.js';
+import { CHAR_UNLOCK, STARTER_KIT, loadoutOf2, type EquipSlot, type ItemInst, type Loadout2, type Reward, type SkillKey } from '../../../../shared/monkey/progression.js';
 import { migrate } from './migrations.js';
 import {
   DEFAULT_CHARS,
-  MAX_ITEMS,
+  Inv,
   MONEY_CAP,
   NUM_CHARS,
   SKILL_KEYS,
-  STARTER_ITEMS,
   applyGain,
   checkClaim,
-  checkItemOwned,
   checkSkill,
   checkUnlock,
-  checkUpgrade,
   cleanRun,
   eventActive,
   eventAfterRun,
   firstReward,
+  grantedOf,
   isCls,
   isSlot,
+  kindOf,
   rewardItems,
-  slotOf,
   type Wallet,
 } from './rules.js';
-import { StoreError, type AccountRow, type RunResult, type Store, type TeamRun } from './store.js';
+import { StoreError, type AccountRow, type ExtractOutcome, type ExtractRun, type RunResult, type Store, type TeamRun } from './store.js';
 
 type Q = pg.PoolClient;
 interface AccRow extends Wallet {
@@ -103,31 +101,60 @@ export class PgStore implements Store {
   private async saveWallet(c: Q, a: AccRow) {
     await c.query(`UPDATE ${this.S}accounts SET level=$2, xp=$3, gold=$4, shards=$5, books=$6, cls=$7, kills=$8 WHERE id=$1`, [a.id, a.level, a.xp, a.gold, a.shards, a.books, a.cls, a.kills]);
   }
-  private async insertItem(c: Q, accountId: number, itemId: string, rarity: Rarity, subs: Stats, equipped = false): Promise<ItemInst> {
-    const { rows } = await c.query(
-      `INSERT INTO ${this.S}items (account_id, item_id, slot, rarity, subs, equipped) VALUES ($1,$2,$3,$4,$5,$6) RETURNING uid, item_id, rarity, level, subs, equipped`,
-      [accountId, itemId, slotOf(itemId), rarity, JSON.stringify(subs), equipped],
-    );
-    return itemOf(rows[0]);
-  }
-  private async ownItem(c: Q, accountId: number, uid: number): Promise<ItemInst & { slot: Slot }> {
-    if (!Number.isInteger(uid) || uid <= 0 || uid > 2 ** 31 - 1) throw new StoreError('Không tìm thấy món đồ', 404);
-    const { rows } = await c.query(`SELECT uid, item_id, slot, rarity, level, subs, equipped FROM ${this.S}items WHERE uid=$1 AND account_id=$2 FOR UPDATE`, [uid, accountId]);
-    const r = checkItemOwned(rows[0]);
-    return { ...itemOf(r), slot: r.slot };
+  /**
+   * Thao tác kho đồ: nạp mọi món của tài khoản (khoá dòng), chạy `fn` trên bộ lập kế hoạch, ghi thay đổi.
+   * Gọi SAU lock(); ví `a` được Inv sửa trực tiếp (người gọi tự saveWallet).
+   */
+  private async withInv<T>(c: Q, a: AccRow, fn: (inv: Inv) => T): Promise<{ out: T; touched: ItemInst[] }> {
+    const S = this.S;
+    const { rows } = await c.query(`SELECT ${ITEM_COLS} FROM ${S}items WHERE account_id=$1 ORDER BY uid FOR UPDATE`, [a.id]);
+    const inv = new Inv(rows.map(itemOf), a);
+    const out = fn(inv);
+    const ch = inv.changes();
+    if (ch.removed.length) await c.query(`DELETE FROM ${S}items WHERE account_id=$1 AND uid = ANY($2::int[])`, [a.id, ch.removed]);
+    if (ch.updated.length) {
+      const u = ch.updated;
+      // gỡ ô trước để đổi chỗ 2 ô không vướng chỉ mục duy nhất (account_id, slot)
+      await c.query(`UPDATE ${S}items SET slot=NULL WHERE account_id=$1 AND uid = ANY($2::int[]) AND slot IS NOT NULL`, [a.id, u.map((i) => i.uid)]);
+      await c.query(
+        `UPDATE ${S}items i SET slot=v.slot, stash=v.stash, count=v.count, level=v.level
+         FROM unnest($2::int[], $3::text[], $4::bool[], $5::int[], $6::int[]) AS v(uid, slot, stash, count, level)
+         WHERE i.uid=v.uid AND i.account_id=$1`,
+        [a.id, u.map((i) => i.uid), u.map((i) => i.slot), u.map((i) => i.stash), u.map((i) => i.count), u.map((i) => i.level)],
+      );
+    }
+    const real = new Map<number, ItemInst>();
+    for (const it of ch.added) {
+      const r = await c.query(
+        `INSERT INTO ${S}items (account_id, item_id, kind, grade, level, affixes, count, slot, stash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${ITEM_COLS}`,
+        [a.id, it.itemId, kindOf(it.itemId), it.grade, it.level, JSON.stringify(it.affixes), it.count, it.slot, it.stash],
+      );
+      real.set(it.uid, itemOf(r.rows[0]));
+    }
+    const touched: ItemInst[] = [];
+    for (const u of inv.touched) {
+      const it = real.get(u) ?? inv.items.find((i) => i.uid === u);
+      if (it) touched.push(it);
+    }
+    return { out, touched };
   }
   /** cộng phần thưởng vào ví `a` (chưa lưu ví) + tạo đồ + mở nhân vật */
-  private async give(c: Q, a: AccRow, r: Reward & { items?: { itemId: string; rarity: Rarity; subs?: Stats }[] }) {
+  private async give(c: Q, a: AccRow, r: Reward) {
     const ups = applyGain(a, r);
     const list = rewardItems(r.items);
-    const made: ItemInst[] = [];
-    if (list.length) {
-      const { rows } = await c.query(`SELECT COUNT(*)::int AS n FROM ${this.S}items WHERE account_id=$1`, [a.id]);
-      const room = Math.max(0, MAX_ITEMS - rows[0].n);
-      for (const it of list.slice(0, room)) made.push(await this.insertItem(c, a.id, it.itemId, it.rarity, it.subs));
-    }
+    let made: ItemInst[] = [];
+    if (list.length) made = (await this.withInv(c, a, (inv) => inv.give(list))).touched;
     if (r.unlockChar !== undefined && isCls(r.unlockChar)) await c.query(`INSERT INTO ${this.S}chars (account_id, cls) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [a.id, r.unlockChar]);
     return { made, ups };
+  }
+  /** thao tác kho đồ trọn gói: khoá tài khoản → kế hoạch → ghi → lưu ví */
+  private invOp<T>(accountId: number, fn: (inv: Inv) => T): Promise<T> {
+    return this.tx(async (c) => {
+      const a = await this.lock(c, accountId);
+      const { out } = await this.withInv(c, a, fn);
+      await this.saveWallet(c, a);
+      return out;
+    });
   }
   private async skillLevel(c: Q, accountId: number, cls: number, skill: SkillKey) {
     const { rows } = await c.query(`SELECT level FROM ${this.S}skill_levels WHERE account_id=$1 AND cls=$2 AND skill=$3`, [accountId, cls, skill]);
@@ -145,7 +172,9 @@ export class PgStore implements Store {
         const { rows } = await c.query(`INSERT INTO ${this.S}accounts (username, ukey, pass_hash) VALUES ($1,$2,$3) RETURNING id`, [username, username.toLowerCase(), passHash]);
         const id = rows[0].id as number;
         await c.query(`INSERT INTO ${this.S}chars (account_id, cls) SELECT $1, unnest($2::smallint[])`, [id, DEFAULT_CHARS]);
-        for (const s of STARTER_ITEMS) await this.insertItem(c, id, s.itemId, s.rarity, {}, s.equipped);
+        for (const s of STARTER_KIT) {
+          await c.query(`INSERT INTO ${this.S}items (account_id, item_id, kind, grade, count, slot) VALUES ($1,$2,$3,$4,$5,$6)`, [id, s.itemId, kindOf(s.itemId), s.grade, s.count, s.slot]);
+        }
         return id;
       });
     } catch (e: any) {
@@ -185,7 +214,7 @@ export class PgStore implements Store {
       const a = acc.rows[0];
       const chars = await c.query(`SELECT cls FROM ${S}chars WHERE account_id=$1 ORDER BY cls`, [accountId]);
       const sk = await c.query(`SELECT cls, skill, level FROM ${S}skill_levels WHERE account_id=$1`, [accountId]);
-      const items = await c.query(`SELECT uid, item_id, rarity, level, subs, equipped FROM ${S}items WHERE account_id=$1 ORDER BY uid`, [accountId]);
+      const items = await c.query(`SELECT ${ITEM_COLS} FROM ${S}items WHERE account_id=$1 ORDER BY uid`, [accountId]);
       const st = await c.query(`SELECT stage, stars, best_secs, clears FROM ${S}stage_progress WHERE account_id=$1 ORDER BY stage`, [accountId]);
       const skills: Record<number, Record<SkillKey, number>> = {};
       for (let i = 0; i < NUM_CHARS; i++) skills[i] = { g: 1, x: 1, q: 1 };
@@ -203,13 +232,13 @@ export class PgStore implements Store {
       c.release();
     }
   }
-  async loadout(accountId: number, cls: number): Promise<Loadout> {
+  async loadout(accountId: number, cls: number): Promise<Loadout2> {
     const k = isCls(cls) ? cls : 0;
-    const items = await this.pool.query(`SELECT uid, item_id, rarity, level, subs, equipped FROM ${this.S}items WHERE account_id=$1 AND equipped`, [accountId]);
+    const items = await this.pool.query(`SELECT ${ITEM_COLS} FROM ${this.S}items WHERE account_id=$1 AND slot IS NOT NULL`, [accountId]);
     const sk = await this.pool.query(`SELECT skill, level FROM ${this.S}skill_levels WHERE account_id=$1 AND cls=$2`, [accountId, k]);
     const skills: Record<SkillKey, number> = { g: 1, x: 1, q: 1 };
     for (const r of sk.rows) if (SKILL_KEYS.includes(r.skill)) skills[r.skill as SkillKey] = r.level;
-    return loadoutOf(items.rows.map(itemOf), skills);
+    return loadoutOf2(items.rows.map(itemOf), k, skills);
   }
   async clearedStages(accountId: number) {
     const { rows } = await this.pool.query(`SELECT stage FROM ${this.S}stage_progress WHERE account_id=$1 AND clears > 0`, [accountId]);
@@ -217,45 +246,33 @@ export class PgStore implements Store {
   }
 
   /* ---- thao tác ---- */
-  async equip(accountId: number, uid: number) {
-    await this.tx(async (c) => {
-      await this.lock(c, accountId);
-      const it = await this.ownItem(c, accountId, uid);
-      await c.query(`UPDATE ${this.S}items SET equipped=false WHERE account_id=$1 AND slot=$2 AND equipped`, [accountId, it.slot]);
-      await c.query(`UPDATE ${this.S}items SET equipped=true WHERE uid=$1`, [it.uid]);
-    });
+  async equip(accountId: number, uid: number, slot: EquipSlot) {
+    await this.invOp(accountId, (inv) => inv.equip(uid, slot));
   }
-  async unequip(accountId: number, slot: Slot) {
+  async unequip(accountId: number, slot: EquipSlot) {
     if (!isSlot(slot)) throw new StoreError('Ô trang bị không hợp lệ');
-    await this.tx(async (c) => {
-      await this.lock(c, accountId);
-      await c.query(`UPDATE ${this.S}items SET equipped=false WHERE account_id=$1 AND slot=$2 AND equipped`, [accountId, slot]);
-    });
+    await this.invOp(accountId, (inv) => inv.unequip(slot));
   }
-  async upgradeItem(accountId: number, uid: number) {
-    await this.tx(async (c) => {
-      const a = await this.lock(c, accountId);
-      const it = await this.ownItem(c, accountId, uid);
-      const cost = checkUpgrade(it, a);
-      a.gold -= cost;
-      await this.saveWallet(c, a);
-      await c.query(`UPDATE ${this.S}items SET level=level+1 WHERE uid=$1`, [it.uid]);
-    });
+  async moveToStash(accountId: number, uid: number) {
+    await this.invOp(accountId, (inv) => inv.move(uid, true));
+  }
+  async moveToBag(accountId: number, uid: number) {
+    await this.invOp(accountId, (inv) => inv.move(uid, false));
+  }
+  async sell(accountId: number, uids: number[]) {
+    return this.invOp(accountId, (inv) => inv.sell(uids));
   }
   async salvage(accountId: number, uids: number[]) {
-    return this.tx(async (c) => {
-      const a = await this.lock(c, accountId);
-      const list: ItemInst[] = [];
-      for (const u of new Set(uids)) list.push(await this.ownItem(c, accountId, u));
-      if (!list.length) throw new StoreError('Chưa chọn món đồ nào');
-      if (list.some((i) => i.equipped)) throw new StoreError('Không thể phân rã đồ đang mặc');
-      let gold = 0;
-      for (const it of list) gold += salvageValue(it);
-      await c.query(`DELETE FROM ${this.S}items WHERE account_id=$1 AND uid = ANY($2::int[])`, [accountId, list.map((i) => i.uid)]);
-      a.gold = Math.min(MONEY_CAP, a.gold + gold);
-      await this.saveWallet(c, a);
-      return gold;
-    });
+    return this.sell(accountId, uids);
+  }
+  async buy(accountId: number, idx: number, qty: number) {
+    return this.invOp(accountId, (inv) => inv.buy(idx, qty));
+  }
+  async claimStarter(accountId: number) {
+    await this.invOp(accountId, (inv) => inv.claimStarter());
+  }
+  async upgradeItem(accountId: number, uid: number) {
+    await this.invOp(accountId, (inv) => inv.upgrade(uid));
   }
   async unlockChar(accountId: number, cls: number) {
     await this.tx(async (c) => {
@@ -374,6 +391,62 @@ export class PgStore implements Store {
       return { items, levelUps: ups, newLevel: a.level, firstClear };
     });
   }
+  async recordExtract(raw: ExtractRun, now: Date): Promise<ExtractOutcome> {
+    const r = cleanRun(raw);
+    const S = this.S;
+    const x = r.extract ?? { survived: false, kept: [], lost: [], looted: [], usedConsumables: {} };
+    const chest: Reward = x.survived ? r.chest ?? {} : { xp: Math.round((r.chest?.xp ?? 0) * 0.3) };
+    return this.tx(async (c) => {
+      const a = await this.lock(c, r.accountId);
+      let ups = applyGain(a, chest);
+      const cleared = r.won && r.stage !== 'endless';
+      let firstClear = false;
+      let fr: Reward | null = null;
+      if (cleared) {
+        const { rows } = await c.query(`SELECT stage, stars, best_secs, clears FROM ${S}stage_progress WHERE account_id=$1 AND stage=$2 FOR UPDATE`, [a.id, r.stage]);
+        const prev: StageProgress | undefined = rows[0] ? stageOf(rows[0]) : undefined;
+        firstClear = !prev || prev.clears === 0;
+        const next: StageProgress = {
+          stage: r.stage,
+          stars: Math.max(prev?.stars ?? 0, r.stars),
+          bestSecs: prev && prev.clears > 0 ? Math.min(prev.bestSecs, r.secs) : r.secs,
+          clears: (prev?.clears ?? 0) + 1,
+        };
+        await c.query(
+          `INSERT INTO ${S}stage_progress (account_id, stage, stars, best_secs, clears) VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (account_id, stage) DO UPDATE SET stars=EXCLUDED.stars, best_secs=EXCLUDED.best_secs, clears=EXCLUDED.clears`,
+          [a.id, next.stage, next.stars, next.bestSecs, next.clears],
+        );
+        fr = firstClear ? firstReward(r.stage) : null;
+        if (fr) ups += applyGain(a, fr);
+        if (fr?.unlockChar !== undefined && isCls(fr.unlockChar)) await c.query(`INSERT INTO ${S}chars (account_id, cls) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [a.id, fr.unlockChar]);
+      }
+      const frItems = fr?.items;
+      const res = await this.withInv(c, a, (inv) => {
+        const e = inv.extract(x);
+        const g1 = inv.give(rewardItems(chest.items));
+        const g2 = frItems ? inv.give(rewardItems(frItems)) : { gold: 0 };
+        return { lost: e.lost, overflow: e.loot.gold + g1.gold + g2.gold };
+      });
+      a.kills = Math.min(MONEY_CAP, a.kills + r.kills);
+      for (const e of await this.eventsOn(c, true, now)) {
+        const { rows } = await c.query(`SELECT progress FROM ${S}event_progress WHERE account_id=$1 AND event_id=$2 FOR UPDATE`, [a.id, e.id]);
+        const p = eventAfterRun(e, rows[0]?.progress ?? {}, r);
+        await c.query(
+          `INSERT INTO ${S}event_progress (account_id, event_id, progress) VALUES ($1,$2,$3)
+           ON CONFLICT (account_id, event_id) DO UPDATE SET progress = EXCLUDED.progress`,
+          [a.id, e.id, JSON.stringify(p)],
+        );
+      }
+      const granted = grantedOf(chest, fr);
+      await c.query(`INSERT INTO ${S}runs (account_id, stage, won, stars, wave, kills, secs, score, reward, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [
+        a.id, r.stage, r.won, r.stars, r.wave, r.kills, r.secs, r.score,
+        JSON.stringify({ ...granted, survived: !!x.survived, lost: res.out.lost.length, looted: (x.looted ?? []).length }), now,
+      ]);
+      await this.saveWallet(c, a);
+      return { items: res.touched, lost: res.out.lost, overflowGold: res.out.overflow, granted, levelUps: ups, newLevel: a.level, firstClear };
+    });
+  }
   async recordTeamRun(t: TeamRun, now: Date) {
     await this.pool.query(`INSERT INTO ${this.S}team_runs (stage, solo, names, cls, wave, score, kills, secs, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [
       String(t.stage).slice(0, 40), !!t.solo, JSON.stringify(t.names), JSON.stringify(t.cls), t.wave | 0, t.score | 0, t.kills | 0, t.secs | 0, now,
@@ -441,8 +514,9 @@ export class PgStore implements Store {
   }
 }
 
+const ITEM_COLS = 'uid, item_id, grade, level, affixes, count, slot, stash';
 function itemOf(r: any): ItemInst {
-  return { uid: r.uid, itemId: r.item_id, rarity: r.rarity as Rarity, level: r.level, subs: r.subs ?? {}, equipped: !!r.equipped };
+  return { uid: r.uid, itemId: r.item_id, grade: r.grade, level: r.level, affixes: r.affixes ?? {}, count: r.count, slot: r.slot ?? null, stash: !!r.stash };
 }
 function stageOf(r: any): StageProgress {
   return { stage: r.stage, stars: r.stars, bestSecs: r.best_secs, clears: r.clears };

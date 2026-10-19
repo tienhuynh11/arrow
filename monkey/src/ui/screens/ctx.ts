@@ -39,7 +39,7 @@ export const S = {
   /** chạy thay cho "về sảnh" khi nhận 'left' (ví dụ: rời phòng rồi tạo ải kế tiếp) */
   afterLeave: null as (() => void) | null,
 };
-export type HubTab = 'stages' | 'chars' | 'inv' | 'events' | 'endless' | 'rank';
+export type HubTab = 'stages' | 'chars' | 'inv' | 'skills' | 'merchant' | 'events' | 'endless' | 'rank';
 
 /** gửi tin điều khiển (kể cả loại mới chưa có trong CMsg) */
 export function send(m: CMsg | Record<string, unknown>) {

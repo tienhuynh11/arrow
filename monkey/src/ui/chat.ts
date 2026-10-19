@@ -1,14 +1,18 @@
-// Khung chat trong phòng: Enter mở ô gõ, Enter gửi, Esc đóng. Tin nhắn chỉ đặt bằng textContent (không HTML).
+// Khung chat kiểu VLTK có tab: Tất cả / Đội / Hệ thống (nhặt đồ theo màu phẩm, sự kiện trận).
+// Enter mở ô gõ, Enter gửi, Esc đóng. Tin nhắn chỉ đặt bằng textContent (không HTML).
 
 import { CHAT_MAX } from '@shared/monkey/config';
 import { h, playerColor } from './dom';
 
-const KEEP = 40; // số tin giữ lại
+const KEEP = 60; // số tin giữ lại
 const FADE_MS = 9000; // tin cũ mờ đi khi không mở chat
+type Tab = 'all' | 'team' | 'sys';
 
 export class Chat {
-  readonly root = h('div', { class: 'chat hidden' });
+  readonly root = h('div', { class: 'chat hidden f-all' });
   private log = h('div', { class: 'chatlog' });
+  private tabsEl = h('div', { class: 'chtabs2' });
+  private tab: Tab = 'all';
   private input = h('input', { class: 'chatin', maxlength: String(CHAT_MAX), placeholder: 'Nhập tin nhắn… (Enter gửi · Esc đóng)', autocomplete: 'off' }) as HTMLInputElement;
   isOpen = false;
   /** gửi tin lên server */
@@ -18,7 +22,8 @@ export class Chat {
 
   constructor() {
     this.input.classList.add('hidden');
-    this.root.append(this.log, this.input);
+    this.drawTabs();
+    this.root.append(this.tabsEl, this.log, this.input);
     document.body.append(this.root);
     this.input.addEventListener('keydown', (e) => {
       e.stopPropagation();
@@ -30,9 +35,26 @@ export class Chat {
       } else if (e.key === 'Escape') {
         e.preventDefault();
         this.close();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        this.setTab(this.tab === 'all' ? 'team' : this.tab === 'team' ? 'sys' : 'all');
       }
     });
-    this.input.addEventListener('blur', () => { if (this.isOpen) this.close(); });
+    this.input.addEventListener('blur', () => { setTimeout(() => { if (this.isOpen && document.activeElement !== this.input) this.close(); }, 150); });
+  }
+
+  private drawTabs() {
+    this.tabsEl.replaceChildren(...([['all', 'Tất cả'], ['team', 'Đội'], ['sys', 'Hệ thống']] as [Tab, string][]).map(([t, n]) => h('button', {
+      class: t === this.tab ? 'on' : '',
+      onmousedown: (e: Event) => { e.preventDefault(); this.setTab(t); },
+    }, n)));
+  }
+
+  private setTab(t: Tab) {
+    this.tab = t;
+    this.root.className = this.root.className.replace(/\bf-\w+/, `f-${t}`);
+    this.drawTabs();
+    this.log.scrollTop = this.log.scrollHeight;
   }
 
   setVisible(on: boolean) {
@@ -61,14 +83,24 @@ export class Chat {
     this.onToggle(false);
   }
 
-  add(idx: number, name: string, msg: string) {
-    const line = h('div', { class: 'cl' },
-      h('b', { style: `color:${playerColor(idx)}` }, `${name}: `),
-      h('span', null, msg));
+  private push(line: HTMLElement) {
     this.log.append(line);
     while (this.log.childElementCount > KEEP) this.log.firstElementChild?.remove();
     this.log.scrollTop = this.log.scrollHeight;
     setTimeout(() => line.classList.add('old'), FADE_MS);
+  }
+
+  /** tin người chơi (kênh Đội) */
+  add(idx: number, name: string, msg: string) {
+    this.push(h('div', { class: 'cl' },
+      h('span', { class: 'tg team' }, '[Đội] '),
+      h('b', { style: `color:${playerColor(idx)}` }, `${name}: `),
+      h('span', null, msg)));
+  }
+
+  /** dòng hệ thống (màu tuỳ chọn — ví dụ màu phẩm khi nhặt đồ) */
+  system(msg: string, color?: string) {
+    this.push(h('div', { class: 'cl sys' }, h('span', { class: 'tg' }, '[Hệ thống] '), h('span', { style: color ? `color:${color}` : '' }, msg)));
   }
 
   clear() {

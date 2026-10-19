@@ -8,13 +8,14 @@ import type { AddressInfo } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import type { MeResponse } from '../../shared/monkey/api.js';
-import { STAGE_BY_ID, levelUpGold, salvageValue, upgradeCost, xpToNext, type Reward } from '../../shared/monkey/progression.js';
+import { BAG_CAP, ITEM_BY_ID, SHOP_STOCK, STAGE_BY_ID, STAGES, levelUpGold, rollDrops, rollKillLoot, rollKillLoots, sellPrice, upgradeCost, upgradeStones, weaponFromItem, xpToNext, type Reward } from '../../shared/monkey/progression.js';
+import { MIGRATIONS } from '../src/monkey/db/migrations.js';
 import { _resetRateLimits, hashPassword, login, logout, register, resolveAccount, resolveToken, verifyPassword } from '../src/monkey/accounts.js';
 import { handleMonkeyApi } from '../src/monkey/api.js';
 import { loadDotEnv, useStore } from '../src/monkey/db/index.js';
 import { MemStore } from '../src/monkey/db/memStore.js';
 import { PgStore } from '../src/monkey/db/pgStore.js';
-import { StoreError, type RunResult, type Store } from '../src/monkey/db/store.js';
+import { StoreError, type ExtractRun, type RunResult, type Store } from '../src/monkey/db/store.js';
 
 let fails = 0;
 let passes = 0;
@@ -76,58 +77,98 @@ async function suite(label: string, store: Store) {
   const A = (await store.createAccount('alice', ph))!;
   const B = (await store.createAccount('bob', ph))!;
 
-  console.log('\n[2] Đồ khởi đầu + mặc đồ');
+  console.log('\n[2] Bộ tân binh + mặc đồ');
   let me: MeResponse = await store.me(A, NOW());
   {
     ok(me.profile.level === 1 && me.profile.gold === 0, 'hồ sơ mới: cấp 1, 0 vàng');
     ok(JSON.stringify(me.profile.chars) === '[0,1,2]', 'nhân vật mặc định 0,1,2');
     ok(me.profile.skills[0]?.g === 1 && me.profile.skills[6]?.q === 1, 'kỹ năng mặc định cấp 1');
+    const gun = me.items.find((i) => i.itemId === 'g_tanbinh');
     const knife = me.items.find((i) => i.itemId === 'k_gam');
-    const hat = me.items.find((i) => i.itemId === 'h_tre');
-    ok(me.items.length === 2 && !!knife?.equipped && hat?.equipped === false, 'Dao Găm (đang mặc) + Nón Lá');
-    ok(knife?.rarity === 0 && knife.level === 1, 'đồ khởi đầu độ hiếm Thường, cấp 1');
+    const med = me.items.find((i) => i.itemId === 'q_maunho');
+    ok(me.items.length === 3 && gun?.slot === 'weapon1' && knife?.slot === 'knife' && med?.slot === 'quick1' && med.count === 2, 'bộ tân binh: súng (weapon1) + dao + 2 bình máu (quick1)');
+    ok(gun?.grade === 0 && gun.level === 1 && !gun.stash, 'đồ khởi đầu phẩm Trắng, cấp 1, trong túi/ô');
+    await rejects(store.claimStarter(A), 'còn súng thì không nhận lại bộ tân binh', 'còn súng');
     const lo = await store.loadout(A, 0);
-    ok(lo.look.knife === 'k_gam' && (lo.stats.knifeDmg ?? 0) > 0, 'loadout có dao đang mặc');
-    const made = await store.grant(A, { items: [{ itemId: 'h_sat', rarity: 1 }] });
-    ok(made.length === 1 && made[0].uid > 0 && made[0].rarity === 1, 'grant tạo đồ có uid');
-    ok(Object.keys(made[0].subs).length === 1, 'đồ Hiếm có 1 dòng phụ');
-    await store.equip(A, hat!.uid);
-    await store.equip(A, made[0].uid);
+    ok(lo.look.knife === 'k_gam' && lo.knifeDmg === 60 && lo.weapons.length === 1 && lo.weapons[0].name === 'Súng Lục Tân Binh', 'loadout: dao + súng tân binh');
+    ok(lo.quick.length === 1 && lo.quick[0].count === 2 && lo.quick[0].effect.kind === 'heal', 'loadout: tiêu hao ô quick1');
+    ok(JSON.stringify([...lo.carried].sort()) === JSON.stringify([gun!.uid, knife!.uid, med!.uid].sort()), 'loadout.carried = uid đồ mang vào');
+    const made = await store.grant(A, { items: [{ itemId: 'h_sat', grade: 1 }, { itemId: 'h_tre', grade: 0 }, { itemId: 'g_ongvo', grade: 0 }] });
+    ok(made.length === 3 && made.every((m) => m.uid > 0 && m.slot === null && !m.stash), 'grant tạo đồ có uid, vào túi');
+    const helm = made.find((m) => m.itemId === 'h_sat')!;
+    const hat = made.find((m) => m.itemId === 'h_tre')!;
+    const smg = made.find((m) => m.itemId === 'g_ongvo')!;
+    ok(Object.keys(helm.affixes).length === 1, 'đồ Xanh có 1 dòng phụ');
+    await rejects(store.equip(A, helm.uid, 'helmet'), 'mũ Xanh cần cấp 4', 'cấp 4');
+    await rejects(store.equip(A, hat.uid, 'armor'), 'mũ không mặc vào ô giáp', 'không mặc được');
+    await rejects(store.equip(A, hat.uid, 'hat' as any), 'ô lạ', 'không hợp lệ');
+    await store.equip(A, hat.uid, 'helmet');
+    await store.equip(A, smg.uid, 'weapon2');
     me = await store.me(A, NOW());
-    const helmets = me.items.filter((i) => (i.itemId === 'h_tre' || i.itemId === 'h_sat') && i.equipped);
-    ok(helmets.length === 1 && helmets[0].itemId === 'h_sat', 'mặc mũ mới thay mũ cũ (1 món mỗi ô)');
+    ok(me.items.find((i) => i.uid === hat.uid)!.slot === 'helmet' && me.items.find((i) => i.uid === smg.uid)!.slot === 'weapon2', 'mặc mũ + súng phụ');
+    ok((await store.loadout(A, 0)).weapons.map((w) => w.model).join() === 'pistol,smg', 'loadout 2 khẩu (weapon1, weapon2)');
+    await store.equip(A, smg.uid, 'weapon1');
+    me = await store.me(A, NOW());
+    ok(me.items.find((i) => i.uid === smg.uid)!.slot === 'weapon1' && me.items.find((i) => i.uid === gun!.uid)!.slot === 'weapon2', 'đổi chỗ súng chính ↔ súng phụ');
+    await store.equip(A, gun!.uid, 'secure');
+    me = await store.me(A, NOW());
+    ok(me.items.find((i) => i.uid === gun!.uid)!.slot === 'secure' && !me.items.some((i) => i.slot === 'weapon2'), 'cất súng vào túi an toàn');
+    ok(!(await store.loadout(A, 0)).carried.includes(gun!.uid), 'túi an toàn không tính là đồ mang vào');
     await store.unequip(A, 'helmet');
     me = await store.me(A, NOW());
-    ok(!me.items.some((i) => i.itemId.startsWith('h_') && i.equipped), 'tháo mũ');
-    ok(me.items.find((i) => i.itemId === 'k_gam')!.equipped, 'tháo mũ không ảnh hưởng dao');
+    ok(!me.items.some((i) => i.slot === 'helmet') && me.items.find((i) => i.uid === hat.uid)!.slot === null, 'tháo mũ về túi');
+    ok(me.items.find((i) => i.itemId === 'k_gam')!.slot === 'knife', 'tháo mũ không ảnh hưởng dao');
+    await store.moveToStash(A, hat.uid);
+    me = await store.me(A, NOW());
+    ok(me.items.find((i) => i.uid === hat.uid)!.stash, 'chuyển vào kho');
+    await store.equip(A, hat.uid, 'helmet');
+    me = await store.me(A, NOW());
+    ok(me.items.find((i) => i.uid === hat.uid)!.slot === 'helmet' && !me.items.find((i) => i.uid === hat.uid)!.stash, 'mặc thẳng từ kho');
+    await store.moveToBag(A, hat.uid);
+    me = await store.me(A, NOW());
+    ok(me.items.find((i) => i.uid === hat.uid)!.slot === null && !me.items.find((i) => i.uid === hat.uid)!.stash, 'về túi (tự tháo)');
   }
 
-  console.log('\n[3] Nâng cấp + phân rã');
+  console.log('\n[3] Thương nhân + cường hoá');
   {
     const knife = me.items.find((i) => i.itemId === 'k_gam')!;
-    await rejects(store.upgradeItem(A, knife.uid), 'nâng cấp khi thiếu vàng', 'Không đủ vàng');
+    await rejects(store.upgradeItem(A, knife.uid), 'cường hoá khi thiếu vàng', 'Không đủ vàng');
     await store.grant(A, { gold: 1000 });
+    await rejects(store.upgradeItem(A, knife.uid), 'cường hoá khi thiếu đá', 'Đá Cường Hoá');
+    const stoneIdx = SHOP_STOCK.findIndex((e) => e.itemId === 'm_da');
+    await store.buy(A, stoneIdx, 3);
+    me = await store.me(A, NOW());
+    const st = me.items.filter((i) => i.itemId === 'm_da');
+    ok(st.length === 1 && st[0].count === 3 && me.profile.gold === 1000 - SHOP_STOCK[stoneIdx].price * 3, 'mua 3 đá → 1 chồng, trừ vàng');
+    await store.buy(A, stoneIdx, 1);
+    me = await store.me(A, NOW());
+    ok(me.items.filter((i) => i.itemId === 'm_da').length === 1 && me.items.find((i) => i.itemId === 'm_da')!.count === 4, 'mua thêm gộp chồng');
+    const g0 = me.profile.gold;
     await store.upgradeItem(A, knife.uid);
     me = await store.me(A, NOW());
     ok(me.items.find((i) => i.uid === knife.uid)!.level === 2, 'đồ lên cấp 2');
-    ok(me.profile.gold === 1000 - upgradeCost(0, 1), 'trừ đúng vàng nâng cấp');
-    await rejects(store.salvage(A, [knife.uid]), 'không phân rã đồ đang mặc', 'đang mặc');
+    ok(me.profile.gold === g0 - upgradeCost(0, 1) && me.items.find((i) => i.itemId === 'm_da')!.count === 4 - upgradeStones(1), 'trừ đúng vàng + đá');
+    await rejects(store.sell(A, [knife.uid]), 'không bán đồ đang mặc', 'đang mặc');
     const hat = me.items.find((i) => i.itemId === 'h_tre')!;
-    const g0 = me.profile.gold;
-    const got = await store.salvage(A, [hat.uid, hat.uid]);
+    const g1 = me.profile.gold;
+    const got = await store.sell(A, [hat.uid, hat.uid]);
     me = await store.me(A, NOW());
-    ok(got === salvageValue(hat) && me.profile.gold === g0 + got, 'phân rã nhận vàng (uid trùng chỉ tính 1 lần)');
-    ok(!me.items.some((i) => i.uid === hat.uid), 'món đã phân rã biến mất');
-    await rejects(store.salvage(A, [hat.uid]), 'phân rã món không còn', 'Không tìm thấy');
+    ok(got === sellPrice(hat) && me.profile.gold === g1 + got, 'bán nhận vàng (uid trùng chỉ tính 1 lần)');
+    ok(!me.items.some((i) => i.uid === hat.uid), 'món đã bán biến mất');
+    await rejects(store.sell(A, [hat.uid]), 'bán món không còn', 'Không tìm thấy');
+    await rejects(store.buy(A, 9999, 1), 'món hàng không có', 'Không có món');
+    await rejects(store.buy(A, 0, 0), 'số lượng 0', 'Số lượng');
+    await rejects(store.buy(A, SHOP_STOCK.findIndex((e) => e.itemId === 'g_mangxa'), 10), 'mua thiếu vàng', 'Không đủ vàng');
   }
 
   console.log('\n[4] Quyền sở hữu chéo');
   {
     const aItem = me.items[0];
-    await rejects(store.equip(B, aItem.uid), 'B không mặc được đồ của A', 'Không tìm thấy');
+    await rejects(store.equip(B, aItem.uid, 'weapon1'), 'B không mặc được đồ của A', 'Không tìm thấy');
     await store.grant(B, { gold: 5000 });
     await rejects(store.upgradeItem(B, aItem.uid), 'B không nâng được đồ của A', 'Không tìm thấy');
-    await rejects(store.salvage(B, [aItem.uid]), 'B không phân rã được đồ của A', 'Không tìm thấy');
+    await rejects(store.sell(B, [aItem.uid]), 'B không bán được đồ của A', 'Không tìm thấy');
+    await rejects(store.moveToStash(B, aItem.uid), 'B không chuyển kho đồ của A', 'Không tìm thấy');
     ok((await store.me(A, NOW())).items.find((i) => i.uid === aItem.uid)?.level === aItem.level, 'đồ của A không đổi');
   }
 
@@ -178,11 +219,11 @@ async function suite(label: string, store: Store) {
   {
     const D = (await store.createAccount('dave', ph))!;
     const xpGain = xpToNext(1) + xpToNext(2) + 5; // lên 2 cấp
-    const reward = { gold: 50, xp: xpGain, books: 1, shards: 2, items: [{ itemId: 'g_ranlua', rarity: 1 as const, subs: { dmg: 0.03 } }] };
+    const reward: Reward = { gold: 50, xp: xpGain, books: 1, shards: 2, items: [{ itemId: 'g_ranlua', grade: 1, subs: { dmg: 0.03 } }] };
     const res = await store.recordRun(run(D, { stage: '1-1', won: true, stars: 2, wave: 5, kills: 40, secs: 100, score: 900, reward }), NOW());
     ok(res.firstClear, 'lần đầu qua 1-1');
     ok(res.levelUps === 2 && res.newLevel === 3, `lên 2 cấp → cấp 3 (${res.levelUps}, ${res.newLevel})`);
-    ok(res.items.length === 1 && res.items[0].uid > 0 && res.items[0].subs.dmg === 0.03, 'đồ rớt có uid + giữ chỉ số phụ');
+    ok(res.items.length === 1 && res.items[0].uid > 0 && res.items[0].affixes.dmg === 0.03, 'đồ rớt có uid + giữ chỉ số phụ');
     let m = await store.me(D, NOW());
     const first = STAGE_BY_ID['1-1'].first.gold ?? 0;
     ok(m.profile.gold === 50 + first + levelUpGold(2) + levelUpGold(3), `vàng = rớt + thưởng lần đầu + thưởng lên cấp (${m.profile.gold})`);
@@ -199,7 +240,110 @@ async function suite(label: string, store: Store) {
     ok(!m.stages.some((s) => s.stage === '1-2') && !(await store.clearedStages(D)).has('1-2'), 'thua không tính qua ải');
     ok((await store.clearedStages(D)).has('1-1'), 'clearedStages');
     const boss = await store.recordRun(run(D, { stage: '1-10', won: true, stars: 1 }), NOW());
-    ok(boss.firstClear && boss.items.some((i) => i.itemId === 'h_ky' && i.rarity === 2), 'qua boss lần đầu nhận Mũ Kỵ Sĩ (Sử thi)');
+    ok(boss.firstClear && boss.items.some((i) => i.itemId === 'h_ky' && i.grade === 2), 'qua boss lần đầu nhận Mũ Kỵ Sĩ (Tím)');
+  }
+
+  console.log('\n[7b] Ải mang đồ (recordExtract)');
+  {
+    const X = (await store.createAccount('xena', ph))!;
+    await store.grant(X, { xp: xpToNext(1) + xpToNext(2) + xpToNext(3) + 10 }); // cấp 4
+    const g = await store.grant(X, { items: [{ itemId: 'a_da', grade: 1 }, { itemId: 'r_bac', grade: 0 }, { itemId: 'q_bangac', grade: 0, count: 5 }] });
+    const armor = g.find((i) => i.itemId === 'a_da')!;
+    const ring = g.find((i) => i.itemId === 'r_bac')!;
+    const band = g.find((i) => i.itemId === 'q_bangac')!;
+    ok(band.count === 5, 'tiêu hao vào 1 chồng');
+    await store.equip(X, armor.uid, 'armor');
+    await store.equip(X, ring.uid, 'secure');
+    await store.equip(X, band.uid, 'quick2');
+    let m = await store.me(X, NOW());
+    const gun = m.items.find((i) => i.slot === 'weapon1')!;
+    const med = m.items.find((i) => i.slot === 'quick1')!;
+    const lo = await store.loadout(X, 0);
+    ok(lo.carried.length === 5 && !lo.carried.includes(ring.uid), 'mang vào 5 món (trừ túi an toàn)');
+    const ex = (o: Partial<ExtractRun> & { extract: ExtractRun['extract'] }): ExtractRun => ({ accountId: X, stage: '1-1', won: false, stars: 0, wave: 3, kills: 20, secs: 90, score: 100, chest: {}, ...o });
+    // thua: mất hết đồ mang vào, đồ nhặt mất, túi an toàn còn
+    const chest = rollDrops(STAGE_BY_ID['1-1'].drops, 0, 1, Math.random);
+    const lose = await store.recordExtract(ex({ chest, extract: { survived: false, kept: [], lost: lo.carried, looted: [{ itemId: 'g_mangxa', grade: 2, subs: {} }], usedConsumables: { q_maunho: 1 } } }), NOW());
+    m = await store.me(X, NOW());
+    ok(lose.lost.length === 5 && !m.items.some((i) => lo.carried.includes(i.uid)), 'chết: mất mọi đồ mang vào');
+    ok(m.items.some((i) => i.uid === ring.uid && i.slot === 'secure'), 'chết: túi an toàn giữ lại');
+    ok(!m.items.some((i) => i.itemId === 'g_mangxa') && lose.items.length === 0, 'chết: đồ nhặt mất, không nhận rương');
+    ok(lose.granted.xp === Math.round((chest.xp ?? 0) * 0.3) && !lose.granted.gold, 'chết: chỉ 30% xp');
+    ok(!m.stages.some((s) => s.stage === '1-1'), 'thua không tính qua ải');
+    // nhận lại bộ tân binh
+    await store.claimStarter(X);
+    m = await store.me(X, NOW());
+    ok(m.items.some((i) => i.itemId === 'g_tanbinh' && i.slot === 'weapon1') && m.items.some((i) => i.slot === 'quick1'), 'hết súng → nhận lại bộ tân binh (mặc thẳng)');
+    await rejects(store.claimStarter(X), 'nhận bộ tân binh lần 2', 'còn súng');
+    // thắng: giữ đồ, trừ tiêu hao, nhận đồ nhặt + rương + thưởng lần đầu
+    const lo2 = await store.loadout(X, 0);
+    const med2 = m.items.find((i) => i.slot === 'quick1')!;
+    const gold0 = m.profile.gold;
+    const win = await store.recordExtract(ex({
+      won: true, stars: 3, secs: 300,
+      chest: { gold: 120, xp: 50, items: [{ itemId: 'h_sat', grade: 0, subs: {} }, { itemId: 'm_da', grade: 0, subs: {}, count: 3 }] },
+      extract: {
+        survived: true, kept: lo2.carried, lost: [],
+        looted: [{ itemId: 'g_mangxa', grade: 2, subs: { crit: 0.03 } }, { itemId: 'c_vang', grade: 0, subs: {}, count: 77 }, { itemId: 'c_sach', grade: 2, subs: {}, count: 2 }, { itemId: 'm_da', grade: 0, subs: {}, count: 2 }],
+        usedConsumables: { q_maunho: 1 },
+      },
+    }), NOW());
+    m = await store.me(X, NOW());
+    ok(win.firstClear && win.lost.length === 0 && m.stages.some((s) => s.stage === '1-1' && s.clears === 1), 'thắng: qua ải lần đầu, không mất gì');
+    ok(m.items.find((i) => i.uid === med2.uid)?.count === 1, 'trừ 1 bình máu đã dùng');
+    ok(m.items.some((i) => i.itemId === 'g_mangxa' && i.grade === 2 && i.affixes.crit === 0.03 && i.slot === null), 'đồ nhặt vào túi (giữ dòng phụ)');
+    ok(m.items.filter((i) => i.itemId === 'm_da').reduce((n, i) => n + i.count, 0) === 5, 'đá cường hoá gộp chồng (nhặt 2 + rương 3)');
+    ok(m.profile.books === 2, 'Sách Kỹ Năng nhặt được → tiền tệ hồ sơ');
+    ok(m.profile.gold >= gold0 + 77 + 120 + (STAGE_BY_ID['1-1'].first.gold ?? 0), `vàng: túi vàng + rương + lần đầu (${m.profile.gold - gold0})`);
+    ok(win.items.some((i) => i.itemId === 'g_mangxa' && i.uid > 0) && win.items.some((i) => i.itemId === 'h_sat'), 'kết quả trả đồ mới có uid');
+    // dùng hết bình máu → xoá món
+    const lo3 = await store.loadout(X, 0);
+    await store.recordExtract(ex({ extract: { survived: true, kept: lo3.carried, lost: [], looted: [], usedConsumables: { q_maunho: 5 } } }), NOW());
+    m = await store.me(X, NOW());
+    ok(!m.items.some((i) => i.uid === med2.uid), 'dùng hết chồng tiêu hao → món biến mất');
+    // uid mất không còn mặc (đã tháo về túi) → KHÔNG xoá; uid của người khác → không xoá
+    const sat = m.items.find((i) => i.itemId === 'h_sat')!;
+    const other = (await store.me(A, NOW())).items[0];
+    const r3 = await store.recordExtract(ex({ extract: { survived: false, kept: [], lost: [sat.uid, other.uid], looted: [], usedConsumables: {} } }), NOW());
+    ok(r3.lost.length === 0 && (await store.me(X, NOW())).items.some((i) => i.uid === sat.uid), 'chỉ xoá đồ còn đang mặc');
+    ok((await store.me(A, NOW())).items.some((i) => i.uid === other.uid), 'không xoá được đồ của người khác');
+    // túi đầy → kho; cả hai đầy → vàng
+    const Y = (await store.createAccount('yuri', ph))!;
+    const many = Array.from({ length: BAG_CAP + 5 }, () => ({ itemId: 'r_dong', grade: 0 as const }));
+    await store.grant(Y, { items: many.slice(0, 20) });
+    await store.grant(Y, { items: many.slice(20, 40) });
+    await store.grant(Y, { items: many.slice(40) });
+    let my = await store.me(Y, NOW());
+    ok(my.items.filter((i) => !i.slot && !i.stash).length === BAG_CAP && my.items.filter((i) => i.stash).length === 5, `túi đầy (${BAG_CAP}) → tràn sang kho`);
+    await rejects(store.unequip(Y, 'knife'), 'túi đầy không tháo được', 'đầy');
+    await store.grant(Y, { gold: 1000 });
+    await rejects(store.buy(Y, 0, 1), 'túi đầy không mua được', 'đầy');
+    const n0 = my.items.length;
+    const gy = my.profile.gold;
+    const big = await store.recordExtract({ accountId: Y, stage: '1-1', won: true, stars: 1, wave: 3, kills: 1, secs: 60, score: 1, chest: {}, extract: { survived: true, kept: [], lost: [], looted: Array.from({ length: 3 }, () => ({ itemId: 'r_bac', grade: 0 as const, subs: {} })), usedConsumables: {} } }, NOW());
+    my = await store.me(Y, NOW());
+    ok(my.items.length === n0 + 3 && my.items.filter((i) => i.itemId === 'r_bac').every((i) => i.stash), 'đồ nhặt khi túi đầy vào kho');
+    ok(big.overflowGold === 0 && my.profile.gold >= gy, 'chưa tràn kho → không đổi vàng');
+  }
+
+  console.log('\n[7c] Danh mục + súng + rớt đồ');
+  {
+    const g = (id: string, grade: 0 | 1 | 2 | 3 | 4, level = 1) => weaponFromItem({ uid: 1, itemId: id, grade, level, affixes: {}, count: 1, slot: 'weapon1', stash: false }, 0);
+    const w0 = g('g_chimung', 0);
+    const w2 = g('g_chimung', 2);
+    ok(w0.model === 'sniper' && w2.dmg > w0.dmg && w0.name === ITEM_BY_ID.g_chimung.name, 'súng tím mạnh hơn súng trắng cùng loại');
+    ok(g('g_xanhat', 4).dmg > g('g_chimung', 2).dmg * 2, 'súng huyền thoại bậc cao vượt trội');
+    ok(weaponFromItem(null, 4).model === 'revolver', 'không có súng → súng bậc 0 của nhân vật');
+    const fr = weaponFromItem({ uid: 1, itemId: 'g_ongvo', grade: 0, level: 1, affixes: { fireRate: 0.2, mag: 0.5 }, count: 1, slot: 'weapon1', stash: false }, 0);
+    ok(fr.interval < g('g_ongvo', 0).interval && fr.mag > g('g_ongvo', 0).mag, 'dòng phụ tốc bắn / băng đạn nướng vào súng');
+    let hits = 0;
+    let bossN = 0;
+    let rng = 12345;
+    const R = () => ((rng = (rng * 1103515245 + 12345) % 2147483648) / 2147483648);
+    for (let i = 0; i < 4000; i++) if (rollKillLoot(0, STAGES[0], 0, R)) hits++;
+    for (let i = 0; i < 50; i++) bossN += rollKillLoots(6, STAGES[9], 0, R).length;
+    ok(hits > 80 && hits < 260, `khỉ thường rơi ~4% (${hits}/4000)`);
+    ok(bossN >= 100 && bossN <= 200, `boss rơi 2–4 món (${bossN}/50 con)`);
   }
 
   console.log('\n[8] Sự kiện');
@@ -224,7 +368,7 @@ async function suite(label: string, store: Store) {
     await rejects(store.claimEvent(E, id, 'play', NOW()), 'không nhận hai lần', 'Đã nhận');
     await store.claimEvent(E, id, 'kills', NOW());
     const m = await store.me(E, NOW());
-    ok(m.items.some((i) => i.itemId === 'h_chuoi' && i.rarity === 2), 'nhận Mũ Chuối Vàng (Sử thi)');
+    ok(m.items.some((i) => i.itemId === 'h_chuoi' && i.grade === 2), 'nhận Mũ Chuối Vàng (Tím)');
     const books0 = m.profile.books;
     await store.claimEvent(E, id, 'clear', NOW());
     ok((await store.me(E, NOW())).profile.books === books0 + 1, 'qua Vườn Chuối nhận sách kỹ năng');
@@ -296,16 +440,29 @@ async function suite(label: string, store: Store) {
       ok((await call('api/me')).status === 401, 'GET me không token → 401');
       ok((await call('api/me', { token: 'x'.repeat(43) })).status === 401, 'token sai → 401');
       const me1 = await call('api/me', { token: tok });
-      ok(me1.status === 200 && me1.data.items.length === 2, 'GET me có token');
-      const hat = me1.data.items.find((i: any) => i.itemId === 'h_tre');
-      const eq = await call('api/equip', { token: tok, body: { uid: hat.uid } });
-      ok(eq.status === 200 && eq.data.me.items.find((i: any) => i.uid === hat.uid).equipped, 'POST equip → MutateRes.me');
-      ok((await call('api/equip', { token: tok, body: { uid: 'abc' } })).status === 400, 'uid sai kiểu → 400');
+      ok(me1.status === 200 && me1.data.items.length === 3, 'GET me có token (bộ tân binh)');
+      const gun = me1.data.items.find((i: any) => i.itemId === 'g_tanbinh');
+      const eq = await call('api/equip', { token: tok, body: { uid: gun.uid, slot: 'weapon2' } });
+      ok(eq.status === 200 && eq.data.me.items.find((i: any) => i.uid === gun.uid).slot === 'weapon2', 'POST equip {uid, slot} → MutateRes.me');
+      ok((await call('api/equip', { token: tok, body: { uid: 'abc', slot: 'weapon1' } })).status === 400, 'uid sai kiểu → 400');
+      ok((await call('api/equip', { token: tok, body: { uid: gun.uid } })).status === 400, 'thiếu slot → 400');
       ok((await call('api/unequip', { token: tok, body: { slot: 'hat' } })).status === 400, 'slot sai → 400');
-      const up = await call('api/upgrade-item', { token: tok, body: { uid: hat.uid } });
+      const up = await call('api/upgrade-item', { token: tok, body: { uid: gun.uid } });
       ok(up.status === 400 && /vàng/.test(up.data.error), 'nâng cấp thiếu vàng → 400 tiếng Việt');
-      const sv = await call('api/salvage', { token: tok, body: { uids: [hat.uid] } });
-      ok(sv.status === 400, 'phân rã đồ đang mặc → 400');
+      const sv = await call('api/sell', { token: tok, body: { uids: [gun.uid] } });
+      ok(sv.status === 400, 'bán đồ đang mặc → 400');
+      const ss = await call('api/shop-stock');
+      ok(ss.status === 200 && ss.data.stock.length === SHOP_STOCK.length, 'GET shop-stock');
+      const stq = await call('api/stash', { token: tok, body: { uid: gun.uid } });
+      ok(stq.status === 200 && stq.data.me.items.find((i: any) => i.uid === gun.uid).stash, 'POST stash');
+      const bg = await call('api/bag', { token: tok, body: { uid: gun.uid } });
+      ok(bg.status === 200 && !bg.data.me.items.find((i: any) => i.uid === gun.uid).stash, 'POST bag');
+      const sl = await call('api/sell', { token: tok, body: { uids: [gun.uid] } });
+      ok(sl.status === 200 && sl.data.granted.gold > 0 && !sl.data.me.items.some((i: any) => i.uid === gun.uid), 'POST sell → granted.gold');
+      const cs = await call('api/claim-starter', { token: tok, body: {} });
+      ok(cs.status === 200 && cs.data.me.items.some((i: any) => i.itemId === 'g_tanbinh' && i.slot === 'weapon1'), 'POST claim-starter');
+      const by = await call('api/buy', { token: tok, body: { idx: 0, qty: 1 } });
+      ok(by.status === 400 || by.status === 200, 'POST buy');
       ok((await call('api/upgrade-skill', { token: tok, body: { cls: 0, skill: 'z' } })).status === 400, 'kỹ năng sai → 400');
       ok((await call('api/khong-co', { token: tok, body: {} })).status === 404, 'route lạ → 404');
       const bad = await fetch(base + 'api/login', { method: 'POST', body: '{không phải json' });
@@ -322,9 +479,9 @@ async function suite(label: string, store: Store) {
       ok((await call('api/admin/stats', { admin: 'sai' })).status === 403, 'admin sai khoá → 403');
       const st = await call('api/admin/stats', { admin: process.env.MONKEY_ADMIN_KEY });
       ok(st.status === 200 && st.data.accounts >= 1 && typeof st.data.online === 'number', 'admin stats');
-      const gr = await call('api/admin/grant', { admin: process.env.MONKEY_ADMIN_KEY, body: { username: 'HTTPKHỈ', reward: { gold: 777, items: [{ itemId: 'g_vang', rarity: 3 }] } } });
+      const gr = await call('api/admin/grant', { admin: process.env.MONKEY_ADMIN_KEY, body: { username: 'HTTPKHỈ', reward: { gold: 777, items: [{ itemId: 'g_vang', grade: 3 }] } } });
       ok(gr.status === 200 && gr.data.items.length === 1, 'admin tặng đồ');
-      ok((await call('api/admin/grant', { admin: process.env.MONKEY_ADMIN_KEY, body: { username: 'HTTPKHỈ', reward: { items: [{ itemId: 'k_gam', rarity: 3 }] } } })).status === 400, 'admin tặng độ hiếm sai → 400');
+      ok((await call('api/admin/grant', { admin: process.env.MONKEY_ADMIN_KEY, body: { username: 'HTTPKHỈ', reward: { items: [{ itemId: 'k_gam', grade: 3 }] } } })).status === 400, 'admin tặng độ hiếm sai → 400');
       const evBody = { id: 0, name: 'Sự kiện HTTP', icon: '⭐', desc: 'x', startsAt: new Date().toISOString(), endsAt: new Date(Date.now() + 86400_000).toISOString(), enabled: true, objectives: [{ id: 'k', kind: 'kills', target: 5, label: 'Hạ 5 khỉ', reward: { gold: 5 } }] };
       const ce = await call('api/admin/events', { admin: process.env.MONKEY_ADMIN_KEY, body: evBody });
       ok(ce.status === 200 && ce.data.event.id > 0, 'admin tạo sự kiện');
@@ -334,7 +491,7 @@ async function suite(label: string, store: Store) {
       const del = await call('api/admin/events/delete', { admin: process.env.MONKEY_ADMIN_KEY, body: { id: ce.data.event.id } });
       ok(del.status === 200, 'admin xoá sự kiện');
       const me2 = await call('api/me', { token: tok });
-      ok(me2.data.profile.gold === 777, 'vàng admin tặng hiện trong me');
+      ok(me2.data.profile.gold >= 777, 'vàng admin tặng hiện trong me');
       const ce2 = await call('api/claim-event', { token: tok, body: { eventId: me2.data.events[0]?.event.id ?? 1, objective: 'play' } });
       ok(ce2.status === 400 && /Chưa hoàn thành/.test(ce2.data.error), 'claim chưa đủ → 400');
       await call('api/logout', { token: tok, body: {} });
@@ -344,6 +501,16 @@ async function suite(label: string, store: Store) {
       else process.env.MONKEY_ADMIN_KEY = savedKey;
       await new Promise<void>((r) => srv.close(() => r()));
     }
+  }
+}
+
+/** một kết nối quản trị tạm */
+async function admin2(url: string, fn: (q: (sql: string) => Promise<unknown>) => Promise<unknown>) {
+  const p = new pg.Pool({ connectionString: url, max: 1 });
+  try {
+    await fn((sql) => p.query(sql));
+  } finally {
+    await p.end();
   }
 }
 
@@ -370,7 +537,7 @@ if (url) {
     // giao dịch song song: hai lần nâng cấp cùng lúc chỉ đủ tiền cho một
     const id = (await pgs.createAccount('race', await hashPassword('matkhau123')))!;
     const knife = (await pgs.me(id, NOW())).items.find((i) => i.itemId === 'k_gam')!;
-    await pgs.grant(id, { gold: upgradeCost(0, 1) } as Reward);
+    await pgs.grant(id, { gold: upgradeCost(0, 1), items: [{ itemId: 'm_da', grade: 0, count: 5 }] } as Reward);
     const rs = await Promise.allSettled([pgs.upgradeItem(id, knife.uid), pgs.upgradeItem(id, knife.uid)]);
     ok(rs.filter((r) => r.status === 'fulfilled').length === 1 && (await pgs.me(id, NOW())).profile.gold === 0, 'FOR UPDATE: 2 yêu cầu song song không tiêu trùng vàng');
   } catch (e) {
@@ -379,6 +546,41 @@ if (url) {
     await pgs?.close().catch(() => {});
     await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch((e) => console.warn('không xoá được schema tạm', schema, e.message));
     await admin.end();
+  }
+  // nâng cấp một DB v1 có dữ liệu thật lên v2
+  const schema2 = 'test_' + randomBytes(5).toString('hex');
+  const S2 = `"${schema2}".`;
+  let up: PgStore | null = null;
+  try {
+    await admin2(url, async (q) => {
+      await q(`CREATE SCHEMA "${schema2}"`);
+      await q(`CREATE TABLE ${S2}schema_version (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
+      await q(MIGRATIONS[0](S2));
+      await q(`INSERT INTO ${S2}schema_version (version) VALUES (1)`);
+      await q(`INSERT INTO ${S2}accounts (username, ukey, pass_hash, gold) VALUES ('old','old','x', 50)`);
+      await q(`INSERT INTO ${S2}items (account_id, item_id, slot, rarity, subs, equipped) VALUES
+        (1,'k_gam','knife',0,'{}',true), (1,'g_ranlua','gun',3,'{"dmg":0.05,"cashGain":0.1}',true), (1,'h_tre','helmet',1,'{"luck":0.02}',false)`);
+      for (let i = 0; i < 65; i++) await q(`INSERT INTO ${S2}items (account_id, item_id, slot, rarity, subs, equipped) VALUES (1,'s_rung','skin',0,'{}',false)`);
+    });
+    up = new PgStore({ connectionString: url, schema: schema2 });
+    await up.init();
+    const m = await up.me(1, NOW());
+    const gun = m.items.find((i) => i.itemId === 'g_ranlua')!;
+    ok(m.items.find((i) => i.itemId === 'k_gam')?.slot === 'knife' && gun.slot === 'weapon1' && gun.grade === 3, 'v1→v2: đồ đang mặc vào đúng ô (súng → weapon1), độ hiếm → phẩm');
+    ok(gun.affixes.dmg === 0.05 && Math.abs((gun.affixes.luck ?? 0) - 0.1) < 1e-9 && !('cashGain' in gun.affixes), 'v1→v2: dòng phụ cashGain → luck');
+    const hat = m.items.find((i) => i.itemId === 'h_tre')!;
+    ok(hat.slot === null && Math.abs((hat.affixes.luck ?? 0) - 0.02) < 1e-9 && hat.count === 1, 'v1→v2: đồ trong kho → túi, count 1');
+    ok(m.items.filter((i) => !i.slot && !i.stash).length === 60 && m.items.filter((i) => i.stash).length === 6, 'v1→v2: túi vượt 60 → phần dư vào kho');
+    ok((await up.loadout(1, 0)).weapons[0].name === 'Súng Trường Rắn Lửa', 'v1→v2: loadout dùng súng cũ');
+    await rejects(up.equip(1, hat.uid, 'helmet'), 'v1→v2: mũ Xanh vẫn cần cấp 4', 'cấp 4');
+    const skin = m.items.find((i) => i.itemId === 's_rung' && i.stash)!;
+    await up.equip(1, skin.uid, 'skin');
+    ok((await up.me(1, NOW())).items.find((i) => i.uid === skin.uid)?.slot === 'skin', 'v1→v2: thao tác bình thường sau nâng cấp (mặc từ kho)');
+  } catch (e) {
+    ok(false, `nâng cấp v1→v2 lỗi: ${(e as Error).message.replace(/postgres(?:ql)?:\/\/\S+/gi, '<url>')}`);
+  } finally {
+    await up?.close().catch(() => {});
+    await admin2(url, (q) => q(`DROP SCHEMA IF EXISTS "${schema2}" CASCADE`)).catch((e) => console.warn('không xoá được schema tạm', schema2, e.message));
   }
 } else {
   console.log('\n(không có DATABASE_URL — bỏ qua PgStore)');

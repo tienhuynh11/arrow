@@ -4,7 +4,7 @@
 //  - Đồng hồ hiển thị (renderTick) gửi kèm mỗi lệnh để server bù trễ khi bắn.
 
 import { AI_MS, DT, MAX_MONKEYS, MAX_PLAYERS, TICK_HZ } from './config.js';
-import { CLASSES, MONKEYS, bodyR, bodyY, headR, headY, waveSpec, weaponOf, type WaveStage } from './content.js';
+import { CLASSES, MONKEYS, bodyR, bodyY, headR, headY, waveSpec, type WeaponDef, type WaveStage } from './content.js';
 import { NO_MODS, type SimMods } from './progression.js';
 import { rayWorld } from './map.js';
 import {
@@ -23,6 +23,7 @@ import {
   B_FIRE,
   F_FIRED,
   copyState,
+  curWeapon,
   newState,
   pelletDirs,
   raySphere,
@@ -165,15 +166,19 @@ export class GameModel {
   /** tham số ải (độ khó + luật) — để waveSpec ở client khớp server */
   stage: WaveStage | undefined;
 
-  constructor(me: number, cls: number, x: number, z: number, mods: SimMods = NO_MODS, stage?: WaveStage) {
+  /** ải: súng mang theo (tin 'start' players[i].weapons); null = vô tận */
+  readonly weapons: WeaponDef[] | null;
+
+  constructor(me: number, cls: number, x: number, z: number, mods: SimMods = NO_MODS, stage?: WaveStage, weapons: WeaponDef[] | null = null) {
     this.me = me;
     this.mods = mods;
     this.stage = stage;
-    this.pred = newState(cls, x, z, mods);
-    this.prev = newState(cls, x, z, mods);
+    this.weapons = weapons && weapons.length ? weapons : null;
+    this.pred = newState(cls, x, z, mods, this.weapons);
+    this.prev = newState(cls, x, z, mods, this.weapons);
     for (let i = 0; i < HIST_N; i++) {
       this.hCmd.push({ seq: 0, mx: 0, mz: 0, yaw: 0, pitch: 0, btn: 0, vt: 0 });
-      this.hState.push(newState(cls, x, z, mods));
+      this.hState.push(newState(cls, x, z, mods, this.weapons));
     }
     this.rx = x;
     this.rz = z;
@@ -416,12 +421,14 @@ export class GameModel {
     srv.yaw = p.yaw; srv.pitch = p.pitch; srv.tier = p.tier; srv.ammo = p.ammo; srv.fireCd = p.fireCd;
     srv.reloadT = p.reloadT; srv.braceT = p.braceT; srv.down = p.flags & PF_DOWN_MASK; srv.cls = p.cls;
     srv.mods = this.pred.mods;
+    srv.weapons = this.pred.weapons;
+    srv.wslot = p.wslot; srv.swapT = p.swapT; srv.ammoAlt = p.ammoAlt; srv.spdT = p.spdT; srv.spdMul = p.spdMul;
 
     if (ack === 0 || ack >= this.seq) {
       // chưa có lệnh nào được xác nhận (hoặc server đi trước — không thể) → lấy nguyên
       if (ack === 0) {
         const d = Math.abs(srv.x - this.pred.x) + Math.abs(srv.z - this.pred.z);
-        if (d > 0.01 || srv.down !== this.pred.down || srv.tier !== this.pred.tier) {
+        if (d > 0.01 || srv.down !== this.pred.down || srv.tier !== this.pred.tier || srv.wslot !== this.pred.wslot) {
           this.snapTo(srv, d > 4);
         }
       }
@@ -557,7 +564,7 @@ export class GameModel {
   /** bắn thử ở client lên khỉ đang hiển thị → vệt đạn + dấu trúng tức thì */
   private predictShot(c: Cmd) {
     const s = this.pred;
-    const w = weaponOf(s.cls, s.tier);
+    const w = curWeapon(s);
     const cd = CLASSES[s.cls];
     const mul = this.dmgMul * (s.braceT > 0 ? cd.buff.dmg : 1);
     shotOrigin(s, this.tmpO);

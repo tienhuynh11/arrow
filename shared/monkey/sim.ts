@@ -3,7 +3,7 @@
 // client hoà giải (reconcile) bằng cách lấy trạng thái server rồi chạy lại các lệnh chưa được xác nhận.
 
 import { DT } from './config.js';
-import { CLASSES, reloadTicks, weaponOf } from './content.js';
+import { CLASSES, reloadTicks, weaponOf, type WeaponDef } from './content.js';
 import { collide, PLAYER_R } from './map.js';
 import { hash2, icos, isin, mulberry32 } from './math.js';
 import { NO_MODS, type SimMods } from './progression.js';
@@ -23,6 +23,14 @@ export const P_V = 512;
 export const P_C = 1024;
 /** chém dao (phím F) */
 export const P_K = 2048;
+/** ải: rút súng 1 / súng 2 (phím 1 / 2) */
+export const P_W1 = 4096;
+export const P_W2 = 8192;
+/** ải: dùng vật phẩm ô nhanh 1 / 2 (phím 3 / 4) — server xử lý */
+export const P_U1 = 16384;
+export const P_U2 = 32768;
+/** thời gian đổi súng (tick 60Hz) — không bắn được, huỷ nạp đạn */
+export const SWAP_TICKS = 24;
 
 export interface Cmd {
   seq: number;
@@ -66,12 +74,35 @@ export interface PState {
   cls: number;
   /** chỉ số đồ ảnh hưởng mô phỏng (tốc chạy, tốc bắn, nạp đạn) — giữ nguyên suốt trận */
   mods: SimMods;
+  /** ải: súng mang theo (1–2 khẩu, từ tin 'start'); null = vô tận (dòng súng theo bậc `tier`) */
+  weapons: WeaponDef[] | null;
+  /** ô súng đang cầm (0/1) */
+  wslot: number;
+  /** đạn còn lại của khẩu KHÔNG cầm */
+  ammoAlt: number;
+  /** đếm ngược đổi súng (tick) */
+  swapT: number;
+  /** tăng tốc tạm thời (vật phẩm): tick còn lại + hệ số (server đặt, đã lượng tử 1/50) */
+  spdT: number;
+  spdMul: number;
 }
 
-export function newState(cls: number, x: number, z: number, mods: SimMods = NO_MODS): PState {
+/** khẩu súng đang cầm */
+export function curWeapon(s: PState): WeaponDef {
+  return s.weapons ? s.weapons[s.wslot] ?? s.weapons[0] : weaponOf(s.cls, s.tier);
+}
+/** số tick nạp đạn thực tế của khẩu đang cầm (chưa tính mods.reload) */
+export function curReloadTicks(s: PState): number {
+  if (!s.weapons) return reloadTicks(s.cls, s.tier);
+  return Math.max(1, Math.round(curWeapon(s).reload * (CLASSES[s.cls] ?? CLASSES[0]).reloadMul));
+}
+
+export function newState(cls: number, x: number, z: number, mods: SimMods = NO_MODS, weapons: WeaponDef[] | null = null): PState {
+  const ws = weapons && weapons.length ? weapons.slice(0, 2) : null;
   return {
     x, z, y: 0, vx: 0, vz: 0, vy: 0, ground: 1, yaw: 0, pitch: 0,
-    tier: 0, ammo: weaponOf(cls, 0).mag, fireCd: 0, reloadT: 0, braceT: 0, down: 0, cls, mods,
+    tier: 0, ammo: ws ? ws[0].mag : weaponOf(cls, 0).mag, fireCd: 0, reloadT: 0, braceT: 0, down: 0, cls, mods,
+    weapons: ws, wslot: 0, ammoAlt: ws && ws[1] ? ws[1].mag : 0, swapT: 0, spdT: 0, spdMul: 1,
   };
 }
 
@@ -80,12 +111,15 @@ export function copyState(dst: PState, s: PState) {
   dst.ground = s.ground; dst.yaw = s.yaw; dst.pitch = s.pitch; dst.tier = s.tier; dst.ammo = s.ammo;
   dst.fireCd = s.fireCd; dst.reloadT = s.reloadT; dst.braceT = s.braceT; dst.down = s.down; dst.cls = s.cls;
   dst.mods = s.mods;
+  dst.weapons = s.weapons; dst.wslot = s.wslot; dst.ammoAlt = s.ammoAlt; dst.swapT = s.swapT;
+  dst.spdT = s.spdT; dst.spdMul = s.spdMul;
   return dst;
 }
 
 /** sai khác giữa 2 trạng thái (dùng để quyết định có cần hoà giải không) */
 export function stateDiff(a: PState, b: PState) {
   if (a.ammo !== b.ammo || a.reloadT !== b.reloadT || a.tier !== b.tier || a.down !== b.down) return 99;
+  if (a.wslot !== b.wslot || a.swapT !== b.swapT || a.ammoAlt !== b.ammoAlt || a.spdT !== b.spdT) return 99;
   if (Math.abs(a.fireCd - b.fireCd) > 1) return 99;
   if (a.ground !== b.ground) return 98;
   const d = Math.abs(a.x - b.x) + Math.abs(a.z - b.z) + Math.abs(a.y - b.y);
@@ -120,7 +154,19 @@ export function isSprinting(s: PState, c: Cmd) {
 export function step(s: PState, c: Cmd): number {
   let out = 0;
   const cls = CLASSES[s.cls];
-  const w = weaponOf(s.cls, s.tier);
+  // ---------- đổi súng (ải) ----------
+  if (s.weapons && s.weapons.length > 1 && s.down === 0 && (c.btn & (P_W1 | P_W2))) {
+    const want = c.btn & P_W1 ? 0 : 1;
+    if (want !== s.wslot) {
+      s.wslot = want;
+      const a = s.ammo;
+      s.ammo = s.ammoAlt;
+      s.ammoAlt = a;
+      s.reloadT = 0;
+      s.swapT = SWAP_TICKS;
+    }
+  }
+  const w = curWeapon(s);
   const buffed = s.braceT > 0;
   s.yaw = c.yaw & 0xffff;
   let p = c.pitch;
@@ -129,6 +175,7 @@ export function step(s: PState, c: Cmd): number {
   s.pitch = p;
 
   if (s.braceT > 0) s.braceT--;
+  if (s.swapT > 0) s.swapT--;
 
   // ---------- di chuyển ----------
   let mx = c.mx;
@@ -143,7 +190,8 @@ export function step(s: PState, c: Cmd): number {
     ix *= inv;
     iz *= inv;
   }
-  let speed = cls.speed * (1 + s.mods.speed);
+  if (s.spdT > 0) s.spdT--;
+  let speed = cls.speed * (1 + s.mods.speed) * (s.spdT > 0 ? s.spdMul : 1);
   const sprint = isSprinting(s, c);
   if (s.down === 1) speed = CRAWL_SPEED;
   else if (s.down === 2) speed = 0;
@@ -192,12 +240,13 @@ export function step(s: PState, c: Cmd): number {
     s.reloadT--;
     if (s.reloadT === 0) s.ammo = w.mag;
   }
-  const reload = s.mods.reload ? Math.max(1, Math.round(reloadTicks(s.cls, s.tier) * (1 - s.mods.reload))) : reloadTicks(s.cls, s.tier);
+  const rt = curReloadTicks(s);
+  const reload = s.mods.reload ? Math.max(1, Math.round(rt * (1 - s.mods.reload))) : rt;
   if ((c.btn & B_RELOAD) && s.reloadT === 0 && s.ammo < w.mag) {
     s.reloadT = reload;
     out |= F_RELOAD;
   }
-  if ((c.btn & B_FIRE) && !sprint && s.reloadT === 0) {
+  if ((c.btn & B_FIRE) && !sprint && s.reloadT === 0 && s.swapT === 0) {
     if (s.ammo > 0 && s.fireCd === 0) {
       if (!(buffed && cls.buff.freeAmmo)) s.ammo--;
       const iv = buffed ? Math.round(w.interval * cls.buff.fireMul) : w.interval;
@@ -226,7 +275,7 @@ export function shotOrigin(s: PState, out: Float64Array) {
 
 /** hệ số tản theo tư thế */
 export function spreadOf(s: PState, c: Cmd) {
-  const w = weaponOf(s.cls, s.tier);
+  const w = curWeapon(s);
   let k = 1;
   if (c.btn & B_ADS) k *= 0.45;
   const sp2 = s.vx * s.vx + s.vz * s.vz;
@@ -240,7 +289,7 @@ export function spreadOf(s: PState, c: Cmd) {
  * Dùng PRNG seed theo (người chơi, seq) nên client và server ra cùng hướng.
  */
 export function pelletDirs(s: PState, c: Cmd, playerIdx: number, out: Float64Array): number {
-  const w = weaponOf(s.cls, s.tier);
+  const w = curWeapon(s);
   const spread = spreadOf(s, c);
   const sy = isin(s.yaw);
   const cy = icos(s.yaw);

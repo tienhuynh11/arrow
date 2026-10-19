@@ -7,13 +7,26 @@ import { MAX_PLAYERS } from './config.js';
 import type { Cmd } from './sim.js';
 import type { Loadout, Modifier, SimMods } from './progression.js';
 import type { RunReward } from './api.js';
+import type { WeaponDef } from './content.js';
+import type { GroundLoot } from './gear.js';
 
 /* ============================ JSON ============================ */
 export interface LobbyPlayer { idx: number; name: string; cls: number; ready: boolean; on: boolean; /** cấp tài khoản (khách: không có) */ level?: number; /** chơi khách (không đăng nhập) */ guest: boolean }
 /** chế độ phòng: vô tận (khách được chơi) hoặc vượt ải (bắt buộc đăng nhập) */
 export type RoomMode = 'endless' | 'stage';
 /** người chơi trong tin 'start' */
-export interface StartPlayer { idx: number; name: string; cls: number; /** chỉ số ảnh hưởng mô phỏng — client PHẢI đưa vào GameModel/newState */ mods: SimMods; look: Loadout['look'] }
+export interface StartPlayer {
+  idx: number; name: string; cls: number;
+  /** chỉ số ảnh hưởng mô phỏng — client PHẢI đưa vào GameModel/newState */
+  mods: SimMods;
+  look: Loadout['look'];
+  /** ải: 1–2 khẩu súng thật (chỉ số 0 = weapon1) — client PHẢI đưa vào GameModel/newState; vô tận: không có */
+  weapons?: WeaponDef[];
+  /** ải: vật phẩm ô nhanh (phím 3/4) lúc vào trận; số còn lại theo snapshot SnapPlayer.q1/q2 */
+  quick?: QuickSlot[];
+}
+/** ô nhanh: món tiêu hao + số lượng mang vào */
+export interface QuickSlot { itemId: string; count: number }
 export interface BoardEntry {
   names: string[];
   cls: number[];
@@ -56,9 +69,22 @@ export type SMsg =
   | { t: 'pong'; c: number; st: number }
   | { t: 'joined'; code: string; pid: string; token: string; idx: number; solo: boolean }
   | { t: 'room'; code: string; phase: 'lobby' | 'play' | 'over'; solo: boolean; host: number; players: LobbyPlayer[]; /** lựa chọn bản đồ trong sảnh: id hoặc 'random' */ map: string; mode: RoomMode; /** ải đang chọn (mode 'stage') */ stage: string; /** ải chơi được = giao của các ải mọi thành viên đã mở */ stages: string[] }
-  | { t: 'start'; seed: number; players: StartPlayer[]; tick: number; /** id bản đồ đã chốt */ map: string; mode: RoomMode; stage?: string; /** số đợt phải vượt (ải) */ waves?: number; /** luật đặc biệt của ải */ mods?: Modifier[] }
+  | { t: 'start'; seed: number; players: StartPlayer[]; tick: number; /** id bản đồ đã chốt */ map: string; mode: RoomMode; stage?: string; /** số đợt phải vượt (ải) */ waves?: number; /** luật đặc biệt của ải */ mods?: Modifier[];
+      /** false = không có xu/cửa hàng (ải): ẩn xu, phím V/C vô hiệu, kỹ năng miễn phí */ economy: boolean;
+      /** ải: túi đồ đang nằm trên đất (khi vào lại giữa trận) */ loot?: GroundLoot[] }
   | { t: 'wave'; n: number; phase: 'fight' | 'break'; ends: number; total: number; boss: boolean; ready: number[] }
+  /**
+   * sự kiện rời rạc. Ải thêm:
+   *  {k:'use', i: người, s: itemId, v: số còn lại, j: ô (0/1)} — dùng vật phẩm ô nhanh
+   *  {k:'picked', i: người, v: id túi, s: itemId, j: phẩm} — nhặt túi đồ vào ba lô
+   *  {k:'bagfull', i: người} — ba lô đầy (chỉ gửi người đó)
+   *  {k:'out', i: người} — chết hẳn trong ải: bị loại, mất đồ mang theo
+   */
   | { t: 'ev'; k: string; i?: number; j?: number; v?: number; s?: string }
+  /** ải: túi đồ rơi xuống đất */
+  | ({ t: 'ev'; k: 'loot' } & GroundLoot)
+  /** ải: túi đồ biến mất (nhặt hoặc hết 60 giây) */
+  | { t: 'ev'; k: 'unloot'; v: number }
   | { t: 'over'; wave: number; score: number; kills: number; rank: number; secs: number; stats: EndStat[]; board: BoardEntry[]; /** thưởng an ủi (người có tài khoản) */ rewards?: RunReward[]; stage?: string }
   /** vượt ải thành công (phòng chuyển 'over' ngay, không gửi thêm tin 'over') */
   | { t: 'victory'; stage: string; stars: number; secs: number; wave: number; rewards: RunReward[]; stats: EndStat[]; score: number; kills: number }
@@ -196,12 +222,21 @@ export interface SnapPlayer {
   ammo: number; fireCd: number; reloadT: number; braceT: number;
   cdG: number; cdX: number; ult: number; revive: number; bleed: number;
   cash: number; kills: number;
+  /** ải: ô súng đang cầm, đếm ngược đổi súng, đạn khẩu kia */
+  wslot: number; swapT: number; ammoAlt: number;
+  /** tăng tốc tạm thời (tick 60Hz còn lại, hệ số) */
+  spdT: number; spdMul: number;
+  /** số vật phẩm còn lại ở ô nhanh 1/2 */
+  q1: number; q2: number;
+  /** số món trong ba lô trận */
+  bag: number;
 }
 
 export function newSnapPlayer(): SnapPlayer {
   return {
     idx: 0, flags: 0, cls: 0, tier: 0, hpTier: 0, x: 0, z: 0, y: 0, vx: 0, vz: 0, vy: 0, yaw: 0, pitch: 0, ack: 0,
     hp: 0, maxHp: 0, shield: 0, ammo: 0, fireCd: 0, reloadT: 0, braceT: 0, cdG: 0, cdX: 0, ult: 0, revive: 0, bleed: 0, cash: 0, kills: 0,
+    wslot: 0, swapT: 0, ammoAlt: 0, spdT: 0, spdMul: 1, q1: 0, q2: 0, bag: 0,
   };
 }
 
@@ -274,6 +309,11 @@ export class SnapData {
   fB = new Uint16Array(64);
 }
 
+/** lượng tử hệ số tăng tốc (SnapPlayer.spdMul = byte / SPD_Q) */
+export const SPD_Q = 50;
+/** đạn tối đa một băng (snapshot ghi u8) */
+export const MAX_MAG = 255;
+
 /** đơn vị vận tốc đạn: 1/128 m/s */
 export const QV = 128;
 
@@ -322,6 +362,14 @@ export function decodeSnap(v: DataView, s: SnapData): boolean {
     p.bleed = v.getUint8(o++);
     p.cash = v.getUint32(o, true); o += 4;
     p.kills = v.getUint16(o, true); o += 2;
+    p.wslot = v.getUint8(o++);
+    p.swapT = v.getUint8(o++);
+    p.ammoAlt = v.getUint8(o++);
+    p.spdT = v.getUint16(o, true); o += 2;
+    p.spdMul = v.getUint8(o++) / SPD_Q;
+    p.q1 = v.getUint8(o++);
+    p.q2 = v.getUint8(o++);
+    p.bag = v.getUint8(o++);
   }
   // khỉ
   s.nm = v.getUint8(o++);

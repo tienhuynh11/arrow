@@ -2,36 +2,32 @@
 // Mỗi thao tác chạy đồng bộ trọn vẹn (kiểm tra hết rồi mới ghi) nên tương đương một giao dịch.
 
 import type { EventDef, EventState, LeaderRow, MeResponse, StageProgress } from '../../../../shared/monkey/api.js';
-import { loadoutOf, salvageValue, type ItemInst, type Loadout, type Rarity, type Reward, type SkillKey, type Slot, type Stats } from '../../../../shared/monkey/progression.js';
+import { STARTER_KIT, loadoutOf2, type EquipSlot, type ItemInst, type Loadout2, type Reward, type SkillKey } from '../../../../shared/monkey/progression.js';
 import {
   DEFAULT_CHARS,
-  MAX_ITEMS,
+  Inv,
   MONEY_CAP,
   NUM_CHARS,
   SKILL_KEYS,
-  STARTER_ITEMS,
   applyGain,
   checkClaim,
-  checkItemOwned,
   checkSkill,
   checkUnlock,
-  checkUpgrade,
   cleanRun,
   eventActive,
   eventAfterRun,
   firstReward,
+  grantedOf,
   isCls,
   isSlot,
   rewardItems,
   seedEvent,
-  slotOf,
   type Wallet,
 } from './rules.js';
-import { StoreError, type AccountRow, type RunResult, type Store, type TeamRun } from './store.js';
+import { StoreError, type AccountRow, type ExtractOutcome, type ExtractRun, type RunResult, type Store, type TeamRun } from './store.js';
 
 interface MItem extends ItemInst {
   owner: number;
-  slot: Slot;
 }
 interface MAccount extends Wallet {
   id: number;
@@ -72,21 +68,33 @@ export class MemStore implements Store {
   private itemsOf(id: number) {
     return [...this.items.values()].filter((i) => i.owner === id).sort((a, b) => a.uid - b.uid);
   }
-  private addItem(a: MAccount, itemId: string, rarity: Rarity, subs: Stats, equipped = false): ItemInst {
-    const uid = ++this.seq.item;
-    const it: MItem = { uid, owner: a.id, itemId, rarity, level: 1, subs: clone(subs), equipped, slot: slotOf(itemId) };
-    this.items.set(uid, it);
-    return pub(it);
+  /** chạy thao tác kho đồ trên bản sao rồi ghi lại (đồng bộ trọn vẹn = một giao dịch); trả kết quả + món mới/đổi */
+  private withInv<T>(a: MAccount, fn: (inv: Inv) => T): { out: T; touched: ItemInst[] } {
+    const w: Wallet = { level: a.level, xp: a.xp, gold: a.gold, shards: a.shards, books: a.books };
+    const inv = new Inv(this.itemsOf(a.id).map(pub), w);
+    const out = fn(inv); // ném lỗi → không ghi gì
+    const ch = inv.changes();
+    for (const u of ch.removed) this.items.delete(u);
+    for (const it of ch.updated) {
+      const m = this.items.get(it.uid);
+      if (m) Object.assign(m, pub(it));
+    }
+    const real = new Map<number, number>();
+    for (const it of ch.added) {
+      const uid = ++this.seq.item;
+      real.set(it.uid, uid);
+      this.items.set(uid, { ...pub(it), uid, owner: a.id });
+    }
+    Object.assign(a, w);
+    const touched = [...inv.touched].map((u) => this.items.get(real.get(u) ?? u)).filter((x): x is MItem => !!x).map(pub);
+    return { out, touched };
   }
-  /** cộng một phần thưởng (đã kiểm tra) — trả đồ đã tạo + số cấp lên */
-  private give(a: MAccount, r: Reward & { items?: { itemId: string; rarity: Rarity; subs?: Stats }[] }) {
+  /** cộng một phần thưởng (đã kiểm tra) — trả đồ đã tạo/đổi + số cấp lên */
+  private give(a: MAccount, r: Reward) {
     const ups = applyGain(a, r);
-    const room = Math.max(0, MAX_ITEMS - this.itemsOf(a.id).length);
-    const made = rewardItems(r.items)
-      .slice(0, room)
-      .map((it) => this.addItem(a, it.itemId, it.rarity, it.subs));
+    const { touched } = this.withInv(a, (inv) => inv.give(rewardItems(r.items)));
     if (r.unlockChar !== undefined && isCls(r.unlockChar)) a.chars.add(r.unlockChar);
-    return { made, ups };
+    return { made: touched, ups };
   }
 
   /* ---- tài khoản ---- */
@@ -100,7 +108,10 @@ export class MemStore implements Store {
     };
     this.accounts.set(id, a);
     this.byKey.set(key, id);
-    for (const s of STARTER_ITEMS) this.addItem(a, s.itemId, s.rarity, {}, s.equipped);
+    for (const s of STARTER_KIT) {
+      const uid = ++this.seq.item;
+      this.items.set(uid, { uid, owner: id, itemId: s.itemId, grade: s.grade, level: 1, affixes: {}, count: s.count, slot: s.slot, stash: false });
+    }
     return id;
   }
   async findAccount(username: string): Promise<AccountRow | null> {
@@ -150,9 +161,10 @@ export class MemStore implements Store {
     for (const k of SKILL_KEYS) o[k] = a.skills.get(`${cls}:${k}`) ?? 1;
     return o;
   }
-  async loadout(accountId: number, cls: number): Promise<Loadout> {
+  async loadout(accountId: number, cls: number): Promise<Loadout2> {
     const a = this.acc(accountId);
-    return loadoutOf(this.itemsOf(a.id).filter((i) => i.equipped).map(pub), this.skillsOf(a, isCls(cls) ? cls : 0));
+    const k = isCls(cls) ? cls : 0;
+    return loadoutOf2(this.itemsOf(a.id).filter((i) => i.slot).map(pub), k, this.skillsOf(a, k));
   }
   async clearedStages(accountId: number) {
     const a = this.acc(accountId);
@@ -160,38 +172,33 @@ export class MemStore implements Store {
   }
 
   /* ---- thao tác ---- */
-  private ownItem(accountId: number, uid: number): MItem {
-    const it = this.items.get(uid);
-    return checkItemOwned(it && it.owner === accountId ? it : null);
+  async equip(accountId: number, uid: number, slot: EquipSlot) {
+    this.withInv(this.acc(accountId), (inv) => inv.equip(uid, slot));
   }
-  async equip(accountId: number, uid: number) {
-    this.acc(accountId);
-    const it = this.ownItem(accountId, uid);
-    for (const o of this.items.values()) if (o.owner === accountId && o.slot === it.slot) o.equipped = false;
-    it.equipped = true;
-  }
-  async unequip(accountId: number, slot: Slot) {
-    this.acc(accountId);
+  async unequip(accountId: number, slot: EquipSlot) {
     if (!isSlot(slot)) throw new StoreError('Ô trang bị không hợp lệ');
-    for (const o of this.items.values()) if (o.owner === accountId && o.slot === slot) o.equipped = false;
+    this.withInv(this.acc(accountId), (inv) => inv.unequip(slot));
   }
-  async upgradeItem(accountId: number, uid: number) {
-    const a = this.acc(accountId);
-    const it = this.ownItem(accountId, uid);
-    const cost = checkUpgrade(it, a);
-    a.gold -= cost;
-    it.level += 1;
+  async moveToStash(accountId: number, uid: number) {
+    this.withInv(this.acc(accountId), (inv) => inv.move(uid, true));
+  }
+  async moveToBag(accountId: number, uid: number) {
+    this.withInv(this.acc(accountId), (inv) => inv.move(uid, false));
+  }
+  async sell(accountId: number, uids: number[]) {
+    return this.withInv(this.acc(accountId), (inv) => inv.sell(uids)).out;
   }
   async salvage(accountId: number, uids: number[]) {
-    const a = this.acc(accountId);
-    const list = [...new Set(uids)].map((u) => this.ownItem(accountId, u));
-    if (!list.length) throw new StoreError('Chưa chọn món đồ nào');
-    if (list.some((i) => i.equipped)) throw new StoreError('Không thể phân rã đồ đang mặc');
-    let gold = 0;
-    for (const it of list) gold += salvageValue(it);
-    for (const it of list) this.items.delete(it.uid);
-    a.gold = Math.min(MONEY_CAP, a.gold + gold);
-    return gold;
+    return this.sell(accountId, uids);
+  }
+  async buy(accountId: number, idx: number, qty: number) {
+    return this.withInv(this.acc(accountId), (inv) => inv.buy(idx, qty)).out;
+  }
+  async claimStarter(accountId: number) {
+    this.withInv(this.acc(accountId), (inv) => inv.claimStarter());
+  }
+  async upgradeItem(accountId: number, uid: number) {
+    this.withInv(this.acc(accountId), (inv) => inv.upgrade(uid));
   }
   async unlockChar(accountId: number, cls: number) {
     const a = this.acc(accountId);
@@ -261,6 +268,44 @@ export class MemStore implements Store {
     }
     return { items, levelUps: ups, newLevel: a.level, firstClear };
   }
+  async recordExtract(raw: ExtractRun, now: Date): Promise<ExtractOutcome> {
+    const r = cleanRun(raw);
+    const a = this.acc(r.accountId);
+    const x = r.extract ?? { survived: false, kept: [], lost: [], looted: [], usedConsumables: {} };
+    const chest: Reward = x.survived ? r.chest ?? {} : { xp: Math.round((r.chest?.xp ?? 0) * 0.3) };
+    let ups = applyGain(a, chest);
+    const prev = a.stages.get(r.stage);
+    const cleared = r.won && r.stage !== 'endless';
+    const firstClear = cleared && (!prev || prev.clears === 0);
+    const fr = firstClear ? firstReward(r.stage) : null;
+    if (fr) ups += applyGain(a, fr);
+    if (fr?.unlockChar !== undefined && isCls(fr.unlockChar)) a.chars.add(fr.unlockChar);
+    const res = this.withInv(a, (inv) => {
+      const e = inv.extract(x);
+      const g1 = inv.give(rewardItems(chest.items));
+      const g2 = fr ? inv.give(rewardItems(fr.items)) : { gold: 0 };
+      return { lost: e.lost, overflow: e.loot.gold + g1.gold + g2.gold };
+    });
+    a.kills = Math.min(MONEY_CAP, a.kills + r.kills);
+    if (cleared) {
+      a.stages.set(r.stage, {
+        stage: r.stage,
+        stars: Math.max(prev?.stars ?? 0, r.stars),
+        bestSecs: prev && prev.clears > 0 ? Math.min(prev.bestSecs, r.secs) : r.secs,
+        clears: (prev?.clears ?? 0) + 1,
+      });
+    }
+    for (const e of this.events.values()) {
+      if (!eventActive(e, now)) continue;
+      const st = a.events.get(e.id) ?? { progress: {}, claimed: [] };
+      st.progress = eventAfterRun(e, st.progress, r);
+      a.events.set(e.id, st);
+    }
+    const granted = grantedOf(chest, fr);
+    this.runs.push({ accountId: a.id, stage: r.stage, won: r.won, stars: r.stars, wave: r.wave, kills: r.kills, secs: r.secs, score: r.score, reward: granted, at: now.getTime() });
+    if (this.runs.length > 2000) this.runs.splice(0, this.runs.length - 2000);
+    return { items: res.touched, lost: res.out.lost, overflowGold: res.out.overflow, granted, levelUps: ups, newLevel: a.level, firstClear };
+  }
   async recordTeamRun(t: TeamRun, now: Date) {
     this.teamRuns.push({ ...clone(t), at: now.getTime() });
     if (this.teamRuns.length > 5000) this.teamRuns.splice(0, this.teamRuns.length - 5000);
@@ -306,5 +351,5 @@ export class MemStore implements Store {
 }
 
 function pub(it: MItem | ItemInst): ItemInst {
-  return { uid: it.uid, itemId: it.itemId, rarity: it.rarity, level: it.level, subs: clone(it.subs), equipped: it.equipped };
+  return { uid: it.uid, itemId: it.itemId, grade: it.grade, level: it.level, affixes: clone(it.affixes), count: it.count, slot: it.slot, stash: it.stash };
 }

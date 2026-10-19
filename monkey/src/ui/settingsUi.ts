@@ -1,7 +1,7 @@
 // Hộp thoại CÀI ĐẶT: chuột & camera, âm thanh, đồ hoạ, phím, cảm ứng. Đổi là lưu ngay.
 
 import { applyVolumes, sfxUi } from '../audio';
-import { ACTIONS, DEFAULT_KEYS, keyLabel, resetSettings, saveSettings, settings, type Action } from '../settings';
+import { ACTIONS, CAM_MODES, DEFAULT_KEYS, keyLabel, resetSettings, saveSettings, settings, type Action } from '../settings';
 import { clear, h } from './dom';
 
 type Tab = 'mouse' | 'audio' | 'gfx' | 'keys' | 'touch';
@@ -84,6 +84,7 @@ export function openSettings(onClose: () => void) {
         slider('Độ nhạy khi ngắm (chuột phải)', 'Nhân với độ nhạy chính', 'adsSens', 0.2, 1.5, 0.05, (v) => `×${v.toFixed(2)}`),
         toggle('Đảo trục Y', 'Đẩy chuột lên thì nhìn xuống', 'invertY'),
         toggle('Ngắm kiểu bật/tắt', 'Bấm chuột phải một lần để ngắm thay vì giữ', 'adsToggle'),
+        seg('Góc camera', `Qua vai · Thứ nhất (chỉ thấy súng) · Xa trên cao — phím ${keyLabel(settings.keys.camera)} để đổi trong trận`, CAM_MODES, () => settings.camMode, (v) => { settings.camMode = v; }),
         slider('Góc nhìn (FOV)', 'Rộng hơn = thấy nhiều khỉ hơn ở hai bên', 'fov', 55, 110, 1, (v) => `${v}°`),
         slider('Khoảng cách camera', 'Camera đứng sau vai bao xa', 'camDist', 2.2, 6, 0.1, (v) => `${v.toFixed(1)}m`),
         slider('Rung màn hình', 'Khi bắn / nổ / bị đánh', 'shake', 0, 1.5, 0.05, (v) => `${Math.round(v * 100)}%`),

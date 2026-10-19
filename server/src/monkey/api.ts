@@ -5,7 +5,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { MONKEY_BASE } from '../../../shared/monkey/config.js';
 import { API, type EventDef, type EventObjective, type MutateRes } from '../../../shared/monkey/api.js';
-import { EVENT_STAGES, ITEM_BY_ID, STAGE_BY_ID, type Rarity, type Reward } from '../../../shared/monkey/progression.js';
+import { EVENT_STAGES, ITEM_BY_ID, SHOP_STOCK, STAGE_BY_ID, type Grade, type Reward } from '../../../shared/monkey/progression.js';
 import { HttpError, clientIp, createAdminCheck, json, parseJson, readBody } from '../http/util.js';
 import { login, logout, register, resolveToken } from './accounts.js';
 import { StoreError, storeReady, type Store } from './db/index.js';
@@ -18,6 +18,14 @@ const MAX_ADMIN_BODY = 64 * 1024;
 const checkAdmin = createAdminCheck(() => process.env.MONKEY_ADMIN_KEY || null);
 
 let onlineCounter: () => number = () => 0;
+let busyCheck: (accountId: number) => boolean = () => false;
+/**
+ * index.ts/room.ts báo tài khoản nào đang ở trong một trận ẢI (mang đồ): khi đó mọi thao tác kho đồ bị từ chối (409)
+ * để không thể tháo/bán đồ đang mang giữa trận rồi "chết không mất".
+ */
+export function setInventoryBusyCheck(fn: (accountId: number) => boolean) {
+  busyCheck = fn;
+}
 /** index.ts báo số người đang online cho admin/stats */
 export function setOnlineCounter(fn: () => number) {
   onlineCounter = fn;
@@ -49,9 +57,11 @@ export function parseReward(raw: unknown): Reward {
       const o = body(it);
       const def = ITEM_BY_ID[o.itemId];
       if (!def) throw new HttpError(400, `Không có món đồ ${String(o.itemId).slice(0, 30)}`);
-      const rarity = int(o.rarity, 'Độ hiếm', 0, 3) as Rarity;
-      if (rarity < def.minR || rarity > def.maxR) throw new HttpError(400, `${def.name} chỉ có độ hiếm ${def.minR}–${def.maxR}`);
-      return { itemId: def.id, rarity };
+      const grade = int(o.grade ?? o.rarity, 'Phẩm', 0, 4) as Grade;
+      if (grade < def.minGrade || grade > def.maxGrade) throw new HttpError(400, `${def.name} chỉ có phẩm ${def.minGrade}–${def.maxGrade}`);
+      const item: { itemId: string; grade: Grade; count?: number } = { itemId: def.id, grade };
+      if (o.count !== undefined) item.count = int(o.count, 'Số lượng', 1, def.stack ? 9999 : 20);
+      return item;
     });
   }
   if (r.unlockChar !== undefined) {
@@ -122,6 +132,8 @@ async function mutate(store: Store, id: number, granted?: Reward): Promise<Mutat
 }
 
 /* ---------------- định tuyến ---------------- */
+/** route đụng tới kho đồ (bị khoá khi đang trong trận ải) */
+const INVENTORY_ROUTES = new Set<string>([API.equip, API.unequip, API.stash, API.bag, API.sell, API.salvage, API.buy, API.claimStarter, API.upgradeItem]);
 async function route(req: IncomingMessage, res: ServerResponse, r: string, method: string, query: URLSearchParams) {
   const store = await storeReady();
   const now = () => new Date();
@@ -176,18 +188,28 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
     const id = await auth(req);
     return json(res, 200, await store.me(id, now()));
   }
+  if (r === API.shopStock && method === 'GET') return json(res, 200, { stock: SHOP_STOCK });
   if (!post) throw new HttpError(404, 'Không có API này');
+  const uids = (b: Record<string, any>) => {
+    if (!Array.isArray(b.uids) || !b.uids.length || b.uids.length > 200) throw new HttpError(400, 'Danh sách đồ không hợp lệ');
+    return b.uids.map((u: unknown) => int(u, 'Món đồ', 1));
+  };
   const handlers: Record<string, (id: number, b: Record<string, any>) => Promise<Reward | void>> = {
-    [API.equip]: (id, b) => store.equip(id, int(b.uid, 'Món đồ', 1)),
+    [API.equip]: (id, b) => {
+      if (!isSlot(b.slot)) throw new HttpError(400, 'Ô trang bị không hợp lệ');
+      return store.equip(id, int(b.uid, 'Món đồ', 1), b.slot);
+    },
     [API.unequip]: (id, b) => {
       if (!isSlot(b.slot)) throw new HttpError(400, 'Ô trang bị không hợp lệ');
       return store.unequip(id, b.slot);
     },
+    [API.stash]: (id, b) => store.moveToStash(id, int(b.uid, 'Món đồ', 1)),
+    [API.bag]: (id, b) => store.moveToBag(id, int(b.uid, 'Món đồ', 1)),
     [API.upgradeItem]: (id, b) => store.upgradeItem(id, int(b.uid, 'Món đồ', 1)),
-    [API.salvage]: async (id, b) => {
-      if (!Array.isArray(b.uids) || !b.uids.length || b.uids.length > 200) throw new HttpError(400, 'Danh sách đồ không hợp lệ');
-      return { gold: await store.salvage(id, b.uids.map((u: unknown) => int(u, 'Món đồ', 1))) };
-    },
+    [API.sell]: async (id, b) => ({ gold: await store.sell(id, uids(b)) }),
+    [API.salvage]: async (id, b) => ({ gold: await store.sell(id, uids(b)) }),
+    [API.buy]: async (id, b) => ({ gold: await store.buy(id, int(b.idx, 'Món hàng', 0, SHOP_STOCK.length - 1), int(b.qty ?? 1, 'Số lượng', 1, 99)) }),
+    [API.claimStarter]: (id) => store.claimStarter(id),
     [API.unlockChar]: (id, b) => {
       if (!isCls(b.cls)) throw new HttpError(400, 'Nhân vật không hợp lệ');
       return store.unlockChar(id, b.cls);
@@ -205,6 +227,7 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
   const h = handlers[r];
   if (!h) throw new HttpError(404, 'Không có API này');
   const id = await auth(req);
+  if (INVENTORY_ROUTES.has(r) && busyCheck(id)) throw new HttpError(409, 'Đang trong trận — không thể đổi đồ lúc này');
   const granted = await h(id, await read());
   return json(res, 200, await mutate(store, id, granted || undefined));
 }

@@ -9,10 +9,24 @@
 import * as THREE from 'three';
 import { CLASSES, weaponOf, type WeaponModel } from '@shared/monkey/content';
 import { PLAYER_COLORS } from '../ui/dom';
-import { ITEM_BY_ID, type ItemDef, type Slot } from '@shared/monkey/progression';
+import { defOf, type Def2 } from '../gearlib';
 
-/** ngoại hình đồ đang mặc: id món theo ô (từ Loadout.look) */
-export type AvatarLook = Partial<Record<Slot, string>>;
+/** ngoại hình đồ đang mặc: id món theo ô (Loadout.look kiểu cũ: helmet/armor/gun/knife/skin; v2: thêm weapon1/2, gloves, boots, belt, amulet…) */
+export type AvatarLook = Partial<Record<string, string>>;
+type ItemDef = Def2;
+/** ô hiển thị trên người */
+type GearKey = 'helmet' | 'armor' | 'gun' | 'gun2' | 'knife' | 'skin' | 'gloves' | 'boots' | 'belt' | 'amulet';
+const LOOK_KEY: Record<string, [GearKey, string]> = {
+  helmet: ['helmet', 'helmet'], armor: ['armor', 'armor'], gun: ['gun', 'gun'], weapon1: ['gun', 'gun'], weapon2: ['gun2', 'gun'], knife: ['knife', 'knife'],
+  skin: ['skin', 'skin'], gloves: ['gloves', 'gloves'], boots: ['boots', 'boots'], belt: ['belt', 'belt'], amulet: ['amulet', 'amulet'],
+};
+const GUN_IDS = ['pistol', 'revolver', 'smg', 'shotgun', 'rifle', 'lmg', 'sniper', 'launcher'];
+/** họ mô hình súng của món súng (dữ liệu gun.model hoặc look.kind) */
+function gunModelOf(def: ItemDef | undefined): WeaponModel | null {
+  if (!def) return null;
+  const m = (def.gun as { model?: string } | undefined)?.model ?? def.look.kind;
+  return GUN_IDS.includes(m) ? (m as WeaponModel) : null;
+}
 
 /** màu da theo idx người chơi (10 tông, đủ MAX_PLAYERS) */
 const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0xd1a17a, 0xa86b3c, 0x6b3e1f, 0xf3d2b3, 0xb98060];
@@ -381,7 +395,11 @@ export class Avatar {
   private small: THREE.Object3D[] = [];
   private detail = true;
   /** đồ đang mặc (mũ/giáp/dao/súng/trang phục) */
-  private gear: Partial<Record<Slot, ItemDef>> = {};
+  private gear: Partial<Record<GearKey, ItemDef>> = {};
+  /** súng mang sau lưng (ô súng không cầm) */
+  private backGun: THREE.Object3D | null = null;
+  /** ép mô hình súng cầm tay (ải: súng từ món đồ) */
+  private gunOverride: { model: WeaponModel; color: number } | null = null;
   /** dao: bao bên hông + dao cầm tay (chỉ hiện khi chém) */
   private sheath: THREE.Object3D | null = null;
   private handKnife: THREE.Object3D | null = null;
@@ -391,9 +409,10 @@ export class Avatar {
   constructor(cls: number, blobTexture: THREE.Texture, idx = 0, look?: AvatarLook | null) {
     this.cls = cls;
     this.look = classLook(cls);
-    for (const [slot, itemId] of Object.entries(look ?? {}) as [Slot, string][]) {
-      const def = itemId ? ITEM_BY_ID[itemId] : undefined;
-      if (def && def.slot === slot) this.gear[slot] = def;
+    for (const [slot, itemId] of Object.entries(look ?? {})) {
+      const k = LOOK_KEY[slot];
+      const def = itemId ? defOf(itemId) : undefined;
+      if (k && def && def.kind === k[1] && !this.gear[k[0]]) this.gear[k[0]] = def;
     }
     const skinDef = this.gear.skin;
     const id = this.look.id;
@@ -405,6 +424,7 @@ export class Avatar {
     const legM = mat(shade(color, 0.78), { rough: 0.6 });
     const pcol = mat(PCOL[idx % PCOL.length], { rough: 0.5 });
     const shoeM = mat(PCOL[idx % PCOL.length], { rough: 0.45 });
+    const bootM = this.gear.boots ? mat(this.gear.boots.look.color, { rough: 0.55 }) : shoeM;
     const ink = mat(0x1d1728, { basic: true });
     const white = mat(0xffffff, { basic: true });
     const red = mat(0xe11d48, { basic: true });
@@ -413,6 +433,10 @@ export class Avatar {
     if (skinDef?.look.accent !== undefined) sleeveC = skinDef.look.accent;
     if (colDist(sleeveC, color) < 0.35) sleeveC = shade(color, 0.5);
     if (colDist(gloveC, sleeveC) < 0.35) gloveC = colDist(sleeveC, 0xffffff) > 1.2 ? 0xf5f5f4 : 0x1f2937;
+    // găng tay / giày / thắt lưng từ trang bị: đổi màu
+    if (this.gear.gloves) gloveC = this.gear.gloves.look.color;
+    const bootDef = this.gear.boots;
+    const beltDef = this.gear.belt;
 
     this.root.add(this.hips);
     this.hips.position.y = HIP_Y;
@@ -426,13 +450,16 @@ export class Avatar {
       mesh(limbGeo(0.1, SH + 0.04), legM, kn);
       ank.position.y = -SH;
       kn.add(ank);
-      mesh(sph(0.115, 14, 10), shoeM, ank, 0, -0.012, 0.04).scale.set(1, 0.62, 1.4);
+      mesh(sph(0.115, 14, 10), bootDef ? bootM : shoeM, ank, 0, -0.012, 0.04).scale.set(1, 0.62, 1.4);
+      // giày từ trang bị: cổ giày + viền màu người chơi
+      if (bootDef) mesh(cylY(0.1, 0.112, 0.1, 12), bootM, ank, 0, 0.05, 0.0);
+      if (bootDef) mesh(G('bootRim', () => new THREE.TorusGeometry(0.1, 0.014, 5, 16)), shoeM, ank, 0, 0.1, 0, false).rotation.x = Math.PI / 2;
     }
     // ---- thân hạt đậu ----
     this.hips.add(this.spine);
     this.spine.add(this.chestG);
     const torso = mesh(G('torso', () => new THREE.CapsuleGeometry(BODY_R, BODY_LEN, 8, 20)), body, this.chestG, 0, BODY_Y, 0);
-    const belt = mesh(G('belt', () => new THREE.TorusGeometry(0.33, 0.04, 8, 28)), pcol, this.chestG, 0, BODY_Y - 0.17, 0);
+    const belt = mesh(G(beltDef ? 'belt2' : 'belt', () => new THREE.TorusGeometry(0.33, beltDef ? 0.05 : 0.04, 8, 28)), beltDef ? mat(beltDef.look.color, { rough: 0.6 }) : pcol, this.chestG, 0, BODY_Y - 0.17, 0);
     belt.rotation.x = Math.PI / 2;
     if (bulk) {
       torso.scale.set(1.08, 1, 1.05);
@@ -528,6 +555,29 @@ export class Avatar {
       roll.rotation.z = Math.PI / 2;
     }
     if (this.gear.armor) this.armorPiece(this.gear.armor, front, bulk);
+    if (beltDef) {
+      // khoá thắt lưng (màu phụ) + chấm màu người chơi để vẫn nhận ra nhau
+      mesh(box(0.11, 0.08, 0.03), mat(beltDef.look.accent ?? 0xd4a017, { metal: 0.7, rough: 0.35 }), this.chestG, 0, BODY_Y - 0.17, front + 0.02);
+      mesh(box(0.05, 0.05, 0.02), pcol, this.chestG, 0, BODY_Y - 0.17, front + 0.035, false);
+    }
+    if (this.gear.amulet) {
+      // dây chuyền: mặt ngọc phát sáng trước ngực
+      const am = this.gear.amulet;
+      const cord = mesh(G('amcord', () => new THREE.TorusGeometry(0.2, 0.01, 4, 20, Math.PI)), mat(am.look.accent ?? 0xd4a017, { metal: 0.6, rough: 0.4 }), this.chestG, 0, NECK_Y - 0.06, 0.2, false);
+      cord.rotation.set(Math.PI / 2 + 0.6, 0, Math.PI);
+      const gem = mesh(G('amgem', () => new THREE.OctahedronGeometry(0.045)), mat(am.look.color, { emissive: am.look.color, rough: 0.2, metal: 0.3 }), this.chestG, 0, NECK_Y - 0.2, front + 0.02, false);
+      gem.scale.set(0.9, 1.3, 0.6);
+    }
+    if (this.gear.gun2) {
+      // súng phụ đeo chéo sau lưng
+      const g2 = gunModel(gunModelOf(this.gear.gun2) ?? 'rifle', this.gear.gun2.look.color);
+      g2.g.position.set(0.05, BODY_Y + 0.12, -0.44);
+      g2.g.rotation.set(0, Math.PI / 2, 0.9);
+      g2.g.scale.setScalar(GUN_S * 0.9);
+      this.chestG.add(g2.g);
+      this.backGun = g2.g;
+      packCol = null;
+    }
     if (packCol !== null) {
       const pack = mesh(box(0.32, 0.34, 0.15), mat(packCol, { rough: 0.9 }), this.chestG, 0, BODY_Y + 0.1, -0.37);
       pack.rotation.x = 0.06;
@@ -717,9 +767,23 @@ export class Avatar {
     if (tier === this.tier) return;
     this.tier = tier;
     if (this.gun) this.gunPose.remove(this.gun.g);
-    const w = weaponLook(this.cls, tier);
-    this.gun = gunModel(w.model, this.gear.gun ? this.gear.gun.look.color : w.color);
+    const w = this.gunOverride ?? weaponLook(this.cls, tier);
+    const gm = this.gunOverride ? null : gunModelOf(this.gear.gun);
+    this.gun = gunModel(gm ?? w.model, this.gunOverride ? w.color : this.gear.gun ? this.gear.gun.look.color : w.color);
     this.gunPose.add(this.gun.g);
+  }
+
+  /** ải: súng cầm tay theo món đồ (đổi súng phím 1/2) */
+  setGun(model: WeaponModel, color: number) {
+    if (this.gunOverride && this.gunOverride.model === model && this.gunOverride.color === color) return;
+    this.gunOverride = { model: (GUN_IDS.includes(model) ? model : 'rifle') as WeaponModel, color };
+    this.tier = -99;
+    this.setTier(0);
+  }
+
+  /** hiện / ẩn súng sau lưng (đang cầm khẩu phụ thì khẩu chính lên lưng — dùng lại cùng mô hình cho rẻ) */
+  showBackGun(v: boolean) {
+    if (this.backGun) this.backGun.visible = v;
   }
 
   kick() {
@@ -1242,4 +1306,10 @@ export class Avatar {
   setVisible(v: boolean) {
     this.hips.visible = v;
   }
+}
+
+/** mô hình súng rời (khung xem súng / ngắm nghía) — dùng chung hình khối với nhân vật */
+export function makeGunModel(model: WeaponModel, color: number): { g: THREE.Group; muzzle: THREE.Vector3 } {
+  const g = gunModel(GUN_IDS.includes(model) ? model : 'rifle', color);
+  return { g: g.g, muzzle: g.muzzle };
 }

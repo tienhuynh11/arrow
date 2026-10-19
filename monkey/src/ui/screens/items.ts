@@ -1,69 +1,48 @@
-// Hiển thị đồ đạc / phần thưởng dùng chung (kho đồ, màn thắng, ải, sự kiện, admin).
+// Hiển thị đồ đạc / phần thưởng dùng chung (hành trang, paperdoll, thương nhân, tổng kết, ải, sự kiện).
 
 import { CLASSES } from '@shared/monkey/content';
-import { ITEM_BY_ID, RARITY, STAT_INFO, itemStats, type ItemInst, type Rarity, type Reward, type StatKey, type Stats } from '@shared/monkey/progression';
+import type { Reward } from '@shared/monkey/progression';
+import { clampGrade, defOf, dropInst, gradeColor, gradeName, itemName, type Inv } from '../../gearlib';
 import { h } from '../dom';
 import { itemSvg } from '../icons';
+import { bindTip, itemTip } from '../tooltip';
 
 export const CUR = { gold: '🪙', shards: '🧩', books: '📘', xp: '✨' } as const;
 
+/** màu phẩm (tên cũ — vẫn dùng ở vài màn) */
 export function rarityColor(r: number) {
-  return RARITY[Math.max(0, Math.min(3, r))].color;
+  return gradeColor(r);
 }
+export { itemName };
 
-/** định dạng một chỉ số: +12% / +30 */
-export function fmtStat(k: StatKey, v: number) {
-  const info = STAT_INFO[k];
-  if (info.pct) {
-    const p = v * 100;
-    return `+${p >= 10 ? Math.round(p) : Math.round(p * 10) / 10}%`;
-  }
-  return `+${Math.round(v)}`;
-}
-
-/** ô đồ vuông có khung độ hiếm */
-export function itemTile(itemId: string, rarity: Rarity, opts: { level?: number; size?: number; equipped?: boolean; sel?: boolean; cls?: string; onclick?: () => void; title?: string } = {}) {
-  const def = ITEM_BY_ID[itemId];
-  const el = h(opts.onclick ? 'button' : 'div', {
-    class: `itile r${rarity}${opts.equipped ? ' eq' : ''}${opts.sel ? ' sel' : ''}${opts.cls ? ` ${opts.cls}` : ''}`,
-    style: `--rc:${rarityColor(rarity)}${opts.size ? `;--sz:${opts.size}px` : ''}`,
-    title: opts.title ?? (def ? `${def.name} · ${RARITY[rarity].name}` : itemId),
-    onclick: opts.onclick,
+/** phần tử đồ (.it) — đặt trong .cell */
+export function itemEl(it: Inv, opts: { equipped?: boolean; sel?: boolean; cls?: string } = {}) {
+  const def = defOf(it.itemId);
+  const el = h('div', {
+    class: `it g${it.grade}${opts.sel ? ' sel' : ''}${opts.cls ? ` ${opts.cls}` : ''}`,
+    style: `--gc:${gradeColor(it.grade)}`,
+    'data-uid': String(it.uid),
   });
-  el.innerHTML = itemSvg(def);
-  if (opts.level && opts.level > 1) el.append(h('i', { class: 'lv' }, `+${opts.level - 1}`));
-  if (opts.equipped) el.append(h('i', { class: 'eqm' }, '✔'));
+  el.innerHTML = itemSvg(def); // SVG tự vẽ trong icons.ts (không có dữ liệu người dùng)
+  if (it.level > 1) el.append(h('i', { class: 'lv' }, `+${it.level - 1}`));
+  if (it.count > 1) el.append(h('i', { class: 'cnt' }, it.count));
+  if (opts.equipped) el.append(h('i', { class: 'eqm' }, 'E'));
   return el;
 }
 
-export function instTile(it: ItemInst, opts: Parameters<typeof itemTile>[2] = {}) {
-  return itemTile(it.itemId, it.rarity, { level: it.level, equipped: it.equipped, ...opts });
+/** ô có đồ, kèm tooltip; size: '', 'big', 'sm' */
+export function itemCell(it: Inv, opts: { size?: '' | 'big' | 'sm'; onclick?: () => void; tip?: boolean; cls?: string } = {}) {
+  const cell = h(opts.onclick ? 'button' : 'div', { class: `cell${opts.size ? ` ${opts.size}` : ''}${opts.cls ? ` ${opts.cls}` : ''}`, onclick: opts.onclick });
+  const el = itemEl(it);
+  el.style.cursor = opts.onclick ? 'pointer' : 'default';
+  cell.append(el);
+  if (opts.tip !== false) bindTip(el, () => itemTip(it));
+  return cell;
 }
 
-export function itemName(itemId: string) {
-  return ITEM_BY_ID[itemId]?.name ?? itemId;
-}
-
-/** danh sách dòng chỉ số; cmp = chỉ số món đang mặc cùng ô để so sánh */
-export function statList(st: Stats, cmp?: Stats | null) {
-  const keys = new Set<StatKey>([...(Object.keys(st) as StatKey[]), ...(cmp ? (Object.keys(cmp) as StatKey[]) : [])]);
-  const box = h('div', { class: 'stl' });
-  if (!keys.size) box.append(h('div', { class: 'stl-e' }, 'Chỉ để đẹp — không có chỉ số.'));
-  for (const k of keys) {
-    const v = st[k] ?? 0;
-    const c = cmp ? cmp[k] ?? 0 : null;
-    const d = c === null ? 0 : v - c;
-    const eps = STAT_INFO[k].pct ? 0.0005 : 0.5;
-    box.append(h('div', { class: 'stl-r' },
-      h('span', null, STAT_INFO[k].name),
-      h('b', null, v ? fmtStat(k, v) : '—'),
-      c !== null && Math.abs(d) > eps ? h('em', { class: d > 0 ? 'up' : 'dn' }, `${d > 0 ? '▲' : '▼'} ${fmtStat(k, Math.abs(d)).slice(1)}`) : h('em')));
-  }
-  return box;
-}
-
-export function instStats(it: ItemInst) {
-  return itemStats(it);
+/** ô từ itemId + phẩm (thưởng, bảng rớt) */
+export function itemTile(itemId: string, grade: number, opts: { size?: '' | 'big' | 'sm'; count?: number; level?: number; cls?: string } = {}) {
+  return itemCell(dropInst({ itemId, grade, count: opts.count, level: opts.level }), { size: opts.size ?? 'sm', cls: opts.cls });
 }
 
 /** phần thưởng dạng chip: 🪙 500 · 📘 1 · [ô đồ] */
@@ -75,9 +54,10 @@ export function rewardChips(r: Reward | null | undefined, opts: { tiles?: boolea
   if (r.shards) box.append(h('span', { class: 'chip' }, `${CUR.shards} ${r.shards}`));
   if (r.books) box.append(h('span', { class: 'chip' }, `${CUR.books} ${r.books}`));
   if (r.unlockChar !== undefined && CLASSES[r.unlockChar]) box.append(h('span', { class: 'chip char' }, `🔓 ${CLASSES[r.unlockChar].name}`));
-  for (const it of r.items ?? []) {
-    if (opts.tiles !== false) box.append(itemTile(it.itemId, it.rarity, { size: 38, cls: 'mini' }));
-    else box.append(h('span', { class: 'chip', style: `color:${rarityColor(it.rarity)}` }, `${itemName(it.itemId)} (${RARITY[it.rarity].name})`));
+  for (const raw of (r.items ?? []) as { itemId: string; grade?: number; rarity?: number; count?: number }[]) {
+    const g = clampGrade(raw.grade ?? raw.rarity ?? 0);
+    if (opts.tiles !== false) box.append(itemTile(raw.itemId, g, { size: 'sm', count: raw.count }));
+    else box.append(h('span', { class: 'chip', style: `color:${gradeColor(g)}` }, `${itemName(raw.itemId)} (${gradeName(g)})`));
   }
   return box;
 }
