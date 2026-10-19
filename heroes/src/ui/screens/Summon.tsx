@@ -1,5 +1,6 @@
 // Triệu hồi: banner, x1/x10, vé/kim cương, pity, bảng tỉ lệ, hiệu ứng lật thẻ. Mỗi lần bấm một khoá chống gửi trùng.
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { gsap } from 'gsap';
 import { BANNERS, RATES, SSR_PITY, SUMMON10_COST, SUMMON_COST, UR_PITY, NEW_PITY, type Banner } from '@shared/heroes/gacha';
 import { DUPE_SHARDS, powerOf, starUpCost, statsAt } from '@shared/heroes/formulas';
 import { poolOf } from '@shared/heroes/heroes';
@@ -7,7 +8,8 @@ import { skillOf } from '@shared/heroes/skills';
 import { ELEMENT_NAME, RARITIES, ROLE_NAME, type HeroDef, type Rarity } from '@shared/heroes/types';
 import type { SummonRes } from '@shared/heroes/api';
 import { api, me } from '../../api';
-import { sfx } from '../../audio';
+import { sfx, type Sfx } from '../../audio';
+import { currentPreset } from '../../render/quality';
 import { defOf, describeSkill, ownedMap, STAT_KEYS, STAT_LABEL } from '../../game';
 import { store } from '../../settings';
 import { fmt, uuid, useBusy } from '../../state';
@@ -16,11 +18,32 @@ import { Icon } from '../icons';
 
 type Pull = SummonRes['pulls'][number];
 
+/** tiếng báo theo phẩm: R < SR < SSR < UR (stinger dâng dần) */
+const REVEAL_SFX: Record<Rarity, Sfx> = { R: 'reveal', SR: 'revealSR', SSR: 'revealSSR', UR: 'revealUR' };
+const BURST_COLOR: Record<string, string> = { SSR: '#ffd23f', UR: '#ff7be5' };
+
 function RevealCard({ p, open }: { p: Pull; open: boolean }) {
   const d = defOf(p.heroId);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  // GSAP: lật thẻ có nảy quá đà (overshoot); SSR/UR thêm nhún phóng to. Tắt transition CSS cũ để không đánh nhau.
+  useEffect(() => {
+    const inner = innerRef.current;
+    const card = cardRef.current;
+    if (!open || !inner || !card) return;
+    inner.style.transition = 'none';
+    const rare = p.rarity === 'SSR' || p.rarity === 'UR';
+    const tl = gsap.timeline();
+    tl.fromTo(inner, { rotationY: 0 }, { rotationY: 180, duration: rare ? 0.75 : 0.55, ease: 'back.out(1.8)' }, 0);
+    tl.fromTo(card, { scale: 0.92 }, { scale: rare ? 1.12 : 1, duration: 0.22, ease: 'power2.out' }, 0);
+    tl.to(card, { scale: 1, duration: 0.35, ease: 'elastic.out(1, 0.5)' }, 0.22);
+    return () => {
+      tl.kill();
+    };
+  }, [open]);
   return (
-    <div class={`rv-card r-${p.rarity}${open ? ' open' : ''}`}>
-      <div class="rv-inner">
+    <div class={`rv-card r-${p.rarity}${open ? ' open' : ''}`} ref={cardRef}>
+      <div class="rv-inner" ref={innerRef}>
         <div class="rv-back">
           <Icon n="sparkle" size={36} />
         </div>
@@ -45,20 +68,69 @@ function RevealCard({ p, open }: { p: Pull; open: boolean }) {
 function Reveal({ pulls, onDone }: { pulls: Pull[]; onDone: () => void }) {
   const [shown, setShown] = useState(0);
   const all = shown >= pulls.length;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const flashRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    sfx('spin');
+  }, []);
+  // dọn mọi tween/hạt còn dang dở khi rời màn
+  useEffect(() => {
+    const root = rootRef.current;
+    return () => {
+      if (!root) return;
+      gsap.killTweensOf(root.querySelectorAll('.rv-pt, .rv-flash'));
+    };
+  }, []);
+  /** SSR/UR: loé màn hình + tia sáng toả ra từ thẻ vừa lật (số hạt theo preset chất lượng) */
+  const burst = (i: number, rarity: Rarity) => {
+    const root = rootRef.current;
+    const fl = flashRef.current;
+    const card = gridRef.current?.children[i] as HTMLElement | undefined;
+    const col = BURST_COLOR[rarity];
+    if (!root || !fl || !card || !col) return;
+    const ur = rarity === 'UR';
+    fl.style.background = `radial-gradient(circle at 50% 45%, ${col}, ${col}00 70%)`;
+    gsap.fromTo(fl, { opacity: ur ? 0.95 : 0.7 }, { opacity: 0, duration: ur ? 0.8 : 0.55, ease: 'power2.out', overwrite: true });
+    const r = card.getBoundingClientRect();
+    const o = root.getBoundingClientRect();
+    const cx = r.left - o.left + r.width / 2;
+    const cy = r.top - o.top + r.height / 2;
+    const n = currentPreset().particles * (ur ? 3 : 2);
+    for (let k = 0; k < n; k++) {
+      const e = document.createElement('i');
+      e.className = 'rv-pt';
+      const sz = 6 + Math.random() * 8;
+      Object.assign(e.style, {
+        position: 'absolute', left: `${cx}px`, top: `${cy}px`, width: `${sz}px`, height: `${sz}px`, marginLeft: `${-sz / 2}px`, marginTop: `${-sz / 2}px`,
+        borderRadius: k % 3 ? '50%' : '2px', background: k % 2 ? '#fff' : col, pointerEvents: 'none', zIndex: '3', willChange: 'transform, opacity',
+      } as Partial<CSSStyleDeclaration>);
+      root.append(e);
+      const a = (k / n) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = (ur ? 150 : 110) * (0.6 + Math.random() * 0.7);
+      gsap.to(e, {
+        x: Math.cos(a) * dist, y: Math.sin(a) * dist, rotation: Math.random() * 360, scale: 0.2, opacity: 0, duration: 0.7 + Math.random() * 0.4,
+        ease: 'power2.out', onComplete: () => e.remove(),
+      });
+    }
+  };
   useEffect(() => {
     if (all) return;
     const t = setTimeout(() => {
       const p = pulls[shown];
-      sfx(p.rarity === 'SSR' || p.rarity === 'UR' ? 'rare' : 'reveal');
+      sfx(REVEAL_SFX[p.rarity]);
+      // đợi thẻ lật tới nửa vòng rồi mới bùng sáng
+      if (p.rarity === 'SSR' || p.rarity === 'UR') gsap.delayedCall(0.3, () => burst(shown, p.rarity));
       setShown(shown + 1);
     }, shown === 0 ? 450 : pulls.length === 1 ? 300 : 320);
     return () => clearTimeout(t);
   }, [shown, all, pulls]);
   const best = pulls.reduce<Rarity>((b, p) => (RARITIES.indexOf(p.rarity) > RARITIES.indexOf(b) ? p.rarity : b), 'R');
   return (
-    <div class={`reveal best-${best}`}>
+    <div class={`reveal best-${best}`} ref={rootRef}>
       <div class="rv-glow" />
-      <div class={`rv-grid n${pulls.length}`}>
+      <div class="rv-flash" ref={flashRef} style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', zIndex: 2 }} />
+      <div class={`rv-grid n${pulls.length}`} ref={gridRef}>
         {pulls.map((p, i) => (
           <RevealCard key={i} p={p} open={i < shown} />
         ))}

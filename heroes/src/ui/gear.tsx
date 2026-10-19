@@ -145,7 +145,7 @@ export function GearPicker({ heroId, slot, onClose }: { heroId: string; slot: Ge
     .filter((g) => GEAR_BY_ID[g.def]?.slot === slot && g.uid !== worn?.uid)
     .sort((a, b) => (a.hero ? 1 : 0) - (b.hero ? 1 : 0) || gearPower(b) - gearPower(a));
   const equip = (uid: number) => {
-    sfx('rare');
+    sfx('select');
     api.gearEquip(uid, heroId).catch(errToast);
     onClose();
   };
@@ -285,7 +285,7 @@ export function GearSheet({ uid, onClose }: { uid: number; onClose: () => void }
     api.gearUpgrade(uid, times).catch(errToast);
   };
   const equipTo = (hero: string) => {
-    sfx('rare');
+    sfx('select');
     api.gearEquip(uid, hero).catch(errToast);
     setHeroPick(false);
   };

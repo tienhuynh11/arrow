@@ -23,9 +23,13 @@ import { Arena } from './screens/Arena';
 import { ArenaResult } from './screens/ArenaResult';
 import { Quests } from './screens/Quests';
 import { Shop } from './screens/Shop';
+import { Events } from './screens/Events';
+import { Guild } from './screens/Guild';
+import { GuildBossResult } from './screens/GuildBossResult';
 import { InstallHint, UpdateToast } from '../pwa';
 import { tutRestart } from '../tutorial-state';
 import { TutorialHost } from './tutorial';
+import { AudioVolumes } from './audio-settings';
 
 const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
   { n: 'hub', label: 'Thành', icon: 'home' },
@@ -38,7 +42,7 @@ const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
 function Nav() {
   const n = screen.value.n;
   // 3 màn Hoạt động (Tháp/Đấu trường/Nhiệm vụ/Cửa hàng) nằm dưới tab Thành
-  const cur = n === 'tower' || n === 'arena' || n === 'quests' || n === 'shop' ? 'hub' : n;
+  const cur = n === 'tower' || n === 'arena' || n === 'quests' || n === 'shop' || n === 'events' || n === 'guild' ? 'hub' : n;
   const tickets = me.value?.wallet.tickets ?? 0;
   const act = me.value ? hubBadges(me.value).total : 0;
   return (
@@ -83,6 +87,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <i />
         </button>
       </div>
+      <AudioVolumes />
       <div class="set-row">
         <b>Hướng dẫn</b>
         <Btn kind="blue" small onClick={() => { tutRestart(); onClose(); }}>Xem lại hướng dẫn</Btn>
@@ -145,6 +150,9 @@ function Body() {
     case 'arenaResult': return <ArenaResult res={s.res} />;
     case 'quests': return <Quests />;
     case 'shop': return <Shop />;
+    case 'events': return <Events />;
+    case 'guild': return <Guild tab={s.tab} />;
+    case 'guildBossResult': return <GuildBossResult res={s.res} />;
   }
 }
 
@@ -159,7 +167,7 @@ export function App() {
     );
   }
   const s = screen.value;
-  const full = s.n === 'battle' || s.n === 'result' || s.n === 'towerResult' || s.n === 'arenaResult';
+  const full = s.n === 'battle' || s.n === 'result' || s.n === 'towerResult' || s.n === 'arenaResult' || s.n === 'guildBossResult';
   return (
     <div class={`app${full ? ' full' : ''}`}>
       {!full && <Nav />}

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
+import { resolve } from 'node:path';
 // Đường dẫn gốc đọc từ MỘT nơi duy nhất (shared/heroes/config.ts) để server và client luôn khớp.
 import { HEROES_BASE } from '../shared/heroes/config';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -43,13 +44,16 @@ export default defineConfig({
       workbox: {
         // precache vỏ ứng dụng (html/js/css/icon); model 3D (glb) tải theo nhu cầu, không precache
         globPatterns: ['**/*.{html,js,css,png,svg,ico,webmanifest}'],
+        // trang quản trị (admin.html + js/css riêng) KHÔNG precache: SW không được phép tiếp quản nó
+        globIgnores: ['**/admin.html', '**/assets/admin-*'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         navigateFallback: `${HEROES_BASE}index.html`,
-        navigateFallbackDenylist: [new RegExp(`^${HEROES_BASE}api/`)], // REST không bao giờ bị SW chặn / trả index.html
+        navigateFallbackDenylist: [new RegExp(`^${HEROES_BASE}api/`), new RegExp(`^${HEROES_BASE}admin\\.html`)], // REST và trang admin không bao giờ bị SW chặn / trả index.html
         runtimeCaching: [
           // REST: luôn đi mạng, không lưu cache
-          { urlPattern: ({ url }) => url.pathname.startsWith(`${HEROES_BASE}api/`), handler: 'NetworkOnly' },
+          // dùng RegExp (không dùng hàm đóng gói): hàm bị chép nguyên văn vào sw.js nên không thấy biến HEROES_BASE
+          { urlPattern: new RegExp(`${HEROES_BASE}api/`), handler: 'NetworkOnly' },
           // CSS của Google Fonts: dùng bản cache trước, cập nhật ngầm
           {
             urlPattern: ({ url }) => url.origin === 'https://fonts.googleapis.com',
@@ -64,9 +68,15 @@ export default defineConfig({
           },
           // model glTF (nếu có) tải một lần
           {
-            urlPattern: ({ url }) => url.pathname.startsWith(`${HEROES_BASE}models/`),
+            urlPattern: new RegExp(`${HEROES_BASE}models/`),
             handler: 'CacheFirst',
             options: { cacheName: 'heroes-models', expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 30 } },
+          },
+          // âm thanh / nhạc (mp3 ~0,6 MB): tải một lần rồi dùng offline
+          {
+            urlPattern: new RegExp(`${HEROES_BASE}audio/.*\.mp3$`),
+            handler: 'CacheFirst',
+            options: { cacheName: 'heroes-audio', expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 60 }, cacheableResponse: { statuses: [0, 200] } },
           },
         ],
       },
@@ -89,5 +99,12 @@ export default defineConfig({
     target: 'es2020',
     reportCompressedSize: false,
     chunkSizeWarningLimit: 900,
+    // nhiều trang: game (index.html) + trang quản trị sự kiện (admin.html, không đăng ký service worker)
+    rollupOptions: {
+      input: {
+        main: resolve(fileURLToPath(new URL('.', import.meta.url)), 'index.html'),
+        admin: resolve(fileURLToPath(new URL('.', import.meta.url)), 'admin.html'),
+      },
+    },
   },
 });

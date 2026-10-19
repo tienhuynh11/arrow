@@ -195,10 +195,15 @@ export function questClaimable(m: MeResponse): number {
 export function shopBought(m: MeResponse): Record<string, number> {
   return m.shop ?? {};
 }
-/** chấm đỏ ở Hub: Tháp còn lượt, nhiệm vụ có thể nhận (cửa hàng không có chấm) */
-export function hubBadges(m: MeResponse): { tower: boolean; arena: boolean; quests: number; total: number } {
+/** số mục sự kiện có thể nhận (server tính sẵn; server cũ chưa có thì 0) */
+export function eventsClaimable(m: MeResponse): number {
+  return Math.max(0, m.eventsClaimable ?? 0);
+}
+/** chấm đỏ ở Hub: Tháp còn lượt, nhiệm vụ có thể nhận, sự kiện có thể nhận (cửa hàng/bang không có chấm) */
+export function hubBadges(m: MeResponse): { tower: boolean; arena: boolean; quests: number; events: number; total: number } {
   const tower = towerPlayable(m);
   const arena = arenaPlayable(m);
   const quests = questClaimable(m);
-  return { tower, arena, quests, total: (tower ? 1 : 0) + (arena ? 1 : 0) + quests };
+  const events = eventsClaimable(m);
+  return { tower, arena, quests, events, total: (tower ? 1 : 0) + (arena ? 1 : 0) + quests + events };
 }

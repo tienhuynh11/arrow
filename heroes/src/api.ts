@@ -18,6 +18,22 @@ import {
   type BattleRes,
   type BattleStartReq,
   type BattleStartRes,
+  type EventClaimReq,
+  type EventClaimRes,
+  type EventsRes,
+  type GuildBossReq,
+  type GuildBossRes,
+  type GuildChatPostReq,
+  type GuildChatRes,
+  type GuildCheckinRes,
+  type GuildCreateReq,
+  type GuildDonateReq,
+  type GuildJoinReq,
+  type GuildKickReq,
+  type GuildNoticeReq,
+  type GuildRes,
+  type GuildSearchRes,
+  type GuildTransferReq,
   type GearEquipReq,
   type GearSalvageReq,
   type GearSalvageRes,
@@ -323,6 +339,24 @@ export const api = {
     const r = await req<ArenaTopRes | ArenaTopRow[]>(ROUTES.arenaTop);
     return Array.isArray(r) ? r : (r?.rows ?? []);
   },
+  /* ---- sự kiện: GET danh sách đang diễn ra; nhận thưởng đổi hồ sơ (ví/tướng/kho đồ) nên dùng mutate ---- */
+  events: () => req<EventsRes>(ROUTES.events),
+  eventClaim: (event: number, objective: string) => mutate<EventClaimRes>(ROUTES.eventClaim, { event, objective } satisfies EventClaimReq),
+  /* ---- bang hội ---- */
+  guild: () => req<GuildRes>(ROUTES.guild),
+  guildSearch: (q: string) => req<GuildSearchRes>(`${ROUTES.guildSearch}?q=${encodeURIComponent(q)}`),
+  guildCreate: (name: string, notice?: string) => mutate<MutateRes>(ROUTES.guildCreate, { name, notice } satisfies GuildCreateReq),
+  guildJoin: (id: number) => mutate<MutateRes>(ROUTES.guildJoin, { id } satisfies GuildJoinReq),
+  guildLeave: () => mutate<MutateRes>(ROUTES.guildLeave, {}),
+  guildKick: (member: number) => mutate<MutateRes>(ROUTES.guildKick, { member } satisfies GuildKickReq),
+  guildTransfer: (member: number) => mutate<MutateRes>(ROUTES.guildTransfer, { member } satisfies GuildTransferReq),
+  guildNotice: (notice: string) => mutate<MutateRes>(ROUTES.guildNotice, { notice } satisfies GuildNoticeReq),
+  guildDonate: (option: string) => mutate<MutateRes>(ROUTES.guildDonate, { option } satisfies GuildDonateReq),
+  guildCheckin: () => mutate<GuildCheckinRes>(ROUTES.guildCheckin, {}),
+  /** seed lấy từ battleStart('guildboss') */
+  guildBoss: (r: GuildBossReq) => mutate<GuildBossRes>(ROUTES.guildBoss, r),
+  guildChat: () => req<GuildChatRes>(ROUTES.guildChat),
+  guildChatPost: (text: string) => req<GuildChatRes>(ROUTES.guildChat, 'POST', { text } satisfies GuildChatPostReq),
   async leaderboard(): Promise<LeaderRow[]> {
     const r = await req<LeaderRow[] | { rows?: LeaderRow[] }>(ROUTES.leaderboard);
     return Array.isArray(r) ? r : (r?.rows ?? []);

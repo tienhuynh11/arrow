@@ -130,6 +130,10 @@ interface P {
   spin: number;
   /** 1 = hiện rõ tới cuối rồi tắt; 0 = mờ dần đều */
   hold: number;
+  /** màu đầu / màu cuối (0..1) để đổi màu theo tuổi hạt; ramp=false thì giữ nguyên màu đầu */
+  r0: number; g0: number; b0: number;
+  r1: number; g1: number; b1: number;
+  ramp: boolean;
 }
 
 export class FxPool {
@@ -144,7 +148,7 @@ export class FxPool {
       sp.visible = false;
       sp.renderOrder = 20;
       scene.add(sp);
-      this.ps.push({ sp, mat, on: false, age: 0, life: 1, vx: 0, vy: 0, vz: 0, g: 0, s0: 1, s1: 1, a0: 1, spin: 0, hold: 0 });
+      this.ps.push({ sp, mat, on: false, age: 0, life: 1, vx: 0, vy: 0, vz: 0, g: 0, s0: 1, s1: 1, a0: 1, spin: 0, hold: 0, r0: 1, g0: 1, b0: 1, r1: 1, g1: 1, b1: 1, ramp: false });
     }
   }
 
@@ -152,6 +156,8 @@ export class FxPool {
   spawn(
     tex: FxTex, x: number, y: number, z: number, vx: number, vy: number, vz: number, g: number,
     life: number, s0: number, s1: number, color: number, spin = 0, add = true, alpha = 1, rot = 0,
+    /** màu cuối đời (hex); bỏ trống = không đổi màu. Ví dụ trắng nóng -> màu nguyên tố rồi tắt */
+    color2 = -1,
   ): void {
     const p = this.ps[this.next];
     this.next = (this.next + 1) % this.ps.length;
@@ -164,6 +170,11 @@ export class FxPool {
     p.hold = tex === 'star' || tex === 'plus' || tex === 'soul' ? 0.45 : 0;
     p.mat.map = fxTex(tex);
     p.mat.color.setHex(color);
+    p.ramp = color2 >= 0;
+    if (p.ramp) {
+      p.r0 = ((color >> 16) & 255) / 255; p.g0 = ((color >> 8) & 255) / 255; p.b0 = (color & 255) / 255;
+      p.r1 = ((color2 >> 16) & 255) / 255; p.g1 = ((color2 >> 8) & 255) / 255; p.b1 = (color2 & 255) / 255;
+    }
     p.mat.blending = add ? THREE.AdditiveBlending : THREE.NormalBlending;
     p.mat.rotation = rot;
     p.mat.opacity = alpha;
@@ -197,6 +208,11 @@ export class FxPool {
       p.mat.rotation += p.spin * dt;
       const fade = p.hold > 0 ? (k < p.hold ? 1 : 1 - (k - p.hold) / (1 - p.hold)) : 1 - k * k;
       p.mat.opacity = p.a0 * fade;
+      if (p.ramp) {
+        // đổi màu theo tuổi (không cấp phát): nhanh về màu cuối ở nửa đầu đời hạt
+        const c = Math.min(1, k * 1.6);
+        p.mat.color.setRGB(p.r0 + (p.r1 - p.r0) * c, p.g0 + (p.g1 - p.g0) * c, p.b0 + (p.b1 - p.b0) * c, THREE.SRGBColorSpace);
+      }
     }
   }
 

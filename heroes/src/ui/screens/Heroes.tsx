@@ -111,7 +111,7 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
   };
   const starUp = () => {
     if (!canSt) return;
-    sfx('rare');
+    sfx('star');
     api.starUp(id).catch(errToast);
   };
 

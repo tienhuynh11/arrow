@@ -6,6 +6,7 @@ import { FRONT_SLOTS } from '@shared/heroes/config';
 import { ENERGY_MAX, type Battle, type BattleEvent, type Unit } from '@shared/heroes/battle';
 import { skillOf } from '@shared/heroes/skills';
 import type { EffectType, Element, Role } from '@shared/heroes/types';
+import type { Sfx } from '../audio';
 import { HITSTOP, PACE } from '../battle/pacing';
 import { FxPool, disposeFxTextures, fxTex } from './fx-pool';
 import { createHeroModel, type HeroModel } from './hero-model';
@@ -46,7 +47,7 @@ export interface SceneHooks {
   died(uid: number): void;
   wave(n: number): void;
   flash(color: string): void;
-  sfx(k: 'hit' | 'crit' | 'ult' | 'heal'): void;
+  sfx(k: Sfx): void;
   /** chữ tên kỹ năng to, vui nhộn bật lên trên đầu người dùng (tuyệt kỹ = to hơn) */
   skill?(uid: number, name: string, color: string, ult: boolean): void;
   /** sau mỗi khung vẽ: HUD cập nhật vị trí thanh máu theo camera */
@@ -442,7 +443,7 @@ export class BattleScene implements LiveScene {
     for (let i = 0; i < ns; i++) {
       const a = rnd() * Math.PI * 2;
       const sp = 1.6 + rnd() * 2.2;
-      P.spawn('spark', c.x, c.y, c.z, Math.cos(a) * sp, 0.8 + rnd() * 2, Math.sin(a) * sp, -6, 0.38, 0.34, 0.06, i % 2 ? col : 0xffffff, 0, true);
+      P.spawn('spark', c.x, c.y, c.z, Math.cos(a) * sp, 0.8 + rnd() * 2, Math.sin(a) * sp, -6, 0.38, 0.34, 0.06, 0xffffff, 0, true, 1, 0, col);
     }
     if (crit) {
       // sao nổ lớn
@@ -581,6 +582,7 @@ export class BattleScene implements LiveScene {
           this.shake = Math.max(this.shake, 0.25);
           this.hooks.flash(hex(col));
           this.hooks.sfx('ult');
+          this.later(PACE.ultHit, () => this.hooks.sfx('ultBoom'));
           if (sk.type === 'dmg' && !custom) for (const t of tgs) this.projectile(this.chest(v).setY(2.4), this.chest(t), col, 0.4, 0.28);
           this.curDelay = PACE.ultHit;
           this.groupHold = Math.max(this.groupHold, PACE.ultHold);
@@ -650,7 +652,8 @@ export class BattleScene implements LiveScene {
           this.impact(att, tg, ev.n, ev.crit, ult, idx === 0);
           this.hooks.number(ev.tg, String(ev.n), ev.crit ? 'crit' : 'dmg', { adv: ev.adv });
           this.hooks.hp(ev.tg, ev.hp, tg.maxHp);
-          this.hooks.sfx(ev.crit ? 'crit' : 'hit');
+          // tiếng đánh theo mức: bị kháng = trầm, chí mạng, nặng (>=22% máu tối đa hoặc tuyệt kỹ), nhẹ
+          this.hooks.sfx(ev.crit ? 'crit' : ev.adv < 0 ? 'miss' : ult || ev.n >= tg.maxHp * 0.22 ? 'heavy' : 'hit');
           this.hooks.log?.(
             `${att?.unit.init.name ?? '?'} gây ${ev.n} sát thương lên ${tg.unit.init.name}${ev.adv > 0 ? ' (khắc hệ)' : ev.adv < 0 ? ' (bị kháng)' : ''}${ev.crit ? ' · CHÍ MẠNG' : ''}`,
             att?.side ?? 0,
@@ -690,6 +693,7 @@ export class BattleScene implements LiveScene {
           const l = EFFECT_LABEL[ev.type];
           this.hooks.number(ev.tg, l.text, 'text', { color: l.color });
           const c = this.chestTo(tg, this.tmpB);
+          this.hooks.sfx(ev.type === 'shield' ? 'shield' : ev.type === 'stun' ? 'stun' : ev.type === 'defDown' ? 'miss' : 'heal');
           if (ev.type === 'shield') {
             tg.shieldOn = true;
             this.ring(tg.group.position, 0x7fe3ff, 1.4, 0.5);
@@ -723,6 +727,7 @@ export class BattleScene implements LiveScene {
           v.hp = 0;
           v.model.play('die');
           this.hooks.died(v.uid);
+          this.hooks.sfx('death');
           v.shieldOn = v.stunOn = false;
           this.burst(this.chest(v), 0xffffff, this.q.particles, 1.4);
           // tan biến: loé trắng to + vòng + sao + hồn bay lên

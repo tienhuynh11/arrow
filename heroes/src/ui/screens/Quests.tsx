@@ -1,6 +1,7 @@
 // Nhiệm vụ hằng ngày: 6 nhiệm vụ + rương thưởng thêm khi nhận hết. Nhận thưởng "lạc quan" (số đổi ngay).
 import { QUEST_BONUS, QUEST_DEFS } from '@shared/heroes/quests';
 import { api, me } from '../../api';
+import { sfx } from '../../audio';
 import { bonusState, questList } from '../../game';
 import { errToast, fmt } from '../../state';
 import { Btn } from '../common';
@@ -35,7 +36,10 @@ export function Quests() {
   const list = questList(m);
   const bonus = bonusState(m);
   const doneN = list.filter((q) => q.claimed).length;
-  const claim = (id: string) => void api.questClaim(id).catch(errToast);
+  const claim = (id: string) => {
+    sfx('claim');
+    void api.questClaim(id).catch(errToast);
+  };
 
   return (
     <div class="quests">

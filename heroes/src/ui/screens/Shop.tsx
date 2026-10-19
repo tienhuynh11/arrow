@@ -5,6 +5,7 @@ import { GEAR_CAP } from '@shared/heroes/gear';
 import { SHOP_ITEMS, type ShopItem } from '@shared/heroes/shop';
 import type { Wallet } from '@shared/heroes/types';
 import { api, me } from '../../api';
+import { sfx } from '../../audio';
 import { defOf, powerOfOwned, shopBought } from '../../game';
 import { errToast, toast } from '../../state';
 import { Btn, HeroCard, Modal } from '../common';
@@ -54,6 +55,7 @@ export function Shop() {
   const buy = async (it: ShopItem, times: number, hero?: string) => {
     try {
       const r = await api.shopBuy(it.id, times, hero);
+      sfx('claim');
       toast(`Đã mua ${it.name}${r.bought > 1 ? ` x${r.bought}` : ''}`, 'ok');
       if (it.give.kind === 'gear') setDrops(r.drops ?? []);
     } catch (e) {

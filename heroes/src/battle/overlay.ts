@@ -3,7 +3,8 @@
 // Không dùng blur/backdrop-filter; hiệu ứng chỉ là transform/opacity.
 import { ENERGY_MAX, GAUGE_MAX, type Battle } from '@shared/heroes/battle';
 import { HERO_BY_ID } from '@shared/heroes/heroes';
-import { sfx } from '../audio';
+import { gsap } from 'gsap';
+import { sfx, type Sfx } from '../audio';
 import { portraitOf } from '../render/portraits';
 import type { BattleScene, CineInfo, SceneHooks } from '../render/battle-scene';
 import { store } from '../settings';
@@ -54,10 +55,16 @@ export class BattleOverlay implements SceneHooks {
   private flashEl: HTMLElement;
   private layer: HTMLElement;
   private frameN = 0;
-  private dns: HTMLElement[] = [];
+  private dns: { e: HTMLElement; tl: gsap.core.Timeline }[] = [];
   private cine: HTMLElement | null = null;
-  private cineTimer = 0;
+  private cineTl: gsap.core.Timeline | null = null;
   private endEl: HTMLElement | null = null;
+  private endTl: gsap.core.Timeline | null = null;
+  private waveEl: HTMLElement | null = null;
+  private flashTw: gsap.core.Tween | null = null;
+  /** các timeline "theo nhịp trận" (tốc độ chạy = timeScale cảnh; 0 khi tạm dừng) — dọn khi xong / khi rời trận */
+  private paced = new Set<gsap.core.Timeline>();
+  private pacedK = 1;
   private logBtn: HTMLButtonElement;
   private logBox: HTMLElement;
   private logOn: boolean;
@@ -65,6 +72,7 @@ export class BattleOverlay implements SceneHooks {
   constructor(private root: HTMLElement) {
     this.layer = el('hud-layer');
     this.flashEl = el('hud-flash');
+    this.flashEl.style.animation = 'none';
     root.append(this.layer, this.flashEl);
     // nhật ký trận: mặc định tắt trên điện thoại (không che đơn vị), bật trên máy tính
     const saved = store(LOG_KEY);
@@ -105,19 +113,46 @@ export class BattleOverlay implements SceneHooks {
     this.bars.set(uid, { el: e, hp, ghost, en, atb, chips, enV: -1, atbV: -1, chipSig: '', full: false, hidden: false });
   }
 
+  /** tốc độ chạy cho hoạt ảnh UI: bám timeScale của cảnh nhưng kẹp [0.55, 1.1] để chữ không vụt mất khi x3; 0 khi tạm dừng */
+  private paceK(): number {
+    const t = this.scene?.timeScale ?? 1;
+    return t <= 0 ? 0 : Math.min(1.1, Math.max(0.55, t));
+  }
+
+  /** đăng ký timeline theo nhịp trận; tự gỡ khi xong */
+  private pace<T extends gsap.core.Timeline>(tl: T, onDone?: () => void): T {
+    tl.timeScale(this.pacedK);
+    this.paced.add(tl);
+    tl.eventCallback('onComplete', () => {
+      this.paced.delete(tl);
+      onDone?.();
+    });
+    return tl;
+  }
+
   number(uid: number, text: string, kind: 'dmg' | 'crit' | 'heal' | 'text', opt?: { adv?: number; color?: string }) {
     const p = this.scene?.project(uid, 0.1);
     if (!p) return;
-    while (this.dns.length > 30) this.dns.shift()?.remove();
+    while (this.dns.length > 30) {
+      const o = this.dns.shift();
+      if (o) {
+        o.tl.kill();
+        this.paced.delete(o.tl);
+        o.e.remove();
+      }
+    }
     const e = el(`dn dn-${kind}${opt?.adv ? (opt.adv > 0 ? ' adv-up' : ' adv-dn') : ''}`);
+    e.style.animation = 'none';
     const jx = (Math.random() - 0.5) * 36;
     e.style.left = `${p.x + jx}px`;
     e.style.top = `${p.y}px`;
-    const scale = Math.max(0.3, this.scene?.timeScale || 1);
-    // chữ nổi tồn tại lâu hơn khi chạy chậm để đọc kịp (tối thiểu ~0.9s thật)
-    e.style.animationDuration = `${Math.max(0.9, (kind === 'text' ? 1.1 : 0.95) / scale)}s`;
     if (opt?.color) e.style.color = opt.color;
-    if (kind === 'crit') e.append(el('bt-sb', 'i'));
+    let sb: HTMLElement | null = null;
+    if (kind === 'crit') {
+      sb = el('bt-sb', 'i');
+      sb.style.animation = 'none';
+      e.append(sb);
+    }
     const t = el('bt-t', 'span');
     t.textContent = text;
     e.append(t);
@@ -128,18 +163,45 @@ export class BattleOverlay implements SceneHooks {
       e.append(tag);
     }
     this.layer.append(e);
-    this.dns.push(e);
-    const kill = () => e.remove();
-    e.addEventListener('animationend', kill, { once: true });
-    setTimeout(kill, 2600);
+    // GSAP: nảy ra (overshoot) -> bay lên -> mờ dần. Tổng ≈ 0.95s cảnh (chạy chậm thì lâu hơn để kịp đọc)
+    const tl = gsap.timeline();
+    const rise = kind === 'crit' ? 120 : kind === 'text' ? 56 : 74;
+    gsap.set(e, { xPercent: -50, yPercent: -20, scale: 0.3, opacity: 0 });
+    if (kind === 'crit') {
+      tl.to(e, { yPercent: -80, scale: 1.55, opacity: 1, duration: 0.14, ease: 'back.out(3)' }, 0)
+        .to(e, { scale: 1.2, duration: 0.16, ease: 'power2.out' }, 0.14)
+        .to(e, { y: -rise, scale: 1.05, duration: 0.65, ease: 'power1.out' }, 0.14)
+        .to(e, { opacity: 0, duration: 0.25, ease: 'power1.in' }, 0.7);
+      if (sb) {
+        gsap.set(sb, { xPercent: -50, yPercent: -50, scale: 0.2, rotation: 0 });
+        tl.to(sb, { scale: 1.1, rotation: 30, duration: 0.22, ease: 'power2.out' }, 0)
+          .to(sb, { scale: 0.8, rotation: 60, opacity: 0, duration: 0.68, ease: 'power1.in' }, 0.22);
+      }
+    } else {
+      const big = kind === 'text' ? 1 : opt?.adv && opt.adv > 0 ? 1.35 : 1.25;
+      tl.to(e, { yPercent: -60, scale: big, opacity: 1, duration: 0.13, ease: 'back.out(2.4)' }, 0)
+        .to(e, { scale: 1, duration: 0.14, ease: 'power2.out' }, 0.13)
+        .to(e, { y: -rise, duration: kind === 'text' ? 0.95 : 0.7, ease: 'power1.out' }, 0.1)
+        .to(e, { opacity: 0, duration: 0.25, ease: 'power1.in' }, kind === 'text' ? 0.85 : 0.7);
+    }
+    const rec = { e, tl };
+    this.pace(tl, () => {
+      e.remove();
+      const i = this.dns.indexOf(rec);
+      if (i >= 0) this.dns.splice(i, 1);
+    });
+    this.dns.push(rec);
   }
 
-  /** tên kỹ năng bật lên "bụp" trên đầu người dùng (chữ viền dày, nghiêng, nảy) — chỉ dùng Web Animations nên không cần CSS riêng */
+  /** tên kỹ năng bật lên "bụp" trên đầu người dùng (chữ viền dày, nghiêng, nảy) — GSAP timeline theo nhịp trận */
   skill(uid: number, name: string, color: string, ult: boolean) {
     const p = this.scene?.project(uid, ult ? 0.75 : 0.55);
     if (!p) return;
     this.layer.querySelectorAll('.sk-pop').forEach((n, i, all) => {
-      if (all.length - i > 3) n.remove();
+      if (all.length - i > 3) {
+        gsap.killTweensOf(n);
+        n.remove();
+      }
     });
     const e = el('sk-pop');
     const size = ult ? 38 : 24;
@@ -157,33 +219,28 @@ export class BattleOverlay implements SceneHooks {
     const maxW = this.layer.clientWidth || window.innerWidth;
     e.style.left = `${half * 2 >= maxW ? maxW / 2 : Math.min(maxW - half, Math.max(half, p.x))}px`;
     const tilt = (Math.random() < 0.5 ? -1 : 1) * (ult ? 7 : 4);
-    const sc = Math.max(0.3, this.scene?.timeScale || 1);
-    const base = 'translate(-50%, -100%)';
-    const anim = e.animate(
-      [
-        { transform: `${base} translateY(10px) scale(0.2) rotate(${-tilt * 2}deg)`, opacity: 0 },
-        { transform: `${base} translateY(-6px) scale(${ult ? 1.45 : 1.25}) rotate(${tilt}deg)`, opacity: 1, offset: 0.2 },
-        { transform: `${base} translateY(-2px) scale(${ult ? 0.94 : 0.97}) rotate(${-tilt * 0.4}deg)`, opacity: 1, offset: 0.32 },
-        { transform: `${base} translateY(-8px) scale(1.04) rotate(${tilt * 0.3}deg)`, opacity: 1, offset: 0.6 },
-        { transform: `${base} translateY(-44px) scale(0.9) rotate(0deg)`, opacity: 0 },
-      ],
-      { duration: Math.max(900, (ult ? 1500 : 950) / sc), easing: 'ease-out' },
-    );
-    anim.onfinish = () => e.remove();
-    setTimeout(() => e.remove(), 3600);
+    const L = ult ? 1.5 : 0.95;
+    gsap.set(e, { xPercent: -50, yPercent: -100, y: 10, scale: 0.2, rotation: -tilt * 2, opacity: 0 });
+    const tl = gsap.timeline();
+    tl.to(e, { y: -6, scale: ult ? 1.45 : 1.25, rotation: tilt, opacity: 1, duration: L * 0.2, ease: 'back.out(2.2)' })
+      .to(e, { y: -2, scale: ult ? 0.94 : 0.97, rotation: -tilt * 0.4, duration: L * 0.12, ease: 'power2.inOut' })
+      .to(e, { y: -8, scale: 1.04, rotation: tilt * 0.3, duration: L * 0.28, ease: 'sine.inOut' })
+      .to(e, { y: -44, scale: 0.9, rotation: 0, opacity: 0, duration: L * 0.4, ease: 'power1.in' });
+    this.pace(tl, () => e.remove());
   }
 
-  /** màn cắt cảnh tuyệt kỹ: tối viền + dải chéo có chân dung, tên chiêu, vệt màu nguyên tố */
+  /** màn cắt cảnh tuyệt kỹ: tối viền + dải chéo có chân dung, tên chiêu, vệt màu nguyên tố (GSAP, chạy theo giây THẬT) */
   cinematic(c: CineInfo) {
     this.clearCine();
     const wrap = el(`bt-cine s${c.side}${c.boss ? ' boss' : ''}${c.low ? ' low' : ''}`);
-    wrap.style.setProperty('--d', `${(c.dur * 1.28).toFixed(2)}s`);
     wrap.style.setProperty('--c', c.color);
-    if (!c.boss) wrap.append(el('bt-dim'));
+    const dim = c.boss ? null : el('bt-dim');
+    if (dim) wrap.append(dim);
     const cut = el('bt-cut');
     const band = el('bt-band');
     band.append(el('bt-streak'), el('bt-streak b'));
     cut.append(band);
+    let port: HTMLElement | null = null;
     if (!c.boss) {
       const url = portraitOf(c.key, HERO_BY_ID[c.key]?.rarity ?? 'R').value;
       if (url && url !== 'none') {
@@ -191,6 +248,7 @@ export class BattleOverlay implements SceneHooks {
         img.src = url;
         img.alt = '';
         cut.append(img);
+        port = img;
       }
     }
     const name = el('bt-name');
@@ -203,22 +261,77 @@ export class BattleOverlay implements SceneHooks {
     wrap.append(cut);
     this.root.append(wrap);
     this.cine = wrap;
-    this.cineTimer = window.setTimeout(() => this.clearCine(), c.dur * 1280 + 500);
+
+    // tắt animation CSS cũ, GSAP lo toàn bộ
+    cut.style.animation = 'none';
+    if (dim) dim.style.animation = 'none';
+    // xoá transform trong CSS để GSAP tự quản (tránh cộng dồn translateX(%) của CSS với xPercent)
+    cut.style.transform = 'none';
+    big.style.transform = 'none';
+    if (port) port.style.transform = 'none';
+    const T = Math.max(0.5, c.dur * 1.28);
+    const dir = c.side === 0 ? -1 : 1; // phe ta trượt vào từ trái, địch từ phải
+    const rot = c.side === 0 ? -6 : 6;
+    gsap.set(cut, { xPercent: dir * 120, rotation: rot });
+    if (dim) gsap.set(dim, { opacity: 0 });
+    if (port) gsap.set(port, { rotation: -rot, scaleX: c.side === 0 ? 1 : -1, x: dir * 70, opacity: 0 });
+    gsap.set(small, { x: dir * 50, opacity: 0 });
+    gsap.set(big, { x: dir * 120, opacity: 0, skewX: -8, scale: 1.25 });
+    const tl = gsap.timeline({ onComplete: () => this.clearCine() });
+    if (dim) tl.to(dim, { opacity: 1, duration: T * 0.18, ease: 'power2.out' }, 0);
+    tl.to(cut, { xPercent: 0, duration: T * 0.2, ease: 'expo.out' }, 0);
+    if (port) tl.to(port, { x: 0, opacity: 1, duration: T * 0.26, ease: 'back.out(1.5)' }, T * 0.06);
+    tl.to(small, { x: 0, opacity: 1, duration: T * 0.16, ease: 'power3.out' }, T * 0.1)
+      .to(big, { x: 0, opacity: 1, scale: 1, duration: T * 0.22, ease: 'back.out(1.8)' }, T * 0.13)
+      // giữ: trôi nhẹ để không bị "đứng hình"
+      .to(cut, { xPercent: -dir * 3, duration: T * 0.6, ease: 'none' }, T * 0.2)
+      .to(cut, { xPercent: -dir * 125, duration: T * 0.2, ease: 'power3.in' }, T * 0.8);
+    if (dim) tl.to(dim, { opacity: 0, duration: T * 0.2, ease: 'power1.in' }, T * 0.8);
+    this.cineTl = tl;
   }
 
   clearCine() {
-    clearTimeout(this.cineTimer);
+    this.cineTl?.kill();
+    this.cineTl = null;
     this.cine?.remove();
     this.cine = null;
   }
 
   /** banner kết thúc trận (giữ tới khi rời màn) */
   banner(win: boolean) {
+    this.endTl?.kill();
     this.endEl?.remove();
     const e = el(`bt-end ${win ? 'win' : 'lose'}`);
+    e.style.animation = 'none';
     e.textContent = win ? 'CHIẾN THẮNG!' : 'THẤT BẠI';
     this.root.append(e);
     this.endEl = e;
+    gsap.set(e, { scale: 2.6, rotation: -8, opacity: 0 });
+    const tl = gsap.timeline();
+    tl.to(e, { scale: 1, rotation: -2, opacity: 1, duration: 0.6, ease: 'back.out(1.7)' });
+    // thắng: lắc lư nhẹ vô hạn (bị kill khi rời màn)
+    if (win) tl.to(e, { rotation: 1.5, scale: 1.04, duration: 0.9, ease: 'sine.inOut', yoyo: true, repeat: -1 });
+    this.endTl = tl;
+  }
+
+  /** banner ĐỢT n / BOSS: dải tối trượt ngang + chữ nảy; bám nhịp trận */
+  waveBanner(text: string) {
+    this.waveEl?.remove();
+    const e = el('wave-banner bt-wave', 'div');
+    e.style.animation = 'none';
+    e.textContent = text;
+    this.root.append(e);
+    this.waveEl = e;
+    gsap.set(e, { xPercent: -110, skewX: -12, opacity: 0 });
+    const tl = gsap.timeline();
+    tl.to(e, { xPercent: 0, skewX: -4, opacity: 1, duration: 0.3, ease: 'expo.out' })
+      .fromTo(e, { scale: 1.35 }, { scale: 1, duration: 0.3, ease: 'back.out(2)' }, 0)
+      .to(e, { xPercent: 2, skewX: 0, duration: 0.9, ease: 'none' })
+      .to(e, { xPercent: 110, skewX: -12, opacity: 0, duration: 0.25, ease: 'power3.in' });
+    this.pace(tl, () => {
+      e.remove();
+      if (this.waveEl === e) this.waveEl = null;
+    });
   }
 
   log(text: string, side: 0 | 1) {
@@ -236,10 +349,8 @@ export class BattleOverlay implements SceneHooks {
     const pct = Math.max(0, Math.min(100, (hp * 100) / Math.max(1, max)));
     b.hp.style.width = `${pct}%`;
     b.el.classList.toggle('low', pct < 30);
-    // thanh "mờ" tụt chậm phía sau để thấy lượng máu vừa mất
-    setTimeout(() => {
-      b.ghost.style.width = `${pct}%`;
-    }, 250);
+    // thanh "mờ" tụt chậm phía sau để thấy lượng máu vừa mất (GSAP delay: huỷ được khi rời trận)
+    gsap.to(b.ghost, { width: `${pct}%`, duration: 0.2, delay: 0.25, ease: 'power2.out', overwrite: 'auto' });
   }
 
   died(uid: number) {
@@ -251,18 +362,18 @@ export class BattleOverlay implements SceneHooks {
   }
 
   wave(n: number) {
+    sfx('wave');
     this.onWave(n);
   }
 
   flash(color: string) {
     const f = this.flashEl;
     f.style.background = `radial-gradient(circle at 50% 55%, ${color}aa, ${color}00 70%)`;
-    f.classList.remove('go');
-    void f.offsetWidth;
-    f.classList.add('go');
+    this.flashTw?.kill();
+    this.flashTw = gsap.fromTo(f, { opacity: 0.95 }, { opacity: 0, duration: 0.55, ease: 'power2.out' });
   }
 
-  sfx(k: 'hit' | 'crit' | 'ult' | 'heal') {
+  sfx(k: Sfx) {
     sfx(k);
   }
 
@@ -297,6 +408,14 @@ export class BattleOverlay implements SceneHooks {
   frame() {
     const sc = this.scene;
     if (!sc) return;
+    // đồng bộ tốc độ các timeline UI với timeScale/tạm dừng của cảnh (không cấp phát)
+    if (this.paced.size) {
+      const k = this.paceK();
+      if (k !== this.pacedK) {
+        this.pacedK = k;
+        for (const tl of this.paced) tl.timeScale(k);
+      }
+    }
     this.frameN++;
     const doChips = this.frameN % 6 === 0;
     for (const [uid, b] of this.bars) {
@@ -322,6 +441,7 @@ export class BattleOverlay implements SceneHooks {
               b.el.classList.remove('pop');
               void b.el.offsetWidth;
               b.el.classList.add('pop');
+              sfx('ultReady');
               sc.ping(uid);
             }
             b.full = full;
@@ -339,11 +459,18 @@ export class BattleOverlay implements SceneHooks {
   }
 
   dispose() {
-    clearTimeout(this.cineTimer);
+    this.cineTl?.kill();
+    this.endTl?.kill();
+    this.flashTw?.kill();
+    for (const tl of this.paced) tl.kill();
+    this.paced.clear();
+    for (const b of this.bars.values()) gsap.killTweensOf(b.ghost);
+    this.layer.querySelectorAll('.sk-pop').forEach((n) => gsap.killTweensOf(n));
     this.layer.remove();
     this.flashEl.remove();
     this.cine?.remove();
     this.endEl?.remove();
+    this.waveEl?.remove();
     this.logBox.remove();
     this.logBtn.remove();
     this.bars.clear();

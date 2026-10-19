@@ -1,5 +1,5 @@
 // Màn kết quả: sao, thưởng, lên cấp.
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import type { BattleRes } from '@shared/heroes/api';
 import { nextStage, stageOf } from '@shared/heroes/stages';
 import { sfx } from '../../audio';
@@ -7,18 +7,21 @@ import { GEAR_CAP } from '@shared/heroes/gear';
 import { me } from '../../api';
 import { fmt, go, returnTo } from '../../state';
 import { Btn } from '../common';
+import { useResultFx } from '../result-fx';
 import { GearDrops } from '../gear';
 import { Icon } from '../icons';
 
 export function Result({ stage, res }: { stage: string; res: BattleRes }) {
   const def = stageOf(stage);
   const next = nextStage(stage);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useResultFx(rootRef, res.win);
   useEffect(() => {
     sfx(res.win ? 'win' : 'lose');
     if (res.levelUp) setTimeout(() => sfx('level'), 900);
   }, []);
   return (
-    <div class={`result ${res.win ? 'win' : 'lose'}`}>
+    <div class={`result ${res.win ? 'win' : 'lose'}`} ref={rootRef}>
       <div class="result-card">
         <h1 class="res-title">{res.win ? 'CHIẾN THẮNG!' : 'THẤT BẠI'}</h1>
         <small class="muted">{def?.name}</small>

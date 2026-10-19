@@ -10,7 +10,8 @@ type IconName =
   | 'battle' | 'gear' | 'back' | 'lock' | 'close' | 'check' | 'pause' | 'play' | 'ffwd' | 'auto' | 'sword' | 'shield' | 'heart'
   | 'clock' | 'up' | 'down' | 'leaf' | 'rock' | 'drop' | 'sun' | 'moon' | 'wand' | 'bow' | 'plus' | 'note' | 'crown'
   | 'sparkle' | 'logout' | 'info' | 'chest' | 'skip' | 'user' | 'sound' | 'mute' | 'filter' | 'search'
-  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop' | 'grid' | 'arena';
+  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop' | 'grid' | 'arena'
+  | 'events' | 'guild' | 'boss' | 'chat';
 
 const PATHS: Record<IconName, JSX.Element> = {
   gold: (
@@ -308,6 +309,40 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M7.800 7.800l8.400 8.400M16.200 7.800l-8.400 8.400" fill="none" stroke={INK} stroke-width="3.600" stroke-linecap="round" />
       <path d="M7.800 7.800l8.400 8.400M16.200 7.800l-8.400 8.400" fill="none" stroke="#f4f8ff" stroke-width="1.800" stroke-linecap="round" />
       <path d="M6.800 9.300l1.500-1.500M17.200 9.300l-1.500-1.500" stroke="#ffcb2e" stroke-width="1.800" stroke-linecap="round" />
+    </>
+  ),
+  events: (
+    <>
+      <path d="M4 10.500h16V20.500H4z" fill="#ff7a7a" {...st} />
+      <path d="M3 7h18v3.500H3z" fill="#ffa8a8" {...st} />
+      <path d="M12 7v13.500" stroke="#ffd23f" stroke-width="3.200" />
+      <path d="M12 7v13.500" stroke={INK} stroke-width=".8" />
+      <path d="M12 7C8.500 7 7.200 3.200 9.800 3.200S12 5.800 12 7zM12 7c3.500 0 4.800-3.800 2.200-3.800S12 5.800 12 7z" fill="#ffd23f" {...st} />
+    </>
+  ),
+  guild: (
+    <>
+      <path d="M4 3.500h16v9c0 4-3.500 6.500-8 8.500-4.500-2-8-4.500-8-8.500z" fill="#3fa7ff" {...st} />
+      <path d="M6.500 5.800h11v6.400c0 2.800-2.500 4.700-5.500 6.100-3-1.400-5.500-3.300-5.500-6.100z" fill="#7fd4ff" stroke={INK} stroke-width="1.100" stroke-linejoin="round" />
+      <path d="M12 7.300l1.400 2.900 3.100.4-2.300 2.100.6 3.100-2.800-1.600-2.800 1.600.6-3.100-2.300-2.100 3.100-.4z" fill="#ffd23f" stroke={INK} stroke-width="1" stroke-linejoin="round" />
+    </>
+  ),
+  boss: (
+    <>
+      <path d="M5.500 9.500L3 2.500l5.500 3.500M18.500 9.500L21 2.500 15.500 6" fill="#ffe27a" {...st} />
+      <path d="M12 5c5 0 8 3 8 7.500S17 20.500 12 20.500 4 17 4 12.500 7 5 12 5z" fill="#ff7a5a" {...st} />
+      <path d="M7 10.500l3.500 1.800M17 10.500l-3.500 1.800" stroke={INK} stroke-width="2.200" stroke-linecap="round" />
+      <circle cx="9.200" cy="13" r="1.200" fill="#fff" stroke={INK} stroke-width="1" />
+      <circle cx="14.800" cy="13" r="1.200" fill="#fff" stroke={INK} stroke-width="1" />
+      <path d="M8 16.500l1.600 2.800 1.600-2.800M12.800 16.500l1.600 2.800 1.600-2.800" fill="#fff" stroke={INK} stroke-width="1.200" stroke-linejoin="round" />
+    </>
+  ),
+  chat: (
+    <>
+      <path d="M4 4.500h16a1.500 1.500 0 0 1 1.500 1.500v9a1.500 1.500 0 0 1-1.500 1.500h-8l-5 4v-4H4A1.500 1.500 0 0 1 2.500 15V6A1.500 1.500 0 0 1 4 4.500z" fill="#fff" {...st} />
+      <circle cx="8" cy="10.500" r="1.400" fill={INK} />
+      <circle cx="12" cy="10.500" r="1.400" fill={INK} />
+      <circle cx="16" cy="10.500" r="1.400" fill={INK} />
     </>
   ),
 };

@@ -1,0 +1,6 @@
+/* Thanh trượt âm lượng trong Cài đặt */
+.vol-row { gap: 8px; }
+.vol-row b { flex: 0 0 auto; min-width: 84px; }
+.vol-range { flex: 1 1 auto; min-width: 0; height: 32px; accent-color: #ff9a1f; touch-action: pan-y; }
+.vol-range:disabled { opacity: 0.4; }
+.vol-num { flex: 0 0 30px; text-align: right; font-family: var(--f-title); font-size: 14px; }

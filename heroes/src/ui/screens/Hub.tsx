@@ -75,11 +75,13 @@ export function Hub() {
     };
   };
 
-  // năm mục phụ: dùng chung cho dock bên phải (ngang/PC) và bảng Hoạt động (điện thoại dọc)
+  // bảy mục phụ: dùng chung cho dock bên phải (ngang/PC) và bảng Hoạt động (điện thoại dọc)
   const items: { k: string; ic: IconName; label: string; sub?: string; badge?: number | boolean; aria: string; run: () => void }[] = [
     { k: 'tower', ic: 'tower', label: 'Tháp', badge: bd.tower, aria: 'Tháp', run: () => go({ n: 'tower' }) },
     { k: 'arena', ic: 'arena', label: 'Đấu trường', badge: bd.arena, aria: 'Đấu trường', run: () => go({ n: 'arena' }) },
     { k: 'quests', ic: 'quest', label: 'Nhiệm vụ', badge: bd.quests, aria: `Nhiệm vụ${bd.quests ? `, ${bd.quests} có thể nhận` : ''}`, run: () => go({ n: 'quests' }) },
+    { k: 'events', ic: 'events', label: 'Sự kiện', badge: bd.events, aria: `Sự kiện${bd.events ? `, ${bd.events} có thể nhận` : ''}`, run: () => go({ n: 'events' }) },
+    { k: 'guild', ic: 'guild', label: 'Bang hội', aria: 'Bang hội', run: () => go({ n: 'guild' }) },
     { k: 'shop', ic: 'shop', label: 'Cửa hàng', aria: 'Cửa hàng', run: () => go({ n: 'shop' }) },
     { k: 'bag', ic: 'bag', label: 'Kho đồ', sub: `${m.gear.length}/${GEAR_CAP}`, aria: `Kho đồ ${m.gear.length}/${GEAR_CAP}`, run: () => setBag(true) },
   ];

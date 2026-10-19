@@ -1,5 +1,6 @@
 // Kết quả một trận Đấu trường: thắng/thua (theo kết quả của server), điểm đổi (số chạy), thưởng, nút đi tiếp.
-import { useEffect, useState } from 'preact/hooks';
+import { gsap } from 'gsap';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ArenaBattleRes } from '@shared/heroes/api';
 import { sfx } from '../../audio';
 import { api, me } from '../../api';
@@ -7,27 +8,30 @@ import { arenaOf } from '../../game';
 import { fmt, go, returnTo } from '../../state';
 import { Btn } from '../common';
 import { Icon } from '../icons';
+import { useResultFx } from '../result-fx';
 import { MiniRow } from './Arena';
 
-/** số chạy từ 0 tới `to` trong ~0,9 giây */
+/** số chạy từ 0 tới `to` trong ~0,9 giây (GSAP tween, huỷ khi rời màn) */
 function useCount(to: number): number {
   const [v, setV] = useState(0);
   useEffect(() => {
-    const t0 = performance.now();
-    let id = 0;
-    const tick = (t: number) => {
-      const k = Math.min(1, (t - t0) / 900);
-      setV(Math.round(to * (1 - Math.pow(1 - k, 3))));
-      if (k < 1) id = requestAnimationFrame(tick);
-    };
-    id = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(id);
+    const o = { v: 0 };
+    const tw = gsap.to(o, {
+      v: to, duration: 0.9, delay: 0.3, ease: 'power3.out',
+      onUpdate: () => {
+        const n = Math.round(o.v);
+        setV((p) => (p === n ? p : n));
+      },
+    });
+    return () => void tw.kill();
   }, [to]);
   return v;
 }
 
 export function ArenaResult({ res }: { res: ArenaBattleRes }) {
   const [rank, setRank] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useResultFx(rootRef, res.win);
   useEffect(() => {
     sfx(res.win ? 'win' : 'lose');
     let off = false;
@@ -41,7 +45,7 @@ export function ArenaResult({ res }: { res: ArenaBattleRes }) {
   const tries = a?.tries ?? 0;
   const r = res.reward;
   return (
-    <div class={`result ar-result ${res.win ? 'win' : 'lose'}`}>
+    <div class={`result ar-result ${res.win ? 'win' : 'lose'}`} ref={rootRef}>
       <div class="result-card">
         <h1 class="res-title">{res.win ? 'CHIẾN THẮNG!' : 'THẤT BẠI'}</h1>
         <small class="muted ar-vs">

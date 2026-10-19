@@ -58,6 +58,11 @@ export function IconBtn(p: { n: IconName; onClick: () => void; label: string; cl
 }
 
 export function Modal(p: { title?: string; onClose?: () => void; children: ComponentChildren; wide?: boolean; class?: string }) {
+  // tiếng mở / đóng hộp thoại
+  useEffect(() => {
+    sfx('open');
+    return () => sfx('close');
+  }, []);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key === 'Escape') p.onClose?.();
@@ -81,6 +86,13 @@ export function Modal(p: { title?: string; onClose?: () => void; children: Compo
 }
 
 export function Toasts() {
+  // tiếng theo loại thông báo mới nhất: lỗi -> error, thành công -> select
+  const latest = toasts.value[toasts.value.length - 1];
+  const lastId = latest?.id;
+  useEffect(() => {
+    if (latest?.kind === 'error') sfx('error');
+    else if (latest?.kind === 'ok') sfx('select');
+  }, [lastId]);
   return (
     <div class="toasts" aria-live="polite">
       {toasts.value.map((t) => (

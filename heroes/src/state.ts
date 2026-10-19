@@ -1,7 +1,7 @@
 // Trạng thái toàn cục của UI: màn hình hiện tại, thông báo (toast), tiện ích dùng chung.
 import { signal } from '@preact/signals';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { ArenaBattleRes, BattleRes, TowerBattleRes } from '@shared/heroes/api';
+import type { ArenaBattleRes, BattleRes, GuildBossRes, TowerBattleRes } from '@shared/heroes/api';
 import type { ArenaOpponent } from '@shared/heroes/arena';
 import { ApiError } from './api';
 
@@ -18,7 +18,10 @@ export type Screen =
   | { n: 'arena' }
   | { n: 'arenaResult'; res: ArenaBattleRes }
   | { n: 'quests' }
-  | { n: 'shop' };
+  | { n: 'shop' }
+  | { n: 'events' }
+  | { n: 'guild'; tab?: 'members' | 'boss' | 'acts' | 'chat' }
+  | { n: 'guildBossResult'; res: GuildBossRes };
 
 export const screen = signal<Screen>({ n: 'hub' });
 /** ải đang định đánh khi người chơi rẽ sang màn Đội hình: Đội hình hiện nút "Chiến tiếp" quay lại đúng ải đó */

@@ -1,5 +1,5 @@
 // Kết quả một trận Tháp: thắng/thua, tầng vừa đánh, thưởng, trang bị rớt, nút đi tiếp.
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import type { TowerBattleRes } from '@shared/heroes/api';
 import { GEAR_CAP } from '@shared/heroes/gear';
 import { TOWER_MAX_FLOOR } from '@shared/heroes/tower';
@@ -8,10 +8,13 @@ import { me } from '../../api';
 import { towerOf } from '../../game';
 import { fmt, go, returnTo } from '../../state';
 import { Btn } from '../common';
+import { useResultFx } from '../result-fx';
 import { GearDrops } from '../gear';
 import { Icon } from '../icons';
 
 export function TowerResult({ res }: { res: TowerBattleRes }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useResultFx(rootRef, res.win);
   useEffect(() => {
     sfx(res.win ? 'win' : 'lose');
     if (res.levelUp) setTimeout(() => sfx('level'), 900);
@@ -21,7 +24,7 @@ export function TowerResult({ res }: { res: TowerBattleRes }) {
   const r = res.reward;
   const canNext = t.tries > 0 && t.floor < TOWER_MAX_FLOOR;
   return (
-    <div class={`result ${res.win ? 'win' : 'lose'}`}>
+    <div class={`result ${res.win ? 'win' : 'lose'}`} ref={rootRef}>
       <div class="result-card">
         <h1 class="res-title">{res.win ? 'CHIẾN THẮNG!' : 'THẤT BẠI'}</h1>
         <small class="muted">Tháp · Tầng {res.floor}{res.win && res.floor % 10 === 0 ? ' (Boss)' : ''}</small>
