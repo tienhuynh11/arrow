@@ -25,3 +25,8 @@ Mã nguồn âm thanh: `src/audio/` (Howler, nạp lazy sau cử chỉ đầu ti
 | *Happy Lullaby (song17)* — OpenGameArt | https://opengameart.org/content/happy-lullaby-song17 (tệp `song17.mp3`) | CC0 (trang nguồn ghi "CC0") | nhạc menu `music_menu.mp3` |
 
 Quy trình: tải bản gốc về thư mục ngoài repo, chỉ đọc dữ liệu (không chạy gì trong gói), `ffmpeg` đưa về mono 44,1 kHz, chuẩn hoá đỉnh/trung bình (mean -20 dB, đỉnh ≤ -2 dB), cắt theo độ dài tối đa từng cue, nối thành `sfx.mp3` (64 kbps) cách nhau 120 ms; nhạc chuẩn hoá `loudnorm` -24 LUFS, 56 kbps mono. Nhạc phát nhỏ hơn SFX khoảng 18 dB (`MUSIC_GAIN` trong `src/audio/index.ts`).
+
+## Nhạc nền do chủ dự án cung cấp
+- `public/audio/music_menu.mp3` (bài 1, 0:00–3:36) và `public/audio/music_battle.mp3` (bài 2, 3:38–6:41) cắt từ file `music.m4a` do chủ dự án cung cấp, bạn ấy xác nhận **không có bản quyền**. Chưa có giấy phép/nguồn ghi lại: nếu sau này cần, bổ sung tên tác giả/nguồn vào đây.
+- Xử lý: mono 44,1 kHz, 56 kbps, chuẩn hoá -24 LUFS, mờ vào/ra đầu cuối. File gốc (31 phút, 28 MB) KHÔNG đưa vào repo.
+- Thay hai bài CC0 ngắn từ OpenGameArt trước đó (Fast fight / Happy Lullaby).
