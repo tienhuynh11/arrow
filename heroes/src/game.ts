@@ -6,6 +6,7 @@ import { afkReward, STAGES, type StageDef } from '@shared/heroes/stages';
 import type { EffectType, HeroDef, OwnedHero, SkillDef, SkillTarget, Stats } from '@shared/heroes/types';
 import type { MeResponse } from '@shared/heroes/api';
 import { QUEST_DEFS, type QuestState } from '@shared/heroes/quests';
+import { ARENA_START_RATING, ARENA_TRIES, type ArenaState } from '@shared/heroes/arena';
 import { TOWER_MAX_FLOOR } from '@shared/heroes/tower';
 import { addStats, enhanceCost, gearDefOf, gearStats, GEAR_BY_ID, GEAR_SLOTS, sumGear, ZERO_STATS, type GearInst, type GearSlot } from '@shared/heroes/gear';
 import { me, serverNow } from './api';
@@ -158,6 +159,21 @@ export function towerPlayable(m: MeResponse): boolean {
   const t = towerOf(m);
   return t.tries > 0 && t.floor < TOWER_MAX_FLOOR;
 }
+/** đấu trường (server cũ chưa có `arena` -> mặc định điểm 1000, 5 lượt, đội phòng thủ 0) */
+export function arenaOf(m: MeResponse): ArenaState {
+  const a = m.arena as Partial<ArenaState> | undefined;
+  return {
+    rating: a?.rating ?? ARENA_START_RATING,
+    tries: Math.max(0, a?.tries ?? ARENA_TRIES),
+    defense: a?.defense ?? 0,
+    wins: a?.wins ?? 0,
+    losses: a?.losses ?? 0,
+  };
+}
+/** đấu trường còn đánh được: còn lượt và đội đang dùng có ít nhất 1 tướng */
+export function arenaPlayable(m: MeResponse): boolean {
+  return arenaOf(m).tries > 0 && activeSquadIds(m).length > 0;
+}
 /** luôn đủ mọi nhiệm vụ trong QUEST_DEFS, theo đúng thứ tự */
 export function questList(m: MeResponse): (QuestState & { claimable: boolean })[] {
   const by = new Map((m.quests?.list ?? []).map((q) => [q.id, q]));
@@ -180,8 +196,9 @@ export function shopBought(m: MeResponse): Record<string, number> {
   return m.shop ?? {};
 }
 /** chấm đỏ ở Hub: Tháp còn lượt, nhiệm vụ có thể nhận (cửa hàng không có chấm) */
-export function hubBadges(m: MeResponse): { tower: boolean; quests: number; total: number } {
+export function hubBadges(m: MeResponse): { tower: boolean; arena: boolean; quests: number; total: number } {
   const tower = towerPlayable(m);
+  const arena = arenaPlayable(m);
   const quests = questClaimable(m);
-  return { tower, quests, total: (tower ? 1 : 0) + quests };
+  return { tower, arena, quests, total: (tower ? 1 : 0) + (arena ? 1 : 0) + quests };
 }

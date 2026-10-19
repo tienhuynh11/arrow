@@ -269,7 +269,7 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
       <div class="d-actions">
         {o ? (
           <>
-            <Btn kind="green" disabled={!canLv} onClick={() => levelUp(1)}>
+            <Btn kind="green" tut="lvup" disabled={!canLv} onClick={() => levelUp(1)}>
               <span class="act-t">Lên cấp</span>
               <span class="act-s">
                 {level < cap ? (
@@ -342,9 +342,10 @@ export function Heroes({ initial }: { initial?: string }) {
       </FilterBar>
       <div class="fade-wrap">
         <div class="hgrid scroll">
-          {list.map((h) => (
+          {list.map((h, i) => (
             <HeroCard
               key={h.id}
+              tut={i === 0 ? 'hero-card' : undefined}
               def={h}
               owned={owned.get(h.id)}
               dim={!owned.has(h.id)}

@@ -72,6 +72,7 @@ export function Campaign({ initial }: { initial?: string }) {
                 style={pos(i)}
                 onClick={() => (unlocked ? setOpen(s.id) : toast('Hãy qua ải trước đó để mở khoá', 'info'))}
                 aria-label={`${s.name}${unlocked ? '' : ' (khoá)'}`}
+                data-tut={isNext ? 'stage-next' : undefined}
               >
                 <span class="node-c">
                   {unlocked ? (s.boss ? <Icon n="crown" size={26} /> : <b>{s.n}</b>) : <Icon n="lock" size={22} />}

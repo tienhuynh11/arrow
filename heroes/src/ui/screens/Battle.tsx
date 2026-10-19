@@ -1,6 +1,9 @@
 // Màn trận đánh: xin seed -> chạy Battle dùng chung theo thời gian thực -> nộp seed + inputs để server chạy lại chấm.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { heroUnit, type UnitInit } from '@shared/heroes/battle';
+import type { ArenaOpponent } from '@shared/heroes/arena';
+import { arenaSetup } from '@shared/heroes/arena';
+import { HERO_BY_ID } from '@shared/heroes/heroes';
 import { BATTLE_HZ } from '@shared/heroes/config';
 import { stageOf, stageSetup } from '@shared/heroes/stages';
 import { towerStage } from '@shared/heroes/tower';
@@ -31,28 +34,31 @@ function UltBtn({ u, hot, onUlt }: { u: HudUnit; hot: number; onUlt: () => void 
         <Portrait id={u.key} rarity={d.rarity} />
       </span>
       <span class="ult-hp"><i style={{ width: `${u.hpPct}%` }} /></span>
+      {u.ready && <span class="bt-full">ĐẦY</span>}
       <kbd>{hot}</kbd>
     </button>
   );
 }
 
-export function BattleScreen({ stage }: { stage: string }) {
+export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponent }) {
   const m0 = me.value!;
   // stage 'tower' = Tháp: ải dựng theo tầng kế tiếp (chốt lúc vào trận), nộp kết quả qua /tower-battle
   const isTower = stage === 'tower';
-  const [def] = useState(() => (isTower ? towerStage(towerOf(m0).floor + 1) : stageOf(stage)));
-  const leave = () => go(isTower ? { n: 'tower' } : { n: 'campaign', stage });
+  // stage 'arena' = Đấu trường: địch là đội phòng thủ của `opp`, nộp qua /arena-battle
+  const isArena = stage === 'arena';
+  const [def] = useState(() => (isArena ? null : isTower ? towerStage(towerOf(m0).floor + 1) : stageOf(stage)));
+  const leave = () => go(isArena ? { n: 'arena' } : isTower ? { n: 'tower' } : { n: 'campaign', stage });
   const [phase, setPhase] = useState<'loading' | 'fight' | 'submit'>('loading');
   const [sess, setSess] = useState<BattleSession | null>(null);
   const [banner, setBanner] = useState('');
   const [exit, setExit] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const cleared = !isTower && starsOfStage(m0, stage) > 0;
+  const cleared = !isTower && !isArena && starsOfStage(m0, stage) > 0;
 
   useEffect(() => {
-    if (!def) {
-      go({ n: 'campaign' });
+    if (isArena ? !opp : !def) {
+      go(isArena ? { n: 'arena' } : { n: 'campaign' });
       return;
     }
     let cancelled = false;
@@ -67,7 +73,14 @@ export function BattleScreen({ stage }: { stage: string }) {
         errToast(e);
         if (!cancelled) leave();
       };
-      if (isTower) {
+      if (isArena) {
+        api
+          .arenaBattle({ opponent: opp!.id, ...body })
+          .then((res) => {
+            if (!cancelled) go({ n: 'arenaResult', res });
+          })
+          .catch(onErr);
+      } else if (isTower) {
         api
           .towerBattle(body)
           .then((res) => {
@@ -93,29 +106,37 @@ export function BattleScreen({ stage }: { stage: string }) {
       });
       if (!units.length) {
         toast('Đội hình trống — hãy xếp tướng trước', 'error');
-        go(isTower ? { n: 'tower' } : { n: 'squad' });
+        go(isArena ? { n: 'arena' } : isTower ? { n: 'tower' } : { n: 'squad' });
         return;
       }
       let seed: number;
       try {
-        seed = (await api.battleStart(stage)).seed;
+        seed = (await api.battleStart(isArena ? 'arena' : stage)).seed;
       } catch (e) {
         errToast(e);
         leave();
         return;
       }
       if (cancelled || !canvasRef.current || !overlayRef.current) return;
-      const setup = stageSetup(def, units, seed);
+      // đội phòng thủ dựng từ danh sách {id, level, star} (không có trang bị) — chỉ để chạy hình; server chấm lại là chuẩn
+      const foe: UnitInit[] = [];
+      if (isArena) {
+        opp!.heroes.forEach((h, slot) => {
+          if (h.id && HERO_BY_ID[h.id]) foe.push(heroUnit({ id: h.id, level: h.level, star: h.star, shards: 0 }, slot));
+        });
+      }
+      const setup = isArena ? arenaSetup(units, foe, seed) : stageSetup(def!, units, seed);
       overlay = new BattleOverlay(overlayRef.current);
-      const scene = new BattleScene(overlay, def.element);
+      const scene = new BattleScene(overlay, def ? def.element : (foe[0]?.element ?? 'light'));
       overlay.scene = scene;
       overlay.onWave = (n) => {
+        if (!def) return;
         setBanner(def.boss && n === def.waves.length - 1 ? `BOSS!` : `ĐỢT ${n + 1}`);
         clearTimeout(timer);
-        timer = window.setTimeout(() => setBanner(''), 1500);
+        timer = window.setTimeout(() => setBanner(''), 1700);
       };
       const session = new BattleSession(setup, scene, overlay, autoPref.value, speedPref.value, () => submit(session));
-      scene.onTick = (dt) => session.advance(dt);
+      scene.onTick = (dt, sdt) => session.advance(dt, sdt);
       live = runLive(canvasRef.current, scene);
       if (!live.ok) toast('Thiết bị không hỗ trợ WebGL — trận vẫn được tính nhưng không có hình', 'error');
       setSess(session);
@@ -156,7 +177,7 @@ export function BattleScreen({ stage }: { stage: string }) {
   };
   const cycleSpeed = () => {
     if (!sess) return;
-    const s = (sess.speed === 1 ? 2 : sess.speed === 2 ? 3 : 1) as 1 | 2 | 3;
+    const s = (sess.speed === 1 ? 2 : sess.speed === 2 ? 3 : 1) as 1 | 2 | 3; // x1 -> x2 -> x3 -> x1 (hệ số thật ở battle/pacing.ts)
     sess.setSpeed(s);
     speedPref.value = s;
     saveSettings();
@@ -187,8 +208,8 @@ export function BattleScreen({ stage }: { stage: string }) {
           <div class="b-top">
             <IconBtn n="back" label="Rời trận" onClick={() => { sess.setPaused(true); setExit(true); }} />
             <div class="b-info">
-              <b>{def?.name}</b>
-              <span>Đợt {hud.wave}/{hud.waves}</span>
+              <b>{isArena ? `Đấu trường · vs ${opp?.name ?? ''}` : def?.name}</b>
+              {!isArena && <span>Đợt {hud.wave}/{hud.waves}</span>}
               <span class={secs <= 15 ? 'warn' : ''}>
                 <Icon n="clock" size={14} /> {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}
               </span>
@@ -216,7 +237,7 @@ export function BattleScreen({ stage }: { stage: string }) {
               <UltBtn key={u.uid} u={u} hot={i + 1} onUlt={() => sess.ult(u.uid)} />
             ))}
           </div>
-          {banner && <div key={banner + hud.wave} class="wave-banner">{banner}</div>}
+          {banner && <div key={banner + hud.wave} class="wave-banner bt-wave">{banner}</div>}
           {hud.paused && !exit && (
             <div class="pause-veil" onClick={() => sess.setPaused(false)}>
               <b>TẠM DỪNG</b>

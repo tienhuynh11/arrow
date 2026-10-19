@@ -2,7 +2,10 @@ import { render } from 'preact';
 import { api, hasToken } from './api';
 import { App } from './ui/App';
 import { GLTF_HEROES, preloadHeroModels } from './render/gltf-model';
+import { initPwa } from './pwa';
 import './styles.css';
+
+initPwa();
 
 // tải sớm model glTF ngay khi mở app (không chặn giao diện; lỗi thì giữ mô hình procedural)
 preloadHeroModels(Object.keys(GLTF_HEROES));

@@ -7,6 +7,12 @@ import {
   ApiError,
   ROUTES,
   type AfkClaimRes,
+  type ArenaBattleReq,
+  type ArenaBattleRes,
+  type ArenaDefenseReq,
+  type ArenaRes,
+  type ArenaTopRes,
+  type ArenaTopRow,
   type AuthRes,
   type BattleReq,
   type BattleRes,
@@ -309,6 +315,14 @@ export const api = {
       ROUTES.shopBuy,
       { item, times, hero } satisfies ShopBuyReq,
     ),
+  /* ---- đấu trường: GET danh sách đối thủ; đội phòng thủ + trận đánh cập nhật hồ sơ; seed của battleStart('arena') ---- */
+  arena: () => req<ArenaRes>(ROUTES.arena),
+  arenaDefense: (squad: number) => mutate<MutateRes>(ROUTES.arenaDefense, { squad } satisfies ArenaDefenseReq),
+  arenaBattle: (r: ArenaBattleReq) => mutate<ArenaBattleRes>(ROUTES.arenaBattle, r),
+  async arenaTop(): Promise<ArenaTopRow[]> {
+    const r = await req<ArenaTopRes | ArenaTopRow[]>(ROUTES.arenaTop);
+    return Array.isArray(r) ? r : (r?.rows ?? []);
+  },
   async leaderboard(): Promise<LeaderRow[]> {
     const r = await req<LeaderRow[] | { rows?: LeaderRow[] }>(ROUTES.leaderboard);
     return Array.isArray(r) ? r : (r?.rows ?? []);

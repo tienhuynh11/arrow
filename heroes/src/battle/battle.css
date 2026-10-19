@@ -1,0 +1,114 @@
+/* Trình diễn trận đánh: chip buff, thanh hành động, số sát thương nổi, cắt cảnh tuyệt kỹ, banner, nhật ký.
+   Tiền tố `bt-`. Không dùng blur / backdrop-filter; chỉ transform + opacity để nhẹ cho điện thoại yếu. */
+
+/* ---------- thanh trên đầu ---------- */
+.battle .ubar { gap: 2px; }
+.bt-chips { display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-end; gap: 2px; width: max-content; max-width: 120px; align-self: center; }
+.bt-chips:empty { display: none; }
+.bt-chip { display: inline-flex; align-items: center; gap: 1px; padding: 0 3px; border: 1.5px solid var(--ink); border-radius: 6px; font: 800 9px/13px var(--f-title); color: #fff; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); white-space: nowrap; }
+.bt-chip b { font-size: 10px; }
+.bt-chip em { font-style: normal; margin-left: 2px; padding: 0 2px; border-radius: 4px; background: rgba(0, 0, 0, 0.28); }
+.bt-chip.atk { background: #ff8a2a; }
+.bt-chip.def { background: #3b8cff; }
+.bt-chip.dd { background: #a05bdb; }
+.bt-chip.spd { background: #35b84a; }
+.bt-chip.stun { background: #e0a800; }
+.bt-chip.shd { background: #20a8d8; }
+.ub-atb { height: 3px; margin: 0 2px; border-radius: 2px; background: rgba(30, 42, 74, 0.55); overflow: hidden; }
+.ub-atb i { display: block; width: 100%; height: 100%; background: #d6efff; transform-origin: left center; transform: scaleX(0); }
+.ubar.ready .ub-en { box-shadow: 0 0 6px 2px #ffd23f; }
+.ubar.pop .ub-en { animation: bt-enpop 0.8s ease-out; }
+@keyframes bt-enpop {
+  0% { transform: scale(1, 1); box-shadow: 0 0 0 0 #fff; }
+  25% { transform: scale(1.25, 1.9); box-shadow: 0 0 12px 6px #fff6a8; }
+  100% { transform: scale(1, 1); box-shadow: 0 0 6px 2px #ffd23f; }
+}
+
+/* ---------- số sát thương ---------- */
+.battle .dn { isolation: isolate; align-items: center; }
+.battle .dn .bt-t { position: relative; }
+.battle .dn-crit { font-size: 38px; color: #fff3a0; animation-name: bt-crit; }
+.bt-sb { position: absolute; left: 50%; top: 50%; width: 130px; height: 130px; z-index: -1; transform: translate(-50%, -50%); pointer-events: none;
+  background: radial-gradient(circle, #fff9c4 0%, #ffd23f 45%, #ff6a1a 100%);
+  clip-path: polygon(50.0% 0.0%,57.8% 21.0%,75.0% 6.7%,71.2% 28.8%,93.3% 25.0%,79.0% 42.2%,100.0% 50.0%,79.0% 57.8%,93.3% 75.0%,71.2% 71.2%,75.0% 93.3%,57.8% 79.0%,50.0% 100.0%,42.2% 79.0%,25.0% 93.3%,28.8% 71.2%,6.7% 75.0%,21.0% 57.8%,0.0% 50.0%,21.0% 42.2%,6.7% 25.0%,28.8% 28.8%,25.0% 6.7%,42.2% 21.0%); }
+.battle .dn-crit .bt-sb { animation: bt-sbspin 0.9s ease-out forwards; }
+@keyframes bt-sbspin { 0% { transform: translate(-50%, -50%) scale(0.2) rotate(0deg); } 25% { transform: translate(-50%, -50%) scale(1.1) rotate(30deg); } 100% { transform: translate(-50%, -50%) scale(0.8) rotate(60deg); opacity: 0; } }
+@keyframes bt-crit {
+  0% { transform: translate(-50%, -20%) scale(0.3); opacity: 0; }
+  14% { transform: translate(-50%, -80%) scale(1.55); opacity: 1; }
+  30% { transform: translate(-50%, -85%) scale(1.2); }
+  100% { transform: translate(-50%, -220%) scale(1.05); opacity: 0; }
+}
+.battle .dn.adv-up { color: #ffb347; font-size: 28px; }
+.battle .dn.adv-up.dn-crit { color: #fff3a0; }
+.battle .dn.adv-dn { color: #b4c0e0; font-size: 18px; }
+.bt-adv { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); font: 800 10px/1 var(--f-title); letter-spacing: 1px; padding: 1px 4px; border: 2px solid var(--ink); border-radius: 6px; white-space: nowrap; }
+.adv-up .bt-adv { background: #ff5a1a; color: #fff; }
+.adv-dn .bt-adv { background: #6d7fae; color: #e6ecff; }
+.battle .dn.dn-heal { font-size: 26px; color: #7dffa8; }
+
+/* ---------- cắt cảnh tuyệt kỹ ---------- */
+.bt-cine { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.bt-dim { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at 50% 50%, rgba(10, 12, 40, 0.05) 26%, rgba(8, 10, 34, 0.78) 100%); animation: bt-dim var(--d) ease-out forwards; }
+@keyframes bt-dim { 0% { opacity: 0; } 18% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; } }
+.bt-cut { position: absolute; left: -6%; right: -6%; top: calc(50% - clamp(54px, 12vh, 84px)); height: clamp(100px, 24vh, 168px); will-change: transform; transform: translateX(-120%) rotate(-6deg); animation: bt-cutL var(--d) cubic-bezier(0.16, 0.9, 0.25, 1) forwards; }
+.bt-cine.s1 .bt-cut { transform: translateX(120%) rotate(6deg); animation-name: bt-cutR; }
+@keyframes bt-cutL { 0% { transform: translateX(-120%) rotate(-6deg); } 18% { transform: translateX(0) rotate(-6deg); } 80% { transform: translateX(3%) rotate(-6deg); } 100% { transform: translateX(125%) rotate(-6deg); } }
+@keyframes bt-cutR { 0% { transform: translateX(120%) rotate(6deg); } 18% { transform: translateX(0) rotate(6deg); } 80% { transform: translateX(-3%) rotate(6deg); } 100% { transform: translateX(-125%) rotate(6deg); } }
+.bt-band { position: absolute; inset: 0; overflow: hidden; border-top: 5px solid #fff; border-bottom: 5px solid #fff; box-shadow: 0 0 0 3px #1a2140, 0 8px 0 3px rgba(26, 33, 64, 0.5);
+  background: linear-gradient(100deg, #141a3d 0%, #141a3d 24%, rgba(20, 26, 61, 0) 72%), var(--c, #ffd23f); }
+.bt-cine.s1 .bt-band { background: linear-gradient(260deg, #141a3d 0%, #141a3d 24%, rgba(20, 26, 61, 0) 72%), var(--c, #ffd23f); }
+.bt-streak { position: absolute; left: -30%; right: -30%; top: 14%; height: 7%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent); animation: bt-str 0.45s linear infinite; }
+.bt-streak.b { top: 74%; height: 4%; animation-duration: 0.3s; animation-direction: reverse; }
+@keyframes bt-str { from { transform: translateX(-30%); } to { transform: translateX(30%); } }
+.bt-cine.low .bt-streak { display: none; }
+.bt-port { position: absolute; left: 2%; top: -38%; height: 160%; width: auto; aspect-ratio: 1; transform: rotate(6deg); filter: none; }
+.bt-cine.s1 .bt-port { left: auto; right: 2%; transform: rotate(-6deg) scaleX(-1); }
+.bt-name { position: absolute; left: 30%; right: 5%; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; font-family: var(--f-title); }
+.bt-cine.s1 .bt-name { left: 5%; right: 30%; align-items: flex-end; text-align: right; }
+.bt-who { font-size: clamp(10px, 2.4vh, 15px); letter-spacing: 2px; color: #fff; text-shadow: 0 2px 0 #1a2140, 0 0 6px #1a2140; font-weight: 800; }
+.bt-nm { font-size: clamp(24px, min(8.5vh, 9vw), 66px); font-weight: 900; font-style: italic; line-height: 1.05; color: #fff7c2; -webkit-text-stroke: 3px #1a2140; paint-order: stroke fill; text-shadow: 0 5px 0 #1a2140; white-space: nowrap; transform: skewX(-8deg); transform-origin: left center; }
+.bt-cine.boss .bt-cut { height: clamp(64px, 15vh, 104px); top: calc(50% - clamp(32px, 7vh, 52px)); }
+.bt-cine.boss .bt-name { left: 6%; right: 6%; }
+.bt-cine.boss.s1 .bt-name { left: 6%; right: 6%; align-items: center; text-align: center; }
+.bt-cine.boss .bt-nm { transform-origin: center; }
+
+/* ---------- ĐỢT / thắng / thua ---------- */
+.wave-banner.bt-wave { top: 32%; padding: 4px 0; background: linear-gradient(90deg, rgba(20, 26, 64, 0), rgba(20, 26, 64, 0.78) 22%, rgba(20, 26, 64, 0.78) 78%, rgba(20, 26, 64, 0)); animation: bt-wave 1.7s cubic-bezier(0.2, 0.9, 0.25, 1) forwards; }
+@keyframes bt-wave { 0% { transform: translateX(-110%) skewX(-12deg); opacity: 0; } 18% { transform: translateX(0) skewX(-4deg); opacity: 1; } 78% { transform: translateX(2%) skewX(0); opacity: 1; } 100% { transform: translateX(110%) skewX(-12deg); opacity: 0; } }
+.bt-end { position: absolute; left: 0; right: 0; top: 34%; z-index: 7; text-align: center; font-family: var(--f-title); font-weight: 900; font-size: clamp(38px, 11vw, 96px); -webkit-text-stroke: 5px #1a2140; paint-order: stroke fill; text-shadow: 0 8px 0 #1a2140; pointer-events: none; animation: bt-endin 0.7s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
+.bt-end.win { color: #ffd23f; }
+.bt-end.lose { color: #aebbe0; }
+@keyframes bt-endin { 0% { transform: scale(2.6) rotate(-8deg); opacity: 0; } 100% { transform: scale(1) rotate(-2deg); opacity: 1; } }
+
+/* ---------- nút tuyệt kỹ đầy ---------- */
+.battle .b-ults .ult.ready { animation: bt-ready 0.9s ease-in-out infinite; }
+@keyframes bt-ready {
+  0%, 100% { transform: scale(1.06) rotate(0deg); }
+  20% { transform: scale(1.12) rotate(-3deg); }
+  40% { transform: scale(1.08) rotate(3deg); }
+  60% { transform: scale(1.12) rotate(-2deg); }
+  80% { transform: scale(1.08) rotate(2deg); }
+}
+.bt-full { position: absolute; left: 50%; top: -13px; transform: translateX(-50%); z-index: 2; padding: 0 6px; border: 2px solid var(--ink); border-radius: 8px; background: linear-gradient(#fff27a, #ff9a1f); color: #5a2200; font: 900 11px/16px var(--f-title); letter-spacing: 1px; pointer-events: none; animation: bt-tag 0.9s ease-in-out infinite; }
+@keyframes bt-tag { 50% { transform: translateX(-50%) translateY(-2px) scale(1.1); } }
+
+/* ---------- nhật ký trận ---------- */
+.bt-logbtn { position: absolute; z-index: 5; left: max(8px, env(safe-area-inset-left)); top: calc(max(8px, env(safe-area-inset-top)) + 54px); width: 36px; height: 36px; padding: 0; border: 3px solid var(--ink); border-radius: 50%; background: rgba(255, 255, 255, 0.85); font-size: 16px; line-height: 1; cursor: pointer; pointer-events: auto; }
+.bt-logbtn.on { background: #ffe27a; }
+.bt-log { position: absolute; z-index: 4; display: none; flex-direction: column; gap: 2px; pointer-events: none; left: calc(max(8px, env(safe-area-inset-left)) + 42px); top: calc(max(8px, env(safe-area-inset-top)) + 54px); max-width: min(60vw, 300px); }
+.bt-log.on { display: flex; }
+.bt-ll { padding: 2px 8px; border-radius: 8px; border-left: 4px solid #5ee08a; background: rgba(20, 26, 64, 0.66); color: #fff; font: 600 12px/1.3 system-ui, sans-serif; }
+.bt-ll.s1 { border-left-color: #ff7a7a; }
+.bt-ll:empty { display: none; }
+.bt-ll:nth-child(1) { opacity: 0.45; }
+.bt-ll:nth-child(2) { opacity: 0.6; }
+.bt-ll:nth-child(3) { opacity: 0.75; }
+.bt-ll:nth-child(4) { opacity: 0.9; }
+@media (max-height: 520px) {
+  .bt-logbtn, .bt-log { top: calc(max(8px, env(safe-area-inset-top)) + 50px); }
+  .bt-ll { font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bt-streak { animation: none; }
+}

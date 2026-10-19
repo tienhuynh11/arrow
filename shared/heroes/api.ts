@@ -4,6 +4,9 @@
 import type { BattleInput, BattleEvent } from './battle.js';
 import type { PityState, Pull } from './gacha.js';
 import type { GearInst } from './gear.js';
+import type { ArenaOpponent, ArenaState } from './arena.js';
+import type { EventDef, EventView } from './events.js';
+import type { GuildBrief, GuildChatMsg, GuildInfo } from './guild.js';
 import type { QuestsView } from './quests.js';
 import type { TowerState } from './tower.js';
 import type { OwnedHero, Wallet } from './types.js';
@@ -28,6 +31,27 @@ export const ROUTES = {
   towerBattle: 'tower-battle',
   questClaim: 'quest-claim',
   shopBuy: 'shop-buy',
+  arena: 'arena',
+  arenaDefense: 'arena-defense',
+  arenaBattle: 'arena-battle',
+  arenaTop: 'arena-top',
+  events: 'events',
+  eventClaim: 'event-claim',
+  guild: 'guild',
+  guildSearch: 'guild-search',
+  guildCreate: 'guild-create',
+  guildJoin: 'guild-join',
+  guildLeave: 'guild-leave',
+  guildKick: 'guild-kick',
+  guildTransfer: 'guild-transfer',
+  guildNotice: 'guild-notice',
+  guildDonate: 'guild-donate',
+  guildCheckin: 'guild-checkin',
+  guildBoss: 'guild-boss',
+  guildChat: 'guild-chat',
+  adminEvents: 'admin/events',
+  adminEventSave: 'admin/event-save',
+  adminEventDelete: 'admin/event-delete',
   leaderboard: 'leaderboard',
 } as const;
 
@@ -63,6 +87,11 @@ export interface MeResponse {
   quests: QuestsView;
   /** số lần đã mua hôm nay theo id mặt hàng (đã tính reset ngày) */
   shop: Record<string, number>;
+  /** đấu trường: điểm, lượt hôm nay, đội phòng thủ (đã tính reset ngày) */
+  arena: ArenaState;
+  /** id bang đang ở (null = chưa có bang) và số mục sự kiện có thể nhận ngay (để hiện chấm đỏ) */
+  guildId: number | null;
+  eventsClaimable: number;
   /** SQUAD_COUNT đội, mỗi đội SQUAD_SIZE ô chứa id tướng ('' = trống) */
   squads: string[][];
   activeSquad: number;
@@ -231,4 +260,121 @@ export interface ShopBuyRes extends MutateRes {
   bought: number;
   /** id GearDef nhận được (rương trang bị) */
   drops: string[];
+}
+
+/* ------------------------------ ĐẤU TRƯỜNG ------------------------------ */
+/** GET arena: danh sách đối thủ vừa sức (đã loại bản thân), thứ hạng hiện tại. Bot được chèn khi không đủ người thật. */
+export interface ArenaRes {
+  state: ArenaState;
+  /** hạng trên bảng (1 = đầu); 0 nếu chưa có hạng */
+  rank: number;
+  opponents: ArenaOpponent[];
+}
+/** đặt đội phòng thủ = đội `squad` đã lưu của mình (phải có ít nhất 1 tướng) */
+export interface ArenaDefenseReq {
+  squad: number;
+}
+/** tấn công: seed lấy từ battle-start (body `{stage:'arena'}`); server tự dựng cả hai đội, chạy simulate, cập nhật điểm. Hết lượt → 400. */
+export interface ArenaBattleReq {
+  /** id đối thủ lấy từ GET arena (hoặc `bot:<n>`) */
+  opponent: string;
+  squad: number;
+  seed: number;
+  inputs: BattleInput[];
+  auto: boolean;
+}
+export interface ArenaBattleRes extends MutateRes {
+  win: boolean;
+  ratingDelta: number;
+  rating: number;
+  reward: { gold: number; gems: number };
+  /** người xem lại: các sự kiện trận (để client phát lại nếu muốn; client thường tự chạy lại) */
+  opponent: ArenaOpponent;
+}
+export interface ArenaTopRow {
+  rank: number;
+  username: string;
+  rating: number;
+  wins: number;
+}
+export interface ArenaTopRes {
+  rows: ArenaTopRow[];
+}
+
+/* ------------------------------ SỰ KIỆN ------------------------------ */
+/** GET events: các sự kiện đang diễn ra (enabled và startsAt ≤ now < endsAt) kèm tiến trình của tôi, mới nhất trước */
+export interface EventsRes {
+  events: EventView[];
+  now: number;
+}
+export interface EventClaimReq {
+  event: number;
+  objective: string;
+}
+export interface EventClaimRes extends MutateRes {
+  /** mô tả phần thưởng đã nhận (để hiện toast/animation) */
+  reward: { wallet: Partial<Wallet>; shards?: { hero: string; n: number }; gear: string[] };
+}
+/** admin (header x-admin-key = MONKEY_ADMIN_KEY): danh sách TẤT CẢ sự kiện (cả đã tắt/hết hạn), lưu (id bỏ trống = tạo mới), xoá */
+export interface AdminEventsRes {
+  events: EventDef[];
+}
+export interface AdminEventSaveReq {
+  event: Omit<EventDef, 'id'> & { id?: number };
+}
+export interface AdminEventDeleteReq {
+  id: number;
+}
+
+/* ------------------------------ BANG HỘI ------------------------------ */
+/** GET guild: thông tin bang của tôi (info = null nếu chưa có bang) */
+export interface GuildRes {
+  info: GuildInfo | null;
+}
+/** GET guild-search?q=: tìm bang theo tên (rỗng = bang mới/đông nhất), tối đa 20 */
+export interface GuildSearchRes {
+  guilds: GuildBrief[];
+}
+export interface GuildCreateReq {
+  name: string;
+  notice?: string;
+}
+export interface GuildJoinReq {
+  id: number;
+}
+export interface GuildKickReq {
+  member: number;
+}
+export interface GuildTransferReq {
+  member: number;
+}
+export interface GuildNoticeReq {
+  notice: string;
+}
+export interface GuildDonateReq {
+  /** id trong GUILD_DONATIONS */
+  option: string;
+}
+export interface GuildCheckinRes extends MutateRes {
+  reward: Partial<Wallet>;
+}
+/** đánh boss bang: seed từ battle-start (body {stage:'guildboss'}); server dựng đội từ DB, chạy simulate(bossSetup) và cộng sát thương */
+export interface GuildBossReq {
+  squad: number;
+  seed: number;
+  inputs: BattleInput[];
+  auto: boolean;
+}
+export interface GuildBossRes extends MutateRes {
+  damage: number;
+  reward: Partial<Wallet>;
+  boss: GuildInfo['boss'];
+  /** boss vừa bị hạ bởi lượt này */
+  killed: boolean;
+}
+export interface GuildChatRes {
+  messages: GuildChatMsg[];
+}
+export interface GuildChatPostReq {
+  text: string;
 }

@@ -11,6 +11,7 @@ import { fmt, fmtDur, go, useBusy, useTicker, toast } from '../../state';
 import { Btn, Canvas3D, Modal } from '../common';
 import { GearBag } from '../gear';
 import { Icon, type IconName } from '../icons';
+import { TutorialChip } from '../tutorial';
 
 export function AfkPanel({ onClose }: { onClose: () => void }) {
   useTicker(500);
@@ -74,9 +75,10 @@ export function Hub() {
     };
   };
 
-  // bốn mục phụ: dùng chung cho dock bên phải (ngang/PC) và bảng Hoạt động (điện thoại dọc)
+  // năm mục phụ: dùng chung cho dock bên phải (ngang/PC) và bảng Hoạt động (điện thoại dọc)
   const items: { k: string; ic: IconName; label: string; sub?: string; badge?: number | boolean; aria: string; run: () => void }[] = [
     { k: 'tower', ic: 'tower', label: 'Tháp', badge: bd.tower, aria: 'Tháp', run: () => go({ n: 'tower' }) },
+    { k: 'arena', ic: 'arena', label: 'Đấu trường', badge: bd.arena, aria: 'Đấu trường', run: () => go({ n: 'arena' }) },
     { k: 'quests', ic: 'quest', label: 'Nhiệm vụ', badge: bd.quests, aria: `Nhiệm vụ${bd.quests ? `, ${bd.quests} có thể nhận` : ''}`, run: () => go({ n: 'quests' }) },
     { k: 'shop', ic: 'shop', label: 'Cửa hàng', aria: 'Cửa hàng', run: () => go({ n: 'shop' }) },
     { k: 'bag', ic: 'bag', label: 'Kho đồ', sub: `${m.gear.length}/${GEAR_CAP}`, aria: `Kho đồ ${m.gear.length}/${GEAR_CAP}`, run: () => setBag(true) },
@@ -89,6 +91,7 @@ export function Hub() {
       {/* key theo đội hình để dựng lại cảnh khi đổi đội */}
       <Canvas3D key={ids.join(',')} start={start} class="hub-canvas" />
       <div class="hub-ui">
+        <TutorialChip />
         {leader && (
           <div class="hb-plate">
             <b>{leader.name}</b>
@@ -97,7 +100,7 @@ export function Hub() {
         )}
 
         {/* dock kính bên phải (ngang / PC) */}
-        <div class="hb-dock" aria-label="Hoạt động">
+        <div class="hb-dock" aria-label="Hoạt động" data-tut="hub-dock">
           {items.map((it) => (
             <button type="button" key={it.k} class="hb-dock-b" onClick={it.run} aria-label={it.aria}>
               <span class="hb-ic"><Icon n={it.ic} size={28} />{badgeOf(it.badge)}</span>
@@ -107,7 +110,7 @@ export function Hub() {
         </div>
 
         {/* nút tròn "Hoạt động" (điện thoại dọc) */}
-        <button type="button" class="hb-acts-btn" onClick={() => setActs((v) => !v)} aria-label={`Hoạt động${bd.total ? `, ${bd.total} mới` : ''}`} aria-expanded={acts}>
+        <button type="button" class="hb-acts-btn" data-tut="hub-acts" onClick={() => setActs((v) => !v)} aria-label={`Hoạt động${bd.total ? `, ${bd.total} mới` : ''}`} aria-expanded={acts}>
           <Icon n="grid" size={28} />
           {bd.total > 0 && <i class="hb-badge">{bd.total}</i>}
         </button>
@@ -128,7 +131,7 @@ export function Hub() {
 
         {/* cụm CTA: AFK + thẻ CHIẾN gộp thông tin đội */}
         <div class="hb-bottom">
-          <button type="button" class="hb-afk" onClick={() => setAfk(true)} aria-label="Treo máy">
+          <button type="button" class="hb-afk" data-tut="hub-afk" onClick={() => setAfk(true)} aria-label="Treo máy">
             <Icon n="clock" size={26} />
             <span>
               <b>Treo máy</b>
@@ -141,7 +144,7 @@ export function Hub() {
               <span><Icon n="squad" size={16} /> Đội hình {ids.length}/{SQUAD_SIZE}</span>
               <span><Icon n="sword" size={16} /> Lực chiến {fmt(power)}</span>
             </div>
-            <button type="button" class="btn big hb-go" onClick={() => go({ n: 'campaign', stage: next.id })}>
+            <button type="button" class="btn big hb-go" data-tut="hub-go" onClick={() => go({ n: 'campaign', stage: next.id })}>
               <Icon n="battle" size={36} />
               <span class="hb-go-t">
                 <b>CHIẾN</b>

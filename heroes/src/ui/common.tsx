@@ -29,11 +29,14 @@ export function Btn(p: {
   class?: string;
   children?: ComponentChildren;
   title?: string;
+  /** id cho hướng dẫn tân thủ (data-tut) */
+  tut?: string;
 }) {
   return (
     <button
       type="button"
       title={p.title}
+      data-tut={p.tut}
       class={`btn ${p.kind ?? 'primary'}${p.big ? ' big' : ''}${p.small ? ' small' : ''}${p.busy ? ' busy' : ''} ${p.class ?? ''}`}
       disabled={p.disabled || p.busy}
       onClick={(e) => {
@@ -133,11 +136,13 @@ export function HeroCard(p: {
   mini?: boolean;
   badge?: ComponentChildren;
   onClick?: () => void;
+  tut?: string;
 }) {
   const { def, owned } = p;
   return (
     <button
       type="button"
+      data-tut={p.tut}
       class={`hcard r-${def.rarity}${p.selected ? ' sel' : ''}${p.dim ? ' dim' : ''}${p.mini ? ' mini' : ''}`}
       onClick={() => {
         sfx('tap');

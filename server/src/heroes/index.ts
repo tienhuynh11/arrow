@@ -16,6 +16,7 @@ const MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
   '.glb': 'model/gltf-binary',
@@ -60,6 +61,7 @@ export function serveHeroes(req: IncomingMessage, res: ServerResponse): boolean 
     ok = true;
   }
   const type = MIME[extname(file)] ?? 'application/octet-stream';
+  // assets/ có hash trong tên -> immutable; index.html, sw.js, workbox-*.js, manifest.webmanifest, icons -> no-cache (luôn xác thực lại để SW cập nhật được)
   const cache = file.includes(join(ROOT, 'assets')) ? 'public, max-age=31536000, immutable' : 'no-cache';
   res.writeHead(200, { 'content-type': type, 'cache-control': cache, 'content-length': statSync(file).size });
   if (req.method === 'HEAD') res.end();

@@ -1,6 +1,7 @@
 // Kiểm thử lõi game thẻ tướng: engine trận (deterministic), gacha (tỉ lệ + pity), ải, AFK, thể lực.
 // Chạy: cd server && npx tsx test/heroesCore.test.ts
 import { Battle, simulate, heroUnit, advantage, type BattleSetup } from '../../shared/heroes/battle.js';
+import { arenaReward, arenaSetup, botSquad, ratingDelta } from '../../shared/heroes/arena.js';
 import { AFK_CAP_MS, BATTLE_MAX_TICKS, STAMINA_MAX } from '../../shared/heroes/config.js';
 import { statsAt } from '../../shared/heroes/formulas.js';
 import { BANNER_BY_ID, NEW_PITY, SSR_PITY, UR_PITY, summon, type PityState } from '../../shared/heroes/gacha.js';
@@ -14,6 +15,12 @@ import { MONSTERS } from '../../shared/heroes/stages.js';
 import { QUEST_DEFS, dayKey, nextDayStart } from '../../shared/heroes/quests.js';
 import { SHOP_ITEMS } from '../../shared/heroes/shop.js';
 import { TOWER_MAX_FLOOR, towerReward, towerStage } from '../../shared/heroes/tower.js';
+import { levelCapOf } from '../../shared/heroes/formulas.js';
+import {
+  BOSS_ATTACKS_PER_DAY, BOSS_CYCLE_DAYS, BOSS_UID, GUILD_MAX_LEVEL, GUILD_MAX_MEMBERS, bossAttackReward, bossCycle, bossDamage, bossHpMax, bossLevel, bossName, bossSetup,
+  guildCheckinReward, guildXpToNext,
+} from '../../shared/heroes/guild.js';
+import { EVENT_KINDS, SEED_EVENT } from '../../shared/heroes/events.js';
 
 let fails = 0;
 const ok = (cond: boolean, msg: string) => {
@@ -315,6 +322,109 @@ console.log('— cân bằng Tháp (báo cáo, không ép chặt) —');
   if (need[10] > 40) console.log('  CẢNH BÁO: tầng 10 cần cấp > 40 (quá khó)');
   ok(need[1] <= 5, 'tầng 1 dễ (đội khởi đầu cấp ≤ 5 là qua)');
   ok(need[100] >= need[10], 'tầng cao khó hơn tầng thấp');
+}
+
+console.log('— đấu trường —');
+{
+  const ratings = [0, 100, 400, 800, 1000, 1500, 2000, 3000];
+  let bounds = true;
+  let mono = true;
+  for (const mine of ratings) {
+    for (const their of ratings) {
+      const w = ratingDelta(true, mine, their);
+      const l = ratingDelta(false, mine, their);
+      if (w < 10 || w > 50 || l > -5 || l < -30) bounds = false;
+      if (ratingDelta(true, mine, their + 50) < w || ratingDelta(false, mine, their + 50) < l) mono = false; // đối thủ mạnh hơn → thắng được nhiều hơn, thua mất ít hơn
+    }
+  }
+  ok(bounds, 'ratingDelta: thắng ∈ [10,50], thua ∈ [-30,-5]');
+  ok(mono, 'ratingDelta đơn điệu theo điểm đối thủ');
+  ok(ratingDelta(true, 1000, 1000) === 25 && ratingDelta(false, 1000, 1000) === -15, 'ratingDelta cân bằng: +25 / -15');
+  ok(arenaReward(true).gold > arenaReward(false).gold && arenaReward(false).gems === 0, 'arenaReward thắng > thua');
+  let botOk = true;
+  for (let r = 0; r <= 3000; r += 25) {
+    for (const n of [0, 1, 2, 3, 4, 17, 99]) {
+      const sq = botSquad(n, r);
+      const ids = new Set(sq.map((h) => h.id));
+      if (sq.length < 1 || sq.length > 5 || ids.size !== sq.length || sq.some((h) => !HEROES.some((d) => d.id === h.id) || h.level < 1 || h.level > 60 || h.star < 1 || h.star > 5)) botOk = false;
+      if (JSON.stringify(sq) !== JSON.stringify(botSquad(n, r))) botOk = false;
+    }
+  }
+  ok(botOk, 'botSquad hợp lệ + deterministic với điểm 0..3000 (1..5 tướng khác nhau, cấp ≤ 60)');
+  ok(botSquad(0, 3000)[0].level === 60 && botSquad(0, 0)[0].level === 1, 'botSquad: cấp tăng theo điểm, chặn 1..60');
+  const atk = starterTeam(5);
+  const def = starterTeam(3);
+  const setup = arenaSetup(atk, def, 77);
+  ok(setup.seed === 77 && setup.player === atk && setup.waves.length === 1 && setup.waves[0].length === def.length && setup.waves[0].every((u) => u.side === 1) && atk.every((u) => u.side === 0), 'arenaSetup: đội phòng thủ side 1 một đợt, người tấn công side 0');
+  ok(def.every((u) => u.side === 0), 'arenaSetup không sửa đội phòng thủ gốc');
+  const run = (seed: number) => simulate(arenaSetup(starterTeam(20), starterTeam(1), seed), [], true);
+  ok(run(5).win && JSON.stringify(run(5).events) === JSON.stringify(run(5).events), 'trận đấu trường deterministic, đội cấp cao thắng');
+  ok(!simulate(arenaSetup(starterTeam(1), starterTeam(40), 5), [], true).win, 'đội yếu thua đội phòng thủ mạnh (hết giờ/gục = thua)');
+}
+
+console.log('— bang hội: boss —');
+{
+  const team = (lv: number) => STARTER_HEROES.map((id, i) => heroUnit(owned(id, lv, Math.max(1, Math.ceil((lv - 20) / 10))), i));
+  ok(levelCapOf(Math.max(1, Math.ceil((60 - 20) / 10))) >= 60, 'star dùng cho cấp 60 đủ trần cấp');
+  const s1 = bossSetup(3, 1, 999, team(10));
+  const s2 = bossSetup(3, 1, 999, team(10));
+  ok(JSON.stringify(s1) === JSON.stringify(s2) && s1.seed === 999 && s1.waves.length === 1 && s1.waves[0].length === 1, 'bossSetup deterministic, một boss một đợt');
+  const boss = s1.waves[0][0];
+  ok(boss.boss === true && boss.slot === 0 && boss.side === 1 && boss.name === bossName(1), 'boss: side 1, ô 0, cờ boss, tên theo chu kỳ');
+  ok(bossSetup(1, 0, 1, team(1)).waves[0][0].stats.atk < bossSetup(10, 0, 1, team(1)).waves[0][0].stats.atk, 'boss mạnh dần theo cấp bang');
+  const r = simulate(s1, [], true);
+  const sumDmg = (pred: (tg: number) => boolean) => r.events.reduce((a2, e) => a2 + (e.k === 'dmg' && pred(e.tg) ? e.n : 0), 0);
+  const onBoss = sumDmg((tg) => tg === BOSS_UID);
+  ok(bossDamage(r.events) === onBoss && onBoss > 0, 'bossDamage = tổng dmg có tg = BOSS_UID (> 0)');
+  ok(sumDmg((tg) => tg !== BOSS_UID) > 0 && bossDamage(r.events) < sumDmg(() => true), 'bossDamage bỏ qua sát thương lên người chơi');
+  ok(bossDamage([{ t: 0, k: 'heal', u: BOSS_UID, tg: BOSS_UID, n: 5, hp: 1 }, { t: 0, k: 'die', u: 1 }]) === 0 && bossDamage([]) === 0, 'bossDamage chỉ cộng sự kiện dmg');
+  ok(JSON.stringify(simulate(s1, [], true).events) === JSON.stringify(r.events), 'trận boss deterministic theo seed');
+  ok(r.ticks > 0 && r.ticks <= BATTLE_MAX_TICKS, 'trận boss kết thúc trong giới hạn tick (hết giờ/gục là bình thường)');
+
+  // chu kỳ: biên ngày VN (17:00 UTC) và biên 7 ngày
+  const C0 = Date.UTC(2030, 0, 15, 17, 0, 0);
+  ok(bossCycle(C0) === Math.floor(dayKey(C0) / BOSS_CYCLE_DAYS), 'bossCycle theo dayKey / 7');
+  let flips = 0;
+  for (let d = 0; d < 21; d++) if (bossCycle(C0 + (d + 1) * 86_400_000) !== bossCycle(C0 + d * 86_400_000)) flips++;
+  ok(flips === 3, 'đổi chu kỳ đúng mỗi 7 ngày (3 lần trong 21 ngày)');
+  const firstDayOfCycle = Array.from({ length: 21 }, (_, d) => C0 + d * 86_400_000).find((ms) => dayKey(ms) % BOSS_CYCLE_DAYS === 0)!;
+  ok(bossCycle(firstDayOfCycle) === bossCycle(firstDayOfCycle - 1) + 1 && bossCycle(firstDayOfCycle + 6 * 86_400_000 + 3_600_000) === bossCycle(firstDayOfCycle), 'biên chu kỳ: 23:59 hôm trước = chu kỳ cũ, 00:00 = chu kỳ mới');
+  ok(bossName(0) !== bossName(1) && bossName(3) === bossName(0), 'bossName xoay vòng');
+  ok(bossHpMax(1) === 3_000_000 && bossHpMax(10) > bossHpMax(9) && bossHpMax(2) > bossHpMax(1), 'bossHpMax tăng theo cấp bang');
+  ok(bossLevel(1) === 24 && bossLevel(10) === 60 && bossLevel(GUILD_MAX_LEVEL) <= 60, 'bossLevel chặn 60');
+  let mono = true;
+  for (let l = 1; l < GUILD_MAX_LEVEL; l++) {
+    if (!(guildXpToNext(l + 1) > guildXpToNext(l))) mono = false;
+    const a2 = guildCheckinReward(l);
+    const b2 = guildCheckinReward(l + 1);
+    if (!((b2.gold ?? 0) > (a2.gold ?? 0) && (b2.stones ?? 0) >= (a2.stones ?? 0) && (b2.tickets ?? 0) >= (a2.tickets ?? 0))) mono = false;
+  }
+  ok(mono, 'guildXpToNext / thưởng điểm danh tăng dần theo cấp');
+  ok(bossAttackReward(0).gold! >= 300 && bossAttackReward(1e9).gold! <= 3300 && (bossAttackReward(20_000).stones ?? 0) === 2 && (bossAttackReward(19_999).stones ?? 0) === 0, 'bossAttackReward: có sàn/trần, đá từ 20k');
+
+  // ---- báo cáo cân bằng (in ra; cảnh báo nếu lệch) ----
+  console.log('  [cân bằng] sát thương MỘT trận boss của đội khởi đầu (4 tướng, auto, TB 3 seed) — theo cấp bang 1..10 của boss');
+  const fightDmg = (lv: number, gl: number) => {
+    let sum = 0;
+    for (const seed of [1, 2, 3]) sum += bossDamage(simulate(bossSetup(gl, 0, seed, team(lv)), [], true).events);
+    return Math.round(sum / 3);
+  };
+  const table: Record<number, Record<number, number>> = {};
+  for (const lv of [1, 20, 40, 60]) {
+    table[lv] = {};
+    for (let gl = 1; gl <= 10; gl++) table[lv][gl] = fightDmg(lv, gl);
+    console.log(`    tướng cấp ${String(lv).padStart(2)}: ` + Object.values(table[lv]).map((d) => String(d).padStart(7)).join(' '));
+  }
+  console.log('    bossHpMax(1..10): ' + Array.from({ length: 10 }, (_, i) => String(Math.round(bossHpMax(i + 1))).padStart(8)).join(' '));
+  const weekFull = GUILD_MAX_MEMBERS * BOSS_ATTACKS_PER_DAY * BOSS_CYCLE_DAYS * table[60][1];
+  const oneSquadDays = bossHpMax(1) / (BOSS_ATTACKS_PER_DAY * table[1][1]);
+  console.log(`    bang đầy ${GUILD_MAX_MEMBERS} người cấp 60 đánh boss bang cấp 1 cả tuần: ${weekFull} sát thương / ${bossHpMax(1)} máu (${(weekFull / bossHpMax(1)).toFixed(2)}x)`);
+  console.log(`    MỘT đội cấp 1 hạ boss bang cấp 1 mất ${oneSquadDays.toFixed(1)} ngày (${BOSS_ATTACKS_PER_DAY} lượt/ngày × ${table[1][1]})`);
+  if (weekFull < bossHpMax(1)) console.log('  ⚠ CẢNH BÁO: bang đầy 30 người cấp 60 KHÔNG hạ nổi boss cấp 1 trong tuần');
+  if (oneSquadDays < 3) console.log('  ⚠ CẢNH BÁO: MỘT đội cấp 1 hạ được boss cấp 1 dưới 3 ngày');
+  ok(Object.values(table).every((row) => Object.values(row).every((d) => d > 0)), 'mọi cấp đều gây được sát thương lên boss');
+  ok(table[60][1] >= table[1][1], 'đội cấp cao gây sát thương không thấp hơn đội cấp 1');
+  ok(EVENT_KINDS.length === 8 && SEED_EVENT.objectives.every((o) => (EVENT_KINDS as readonly string[]).includes(o.kind)), 'EVENT_KINDS đủ 8 loại, sự kiện mẫu dùng loại hợp lệ');
 }
 
 console.log(fails ? `\n${fails} LỖI` : '\nTất cả đạt');

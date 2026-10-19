@@ -1,0 +1,79 @@
+# CI cho server (Thẻ Tướng + Bầy Khỉ) và client game Thẻ Tướng 3D. Không cần secret nào.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# huỷ lượt chạy cũ của cùng nhánh khi có commit mới (tiết kiệm phút miễn phí)
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Server (typecheck + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      # Test chạy với MemStore. Phần tích hợp Postgres (Neon) tự bỏ qua khi DATABASE_URL rỗng/không có
+      # (heroesApi.test.ts kiểm tra `process.env.DATABASE_URL`); CI cố ý để trống để không đụng CSDL thật.
+      - name: Test heroesCore
+        run: npx tsx test/heroesCore.test.ts
+        env:
+          DATABASE_URL: ''
+      - name: Test heroesApi
+        run: npx tsx test/heroesApi.test.ts
+        env:
+          DATABASE_URL: ''
+
+  heroes:
+    name: Heroes client (typecheck + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: heroes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: heroes/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      # `npm run build` chạy lại tsc rồi vite build (kèm service worker + manifest PWA)
+      - name: Build
+        run: npm run build
+      - name: Tóm tắt dung lượng dist
+        run: |
+          {
+            echo "### Dung lượng heroes/dist"
+            echo
+            echo "Tổng: $(du -sh dist | cut -f1)"
+            echo
+            echo '| File | Kích thước |'
+            echo '| --- | ---: |'
+            find dist -type f -printf '%s %P\n' | sort -rn | head -15 | while read -r size path; do
+              echo "| \`$path\` | $((size / 1024)) KiB |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

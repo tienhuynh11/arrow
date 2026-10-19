@@ -10,7 +10,7 @@ type IconName =
   | 'battle' | 'gear' | 'back' | 'lock' | 'close' | 'check' | 'pause' | 'play' | 'ffwd' | 'auto' | 'sword' | 'shield' | 'heart'
   | 'clock' | 'up' | 'down' | 'leaf' | 'rock' | 'drop' | 'sun' | 'moon' | 'wand' | 'bow' | 'plus' | 'note' | 'crown'
   | 'sparkle' | 'logout' | 'info' | 'chest' | 'skip' | 'user' | 'sound' | 'mute' | 'filter' | 'search'
-  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop' | 'grid';
+  | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop' | 'grid' | 'arena';
 
 const PATHS: Record<IconName, JSX.Element> = {
   gold: (
@@ -301,6 +301,15 @@ const PATHS: Record<IconName, JSX.Element> = {
       <rect x="13" y="13" width="7.5" height="7.5" rx="2" fill="#ff8a8a" {...st} />
     </>
   ),
+  arena: (
+    <>
+      <path d="M12 2.800l8 2.800v6.200c0 4.600-3.300 7.800-8 9.700-4.700-1.900-8-5.100-8-9.700V5.600z" fill="#8a4ee0" {...st} />
+      <path d="M12 5.200l5.200 1.900v4.300c0 3-2.100 5.200-5.200 6.600-3.100-1.400-5.200-3.600-5.200-6.600V7.100z" fill="#b78cff" stroke={INK} stroke-width="1.100" stroke-linejoin="round" />
+      <path d="M7.800 7.800l8.400 8.400M16.200 7.800l-8.400 8.400" fill="none" stroke={INK} stroke-width="3.600" stroke-linecap="round" />
+      <path d="M7.800 7.800l8.400 8.400M16.200 7.800l-8.400 8.400" fill="none" stroke="#f4f8ff" stroke-width="1.800" stroke-linecap="round" />
+      <path d="M6.800 9.300l1.500-1.500M17.200 9.300l-1.500-1.500" stroke="#ffcb2e" stroke-width="1.800" stroke-linecap="round" />
+    </>
+  ),
 };
 
 export function Icon({ n, size = 20, class: cls }: { n: IconName; size?: number; class?: string }) {
@@ -317,3 +326,16 @@ export const ELEM_CSS: Record<Element, string> = { forest: '#54c74a', earth: '#d
 import type { GearSlot } from '@shared/heroes/gear';
 export const GEAR_ICON: Record<GearSlot, IconName> = { weapon: 'gWeapon', armor: 'gArmor', helmet: 'gHelmet', accessory: 'gAccessory' };
 export type { IconName };
+
+/** huy chương top 3 (1 vàng, 2 bạc, 3 đồng) */
+export function Medal({ rank, size = 28 }: { rank: 1 | 2 | 3; size?: number }) {
+  const c = rank === 1 ? ['#ffd23f', '#ffb52e', '#ff5c6c'] : rank === 2 ? ['#e8eef8', '#aab6cc', '#3fa7ff'] : ['#f0b27a', '#c9803f', '#4ccf5a'];
+  return (
+    <svg class="ic" viewBox="0 0 24 24" width={size} height={size} role="img" aria-label={`Hạng ${rank}`}>
+      <path d="M7 2.500h4l1.500 6h-4zM17 2.500h-4l-1.500 6h4z" fill={c[2]} {...st} />
+      <circle cx="12" cy="15" r="6.500" fill={c[0]} {...st} />
+      <circle cx="12" cy="15" r="4.300" fill={c[1]} stroke={INK} stroke-width="1.100" />
+      <text x="12" y="18" text-anchor="middle" font-size="9.500" font-weight="800" fill={INK} font-family="Baloo 2, system-ui, sans-serif">{rank}</text>
+    </svg>
+  );
+}

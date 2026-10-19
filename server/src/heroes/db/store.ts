@@ -6,6 +6,8 @@ import type { PityState } from '../../../../shared/heroes/gacha.js';
 import type { GearInst } from '../../../../shared/heroes/gear.js';
 import type { OwnedHero, Wallet } from '../../../../shared/heroes/types.js';
 import type { StageProgress } from '../../../../shared/heroes/api.js';
+import type { EventDef } from '../../../../shared/heroes/events.js';
+import type { GuildChatMsg, GuildRole } from '../../../../shared/heroes/guild.js';
 
 /** dùng lại lỗi của Bầy Khỉ để accounts.ts và hero cùng một lớp lỗi (api bắt một chỗ) */
 export { StoreError } from '../../monkey/db/store.js';
@@ -57,6 +59,78 @@ export interface HState {
   questBonus: boolean;
   /** số lần đã mua hôm nay theo id mặt hàng */
   shop: Record<string, number>;
+  /** đã có hàng h_arena (tạo lười ở lần đầu chạm đấu trường); false → store không ghi hàng arena */
+  arenaOn: boolean;
+  arenaRating: number;
+  /** dayKey của lần cấp lượt đấu trường gần nhất (xem rollDay) */
+  arenaDay: number;
+  arenaTries: number;
+  /** chỉ số đội dùng làm đội phòng thủ */
+  arenaDefense: number;
+  arenaWins: number;
+  arenaLosses: number;
+  /** mốc (ms) lần rời bang gần nhất, tính thời gian chờ vào bang khác (0 = chưa từng) */
+  guildLeftAt: number;
+  /** bang đang ở — CHỈ ĐỌC, store nạp từ bảng thành viên (ghi bằng mutateGuild, không qua đây) */
+  guildId: number | null;
+  /** các sự kiện đang diễn ra tại thời điểm giao dịch + tiến trình của tài khoản (chỉ nạp sự kiện còn hiệu lực) */
+  events: EventState[];
+}
+
+/** một sự kiện đang hiệu lực + tiến trình theo id mục tiêu */
+export interface EventState {
+  def: EventDef;
+  rows: Record<string, { progress: number; claimed: boolean }>;
+}
+
+/** một bang (id = 0: chưa lưu, store sẽ cấp id khi ghi) */
+export interface GuildRow {
+  id: number;
+  name: string;
+  level: number;
+  exp: number;
+  notice: string;
+  leaderId: number;
+  createdAt: number;
+  /** chu kỳ boss mà bossHp thuộc về (xem bossCycle) */
+  bossCycle: number;
+  bossHp: number;
+  bossHpMax: number;
+  bossKilled: boolean;
+}
+export interface GuildMemberRow {
+  accountId: number;
+  guildId: number;
+  role: GuildRole;
+  contribution: number;
+  bossDamage: number;
+  joinedAt: number;
+  /** dayKey + số lượt quyên góp trong ngày đó */
+  donatedDay: number;
+  donatedN: number;
+  checkinDay: number;
+  /** dayKey + số lượt đánh boss đã dùng trong ngày đó */
+  bossDay: number;
+  bossTriesUsed: number;
+}
+/**
+ * Ngữ cảnh bang trong một giao dịch mutateGuild (đã khoá hàng bang FOR UPDATE). Hàm luật sửa trực tiếp `guild`/`members`:
+ * bỏ một phần tử khỏi `members` = xoá thành viên; đặt `deleted` = giải tán bang; tạo bang = đặt `guild` với id 0.
+ */
+export interface GuildCtx {
+  /** bang đích: bang của tôi, hoặc bang được chỉ định khi xin vào (null = không có) */
+  guild: GuildRow | null;
+  /** thành viên của `guild` */
+  members: GuildMemberRow[];
+  /** bang tôi đang ở (độc lập với `guild`) */
+  myGuildId: number | null;
+  deleted: boolean;
+  /** tài khoản KHÁC được xếp hàng nhận thưởng hạ boss (nhận ở lần chạm kế tiếp, đúng một lần) */
+  killRewards: number[];
+}
+export interface GuildListRow {
+  guild: GuildRow;
+  members: number;
 }
 
 export interface LedgerRow {
@@ -76,6 +150,13 @@ export interface LeaderEntry {
   stars: number;
 }
 
+/** một hàng xếp hạng đấu trường (tên tài khoản do api tra) */
+export interface ArenaRank {
+  accountId: number;
+  rating: number;
+  wins: number;
+}
+
 export interface HeroStore {
   readonly kind: 'pg' | 'mem';
   /** chuẩn bị (migrate) — gọi một lần */
@@ -90,4 +171,38 @@ export interface HeroStore {
   mutate<T>(accountId: number, now: Date, kind: string, fn: (s: HState) => T, opts?: MutateOpts): Promise<T>;
   /** top theo ải cao nhất đã qua, rồi số sao ở ải đó */
   leaderboard(limit: number): Promise<LeaderEntry[]>;
+  /**
+   * Ứng viên đối thủ: tài khoản KHÁC `selfId` đã có hàng đấu trường và đội phòng thủ có ít nhất 1 tướng (theo dữ liệu hiện tại),
+   * gần điểm `rating` nhất (|Δ| tăng dần, rồi id). Chỉ đọc, không khoá ai.
+   */
+  arenaNear(selfId: number, rating: number, limit: number): Promise<ArenaRank[]>;
+  /** đọc (không khoá, không tạo hồ sơ) trạng thái SỐNG của một tài khoản khác; null nếu chưa có hồ sơ */
+  peek<T>(accountId: number, fn: (s: Readonly<HState>) => T): Promise<T | null>;
+  /** hạng 1-based theo (điểm ↓, thắng ↓, id ↑) trong mọi hàng đấu trường; 0 nếu chưa có hàng */
+  arenaRank(accountId: number): Promise<number>;
+  /** top theo (điểm ↓, thắng ↓, id ↑) */
+  arenaTop(limit: number): Promise<ArenaRank[]>;
+
+  /* ---- sự kiện (admin) ---- */
+  adminEvents(): Promise<EventDef[]>;
+  /** tạo (id bỏ trống) hoặc sửa; sửa giữ tiến trình, mục tiêu bị bỏ thì xoá hàng tiến trình. Không có id → 404 */
+  adminEventSave(ev: Omit<EventDef, 'id'> & { id?: number }): Promise<EventDef>;
+  adminEventDelete(id: number): Promise<void>;
+
+  /* ---- bang hội ---- */
+  /**
+   * Giao dịch có bang: khoá hồ sơ → khoá hàng bang (bang `target`, hoặc bang của tôi nếu null) → fn(state, ctx) → ghi cả hai.
+   * Thứ tự khoá luôn là hồ sơ rồi bang nên không có khoá chéo.
+   */
+  mutateGuild<T>(accountId: number, now: Date, kind: string, target: number | null, fn: (s: HState, g: GuildCtx) => T): Promise<T>;
+  /** đọc bang của tôi (không khoá) */
+  viewGuild<T>(accountId: number, now: Date, fn: (s: Readonly<HState>, g: Readonly<GuildCtx>) => T): Promise<T>;
+  /** mọi bang kèm số thành viên (đông nhất trước, rồi id) — api lọc theo tên */
+  guildList(limit: number): Promise<GuildListRow[]>;
+  /** tin nhắn mới nhất (cũ → mới); null nếu không thuộc bang nào */
+  guildChat(accountId: number, limit: number): Promise<GuildChatMsg[] | null>;
+  /** đăng tin vào bang của tài khoản, giữ GUILD_CHAT_KEEP tin cuối; không thuộc bang → StoreError */
+  guildChatPost(accountId: number, username: string, text: string, nowMs: number): Promise<GuildChatMsg>;
+  /** số phần thưởng hạ boss đang chờ (đọc rẻ, không khoá) */
+  pendingKill(accountId: number): Promise<number>;
 }

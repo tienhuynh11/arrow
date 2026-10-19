@@ -138,7 +138,7 @@ export function PreBattle({ stage, onClose, inline }: { stage: StageDef; onClose
         <Btn kind="blue" small disabled={!sweepable} onClick={() => setSweepOpen(!sweepOpen)} title={sweepable ? '' : 'Đạt 3 sao để mở quét nhanh'}>
           {sweepable ? 'Quét nhanh' : 'Quét (cần 3 sao)'}
         </Btn>
-        <Btn kind="primary" big class="pb-go" busy={busy} disabled={count === 0} onClick={begin}>
+        <Btn kind="primary" big class="pb-go" tut="pb-go" busy={busy} disabled={count === 0} onClick={begin}>
           <Icon n="battle" size={26} /> BẮT ĐẦU
         </Btn>
       </div>

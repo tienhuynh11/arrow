@@ -1,7 +1,8 @@
 // Trạng thái toàn cục của UI: màn hình hiện tại, thông báo (toast), tiện ích dùng chung.
 import { signal } from '@preact/signals';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { BattleRes, TowerBattleRes } from '@shared/heroes/api';
+import type { ArenaBattleRes, BattleRes, TowerBattleRes } from '@shared/heroes/api';
+import type { ArenaOpponent } from '@shared/heroes/arena';
 import { ApiError } from './api';
 
 export type Screen =
@@ -10,10 +11,12 @@ export type Screen =
   | { n: 'squad' }
   | { n: 'summon' }
   | { n: 'campaign'; stage?: string }
-  | { n: 'battle'; stage: string }
+  | { n: 'battle'; stage: string; opp?: ArenaOpponent }
   | { n: 'result'; stage: string; res: BattleRes }
   | { n: 'tower' }
   | { n: 'towerResult'; res: TowerBattleRes }
+  | { n: 'arena' }
+  | { n: 'arenaResult'; res: ArenaBattleRes }
   | { n: 'quests' }
   | { n: 'shop' };
 

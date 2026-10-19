@@ -1,10 +1,13 @@
 // Cảnh 3D của trận đánh: camera nghiêng cố định, hai phe đối mặt, camera tự lùi theo tỉ lệ màn hình.
 // Cảnh CHỈ phát lại BattleEvent do engine dùng chung xuất ra (act/dmg/heal/fx/die/wave/end).
+// Phần "trình diễn" (hit-stop, slow-mo, rung, zoom, cinematic tuyệt kỹ, hạt) chỉ là hình ảnh — không đụng kết quả tính toán.
 import * as THREE from 'three';
 import { FRONT_SLOTS } from '@shared/heroes/config';
-import type { Battle, BattleEvent, Unit } from '@shared/heroes/battle';
+import { ENERGY_MAX, type Battle, type BattleEvent, type Unit } from '@shared/heroes/battle';
 import { skillOf } from '@shared/heroes/skills';
 import type { EffectType, Element, Role } from '@shared/heroes/types';
+import { HITSTOP, PACE } from '../battle/pacing';
+import { FxPool, disposeFxTextures, fxTex } from './fx-pool';
 import { createHeroModel, type HeroModel } from './hero-model';
 import { brightLights, makeBlob, type LiveScene } from './live';
 import { currentPreset, type QualityState } from './quality';
@@ -21,6 +24,20 @@ export const EFFECT_LABEL: Record<EffectType, { text: string; color: string }> =
   shield: { text: 'Khiên', color: '#7fe3ff' },
   spdUp: { text: 'Tốc +', color: '#5ee08a' },
 };
+const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+
+/** thông tin cho màn cắt cảnh tuyệt kỹ (DOM) */
+export interface CineInfo {
+  uid: number;
+  key: string;
+  name: string;
+  color: string;
+  boss: boolean;
+  side: 0 | 1;
+  /** giây THẬT của đoạn chờ trước khi tung chiêu */
+  dur: number;
+  low: boolean;
+}
 
 /** cầu nối sang lớp HUD HTML */
 export interface SceneHooks {
@@ -34,6 +51,12 @@ export interface SceneHooks {
   skill?(uid: number, name: string, color: string, ult: boolean): void;
   /** sau mỗi khung vẽ: HUD cập nhật vị trí thanh máu theo camera */
   frame?(): void;
+  /** banner cắt cảnh tuyệt kỹ */
+  cinematic?(c: CineInfo): void;
+  /** dòng nhật ký trận */
+  log?(text: string, side: 0 | 1): void;
+  /** banner thắng/thua */
+  banner?(win: boolean): void;
 }
 
 export interface UnitView {
@@ -45,15 +68,25 @@ export interface UnitView {
   role: Role;
   element: Element;
   boss: boolean;
+  /** trạng thái engine (chỉ đọc) — để vẽ aura đầy năng lượng, khiên, choáng */
+  unit: Unit;
   group: THREE.Group;
   model: HeroModel;
   blob: THREE.Mesh;
   home: THREE.Vector3;
   offset: THREE.Vector3;
+  /** độ giật lùi do trúng đòn / trượt vào cảnh */
+  kick: THREE.Vector3;
   hp: number;
   maxHp: number;
   alive: boolean;
   gone: boolean;
+  aura: THREE.Mesh | null;
+  auraT: number;
+  shieldMesh: THREE.Mesh | null;
+  shieldOn: boolean;
+  stunGroup: THREE.Group | null;
+  stunOn: boolean;
 }
 
 interface Tw {
@@ -66,19 +99,13 @@ interface Later {
   t: number;
   fn(): void;
 }
-interface Temp {
-  t: number;
-  obj: THREE.Object3D;
-  parent: THREE.Object3D;
-  spin: number;
-  mat: THREE.Material;
-}
 
 const easeOut = (k: number) => 1 - (1 - k) * (1 - k);
 const FRONT_DEPTH = 1.5;
 const BACK_DEPTH = 3.1;
 const FRONT_LAT = [-0.95, 0.95];
 const BACK_LAT = [-1.95, 0, 1.95];
+const rnd = Math.random;
 
 export type Layout = 'h' | 'v';
 
@@ -87,27 +114,47 @@ export class BattleScene implements LiveScene {
   readonly camera = new THREE.PerspectiveCamera(34, 1, 0.1, 120);
   readonly views = new Map<number, UnitView>();
   hooks: SceneHooks;
+  /** hệ số tốc độ trận (SPEED_MULT); 0 khi tạm dừng */
   timeScale = 1;
   layout: Layout = 'h';
   canvasW = 1;
   canvasH = 1;
+  /** thời gian giữ (giây cảnh) mà nhóm sự kiện vừa phát yêu cầu — session đọc để chặn engine */
+  groupHold = 0;
 
   private q: QualityState = currentPreset();
+  private low = this.q.level === 'low';
+  private pool: FxPool;
+  private battle: Battle | null = null;
   private tweens: Tw[] = [];
   private laters: Later[] = [];
-  private temps: Temp[] = [];
   private curDelay = 0;
+  private curUlt = false;
+  private dmgIdx = 0;
+  private cineActive = false;
   private shake = 0;
   private time = 0;
+  /* đồng hồ hoạt hình: hit-stop đóng băng, slow-mo giảm tốc (tính bằng giây THẬT) */
+  private freezeT = 0;
+  private slowT = 0;
+  private slowK = 1;
+  /* camera: đẩy vào / zoom nhẹ / nghiêng */
+  private camBase = new THREE.Vector3();
+  private camFocus = new THREE.Vector3();
+  private camLook = new THREE.Vector3();
+  private cinePush = 0;
+  private cineDir = 1;
+  private camKick = 0;
+  private camDirty = false;
   private owned: { dispose(): void }[] = [];
   private ringGeo: THREE.RingGeometry;
   private sphereGeo: THREE.SphereGeometry;
   private pillarGeo: THREE.CylinderGeometry;
-  private torusGeo: THREE.TorusGeometry;
   private camTarget = new THREE.Vector3();
   private tmp = new THREE.Vector3();
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
+  private tmpC = new THREE.Vector3();
   /** cầu nối cho hiệu ứng tuyệt kỹ riêng từng tướng (ult-fx.ts) */
   private fxHost: FxHost = {
     scene: this.scene,
@@ -127,8 +174,8 @@ export class BattleScene implements LiveScene {
     this.ringGeo = new THREE.RingGeometry(0.7, 1, 32).rotateX(-Math.PI / 2);
     this.sphereGeo = new THREE.SphereGeometry(1, 10, 8);
     this.pillarGeo = new THREE.CylinderGeometry(1, 1, 1, 14, 1, true);
-    this.torusGeo = new THREE.TorusGeometry(1, 0.12, 6, 18).rotateX(Math.PI / 2);
-    this.owned.push(this.ringGeo, this.sphereGeo, this.pillarGeo, this.torusGeo);
+    this.owned.push(this.ringGeo, this.sphereGeo, this.pillarGeo);
+    this.pool = new FxPool(this.scene, this.q.level === 'high' ? 140 : this.q.level === 'medium' ? 90 : 48);
     this.buildGround(theme);
   }
 
@@ -206,11 +253,14 @@ export class BattleScene implements LiveScene {
     if (this.layout === 'h') return side === 0 ? Math.PI / 2 : -Math.PI / 2;
     return side === 0 ? Math.PI : 0;
   }
+  private place(v: UnitView) {
+    v.group.position.copy(v.home).add(v.offset).add(v.kick);
+  }
   private applyLayout() {
     for (const v of this.views.values()) {
       v.home.copy(this.homeOf(v.side, v.slot));
       v.model.object3d.rotation.y = this.faceOf(v.side);
-      v.group.position.copy(v.home).add(v.offset);
+      this.place(v);
     }
   }
 
@@ -234,6 +284,7 @@ export class BattleScene implements LiveScene {
     const d = Math.max(W / (th * aspect), H / th) * k;
     this.camera.position.set(this.camTarget.x, this.camTarget.y + Math.sin(el) * d, this.camTarget.z + Math.cos(el) * d);
     this.camera.lookAt(this.camTarget);
+    this.camBase.copy(this.camera.position);
   }
 
   resize(w: number, h: number) {
@@ -243,6 +294,7 @@ export class BattleScene implements LiveScene {
     this.layout = lay;
     this.applyLayout(); // khoảng cách hai phe phụ thuộc tỉ lệ màn hình
     this.fitCamera();
+    this.camDirty = false;
   }
 
   /* ------------------------------ ĐƠN VỊ ------------------------------ */
@@ -255,18 +307,27 @@ export class BattleScene implements LiveScene {
     group.add(blob);
     const v: UnitView = {
       uid: u.uid, key: init.key, side: init.side, slot: init.slot, role: init.role, element: init.element, boss: !!init.boss,
-      group, model, blob, home: this.homeOf(init.side, init.slot), offset: new THREE.Vector3(),
+      unit: u, group, model, blob, home: this.homeOf(init.side, init.slot), offset: new THREE.Vector3(), kick: new THREE.Vector3(),
       hp: u.hp, maxHp: u.maxHp, alive: true, gone: false,
+      aura: null, auraT: 0, shieldMesh: null, shieldOn: false, stunGroup: null, stunOn: false,
     };
     model.object3d.rotation.y = this.faceOf(init.side);
     group.position.copy(v.home);
     this.scene.add(group);
     this.views.set(u.uid, v);
     if (pop) {
+      // trượt vào từ mép phe mình + nảy to dần
+      const sgn = init.side === 0 ? -1 : 1;
+      const away = this.layout === 'h' ? this.tmpA.set(sgn * 3.2, 0, 0) : this.tmpA.set(0, 0, -sgn * 3.2);
+      const ax = away.x;
+      const az = away.z;
       group.scale.setScalar(0.01);
-      this.tween(0.45, (k) => {
+      this.tween(0.5, (k) => {
         const s = k < 0.7 ? easeOut(k / 0.7) * 1.15 : 1.15 - 0.15 * ((k - 0.7) / 0.3);
         group.scale.setScalar(Math.max(0.01, s));
+        const e = 1 - easeOut(k);
+        v.kick.set(ax * e, 0, az * e);
+        this.place(v);
       });
       this.ring(v.home, ELEMENT_COLOR[init.element], 1.6, 0.5);
     }
@@ -277,6 +338,14 @@ export class BattleScene implements LiveScene {
     v.gone = true;
     this.scene.remove(v.group);
     v.model.dispose();
+    this.disposeExtras(v);
+  }
+  private disposeExtras(v: UnitView) {
+    if (v.aura) (v.aura.material as THREE.Material).dispose();
+    if (v.shieldMesh) (v.shieldMesh.material as THREE.Material).dispose();
+    if (v.stunGroup) for (const c of v.stunGroup.children) ((c as THREE.Sprite).material as THREE.Material).dispose();
+    v.aura = v.shieldMesh = null;
+    v.stunGroup = null;
   }
 
   /* ------------------------------ HẸN GIỜ / TWEEN (theo thời gian đã nhân tốc độ) ------------------------------ */
@@ -305,30 +374,13 @@ export class BattleScene implements LiveScene {
       m.dispose();
     });
   }
+  /** vụ nổ hạt (dùng hồ sprite, không tạo mesh/vật liệu mới) */
   private burst(pos: THREE.Vector3, color: number, n = this.q.particles, speed = 2.2) {
-    const m = this.fxMat(color, 1);
-    const parts: { mesh: THREE.Mesh; v: THREE.Vector3 }[] = [];
     for (let i = 0; i < n; i++) {
-      const mesh = new THREE.Mesh(this.sphereGeo, m);
-      mesh.scale.setScalar(0.07 + Math.random() * 0.05);
-      mesh.position.copy(pos);
-      const a = Math.random() * Math.PI * 2;
-      parts.push({ mesh, v: new THREE.Vector3(Math.cos(a) * speed * (0.4 + Math.random() * 0.6), 1.2 + Math.random() * 1.8, Math.sin(a) * speed * (0.4 + Math.random() * 0.6)) });
-      this.scene.add(mesh);
+      const a = rnd() * Math.PI * 2;
+      const sp = speed * (0.4 + rnd() * 0.6);
+      this.pool.spawn('dot', pos.x, pos.y, pos.z, Math.cos(a) * sp, 1.2 + rnd() * 1.8, Math.sin(a) * sp, -7, 0.55, 0.3, 0.08, color);
     }
-    let last = 0;
-    this.tween(0.55, (k) => {
-      const dt = (k - last) * 0.55;
-      last = k;
-      for (const p of parts) {
-        p.v.y -= 7 * dt;
-        p.mesh.position.addScaledVector(p.v, dt);
-      }
-      m.opacity = 1 - k * k;
-    }, () => {
-      for (const p of parts) this.scene.remove(p.mesh);
-      m.dispose();
-    });
   }
   private projectile(from: THREE.Vector3, to: THREE.Vector3, color: number, dur: number, size = 0.16) {
     const m = this.fxMat(color, 1);
@@ -338,6 +390,8 @@ export class BattleScene implements LiveScene {
     this.tween(dur, (k) => {
       mesh.position.lerpVectors(from, to, k);
       mesh.position.y += Math.sin(k * Math.PI) * 0.5;
+      // đuôi sáng nhỏ sau đạn
+      if (!this.low && rnd() < 0.5) this.pool.spawn('dot', mesh.position.x, mesh.position.y, mesh.position.z, 0, 0, 0, 0, 0.22, size * 2.2, 0.02, color, 0, true, 0.8);
     }, () => {
       this.scene.remove(mesh);
       m.dispose();
@@ -356,17 +410,142 @@ export class BattleScene implements LiveScene {
       m.dispose();
     });
   }
-  /** vật gắn tạm lên đơn vị (khiên, sao choáng) */
-  private attach(v: UnitView, obj: THREE.Object3D, mat: THREE.Material, sec: number, spin = 0) {
-    v.group.add(obj);
-    this.temps.push({ t: sec, obj, parent: v.group, spin, mat });
-  }
   private chest(v: UnitView): THREE.Vector3 {
     return v.group.position.clone().setY(v.model.height * 0.55 * v.group.scale.y);
   }
+  private chestTo(v: UnitView, out: THREE.Vector3): THREE.Vector3 {
+    return out.copy(v.group.position).setY(v.model.height * 0.55 * v.group.scale.y);
+  }
+
+  /** chậm hình trong `realSec` giây thật (hệ số k < 1) */
+  slowmo(k: number, realSec: number) {
+    if (this.slowT <= 0 || k < this.slowK) this.slowK = k;
+    this.slowT = Math.max(this.slowT, realSec);
+  }
+  /** đóng băng đồng hồ hoạt hình `sec` giây thật (hit-stop) */
+  hitStop(sec: number) {
+    this.freezeT = Math.max(this.freezeT, sec);
+  }
+
+  /** tia sáng, vệt chém, sao, loé trắng tại điểm trúng */
+  private impact(att: UnitView | undefined, tg: UnitView, n: number, crit: boolean, ult: boolean, first: boolean) {
+    const c = this.chestTo(tg, this.tmpB);
+    const col = ELEMENT_COLOR[att?.element ?? tg.element];
+    const ratio = n / Math.max(1, tg.maxHp);
+    const h = Math.max(0.8, tg.model.height * tg.group.scale.y);
+    const P = this.pool;
+    P.spawn('glow', c.x, c.y, c.z, 0, 0, 0, 0, 0.16, h * 1.2, h * 0.6, 0xffffff, 0, true, 0.95);
+    const sz = (crit ? 1.9 : ult ? 1.5 : 1.2) * (0.8 + Math.min(0.5, ratio));
+    P.spawn('slash', c.x, c.y, c.z, 0, 0, 0, 0, crit ? 0.26 : 0.2, sz * 0.7, sz * 1.4, crit ? 0xfff176 : 0xffffff, 0, true, 1, (rnd() - 0.5) * 1.4 - 0.4);
+    if (crit && !this.low) P.spawn('slash', c.x, c.y, c.z, 0, 0, 0, 0, 0.24, sz * 0.7, sz * 1.3, col, 0, true, 1, (rnd() - 0.5) * 1.4 + 1.1);
+    const ns = crit ? this.q.particles + 3 : this.q.particles;
+    for (let i = 0; i < ns; i++) {
+      const a = rnd() * Math.PI * 2;
+      const sp = 1.6 + rnd() * 2.2;
+      P.spawn('spark', c.x, c.y, c.z, Math.cos(a) * sp, 0.8 + rnd() * 2, Math.sin(a) * sp, -6, 0.38, 0.34, 0.06, i % 2 ? col : 0xffffff, 0, true);
+    }
+    if (crit) {
+      // sao nổ lớn
+      P.spawn('star', c.x, c.y + 0.1, c.z, 0, 0, 0, 0, 0.3, 0.5, 1.9 + Math.min(0.6, ratio), 0xfff176, 2.5, true);
+      const k = this.low ? 2 : 5;
+      for (let i = 0; i < k; i++) {
+        const a = (i / k) * Math.PI * 2 + rnd();
+        P.spawn('star', c.x, c.y, c.z, Math.cos(a) * 2.6, 1.2 + rnd() * 1.4, Math.sin(a) * 2.6, -5, 0.55, 0.36, 0.1, 0xffe14d, 4, true);
+      }
+    } else if (!this.low) {
+      P.spawn('star', c.x, c.y, c.z, (rnd() - 0.5) * 3, 1.6 + rnd(), (rnd() - 0.5) * 3, -5, 0.45, 0.26, 0.08, col, 3, true);
+    }
+    // hit-stop (tuyệt kỹ nhiều mục tiêu: chỉ khựng ở mục tiêu đầu để khỏi giật liên tục)
+    if (first) this.hitStop(ult ? HITSTOP.ult : crit ? HITSTOP.crit : HITSTOP.normal);
+    // rung màn hình theo lượng sát thương
+    const sh = Math.min(ult ? 0.3 : 0.17, 0.035 + ratio * 0.6 + (crit ? 0.06 : 0));
+    this.shake = Math.max(this.shake, sh);
+    if (crit) {
+      this.camKick = Math.max(this.camKick, this.low ? 0.15 : 0.3);
+      this.camFocus.copy(c);
+    }
+    // giật lùi khỏi người đánh
+    if (att && att !== tg) {
+      const dir = this.tmpC.copy(tg.home).sub(att.home);
+      dir.y = 0;
+      if (dir.lengthSq() > 1e-4) {
+        dir.normalize();
+        const amt = Math.min(0.55, 0.1 + ratio * 1.2) * (crit ? 1.4 : 1) * (ult ? 1.3 : 1);
+        const kx = dir.x * amt;
+        const kz = dir.z * amt;
+        this.tween(0.3, (k) => {
+          const e = k < 0.3 ? easeOut(k / 0.3) : 1 - easeOut((k - 0.3) / 0.7);
+          tg.kick.set(kx * e, 0, kz * e);
+          this.place(tg);
+        });
+      }
+    }
+  }
+
+  /** dấu hiệu năng lượng vừa đầy (HUD gọi) */
+  ping(uid: number) {
+    const v = this.views.get(uid);
+    if (!v || v.gone) return;
+    const c = this.chestTo(v, this.tmpB);
+    this.pool.spawn('glow', c.x, c.y, c.z, 0, 0, 0, 0, 0.35, 0.6, v.model.height * 1.6, 0xffe27a, 0, true, 0.9);
+    const n = this.low ? 3 : 7;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      this.pool.spawn('spark', c.x + Math.cos(a) * 0.3, c.y, c.z + Math.sin(a) * 0.3, Math.cos(a) * 1.6, 1.2, Math.sin(a) * 1.6, -2, 0.5, 0.3, 0.05, 0xfff1a0, 0, true);
+    }
+  }
+
+  /* ------------------------------ CẮT CẢNH TUYỆT KỸ ------------------------------ */
+  /** bắt đầu cinematic; trả về giây cảnh cần giữ engine trước khi phát act (0 = không có) */
+  cineStart(ev: Extract<BattleEvent, { k: 'act' }>, boss: boolean): number {
+    const v = this.views.get(ev.u);
+    if (!v) return 0;
+    const sk = skillOf(ev.s);
+    const pre = boss ? PACE.cinePreBoss : this.low ? PACE.cinePreLow : PACE.cinePre;
+    const col = ELEMENT_COLOR[v.element];
+    this.cineActive = true;
+    this.hooks.cinematic?.({
+      uid: v.uid, key: v.key, name: sk.name, color: hex(col), boss, side: v.side, low: this.low,
+      dur: pre / Math.max(0.2, this.timeScale),
+    });
+    this.chestTo(v, this.camFocus);
+    this.cineDir = v.side === 0 ? 1 : -1;
+    const maxP = boss ? 0.5 : 1;
+    this.tween(pre * 0.6, (k) => {
+      this.cinePush = maxP * easeOut(k);
+    });
+    v.model.play('cast');
+    this.ring(v.group.position, col, 1.7, pre);
+    if (boss) this.shake = Math.max(this.shake, 0.16);
+    else if (!this.low) this.later(pre * 0.62, () => this.slowmo(0.35, 0.3)); // chậm nhẹ ngay trước khi chiêu nổ
+    return pre;
+  }
+
+  /** nhát cuối của trận: chậm hẳn + khựng, gọi sau khi đã phát nhóm sự kiện chứa nhát đó */
+  finalBlow() {
+    this.later(this.curDelay + 0.02, () => {
+      this.slowmo(0.22, 0.9);
+      this.hitStop(HITSTOP.final);
+      this.camKick = Math.max(this.camKick, 0.4);
+    });
+  }
+
+  /** bỏ hết hiệu ứng thời gian/camera (khi bỏ qua trận) */
+  resetFx() {
+    this.cinePush = 0;
+    this.camKick = 0;
+    this.slowT = 0;
+    this.freezeT = 0;
+    this.shake = 0;
+  }
 
   /* ------------------------------ PHÁT LẠI SỰ KIỆN ------------------------------ */
+  private nm(uid: number): string {
+    return this.views.get(uid)?.unit.init.name ?? '?';
+  }
+
   handle(ev: BattleEvent, battle: Battle) {
+    this.battle = battle;
     switch (ev.k) {
       case 'wave': {
         for (const uid of ev.units) {
@@ -375,6 +554,7 @@ export class BattleScene implements LiveScene {
         }
         this.curDelay = 0;
         this.hooks.wave(ev.n);
+        this.groupHold = Math.max(this.groupHold, PACE.waveHold);
         break;
       }
       case 'act': {
@@ -384,9 +564,13 @@ export class BattleScene implements LiveScene {
         const tgs = ev.tg.map((id) => this.views.get(id)).filter((x): x is UnitView => !!x);
         const col = ELEMENT_COLOR[v.element];
         const first = tgs[0];
-        if (sk.kind !== 'basic') this.hooks.skill?.(v.uid, sk.name, `#${col.toString(16).padStart(6, '0')}`, sk.kind === 'ult');
+        this.dmgIdx = 0;
+        this.curUlt = sk.kind === 'ult';
+        if (sk.kind !== 'basic') this.hooks.log?.(sk.kind === 'ult' ? `${v.unit.init.name} tung tuyệt kỹ ${sk.name}!` : `${v.unit.init.name} dùng ${sk.name}`, v.side);
+        if (sk.kind !== 'basic' && !(sk.kind === 'ult' && this.cineActive)) this.hooks.skill?.(v.uid, sk.name, hex(col), sk.kind === 'ult');
         const ranged = v.role === 'mage' || v.role === 'archer' || sk.target === 'enemyAll' || sk.type !== 'dmg';
         if (sk.kind === 'ult') {
+          this.cineActive = false;
           v.model.play('cast');
           this.ring(v.group.position, col, 2.4, 0.7);
           const custom = playUlt({
@@ -395,10 +579,18 @@ export class BattleScene implements LiveScene {
           });
           if (!custom) this.pillar(v.group.position, col, 0.8);
           this.shake = Math.max(this.shake, 0.25);
-          this.hooks.flash(`#${col.toString(16).padStart(6, '0')}`);
+          this.hooks.flash(hex(col));
           this.hooks.sfx('ult');
           if (sk.type === 'dmg' && !custom) for (const t of tgs) this.projectile(this.chest(v).setY(2.4), this.chest(t), col, 0.4, 0.28);
-          this.curDelay = 0.5;
+          this.curDelay = PACE.ultHit;
+          this.groupHold = Math.max(this.groupHold, PACE.ultHold);
+          // nhả camera về sau khi chiêu trúng
+          this.later(PACE.ultHit + 0.25, () => {
+            const from = this.cinePush;
+            this.tween(0.5, (k) => {
+              this.cinePush = from * (1 - easeOut(k));
+            });
+          });
         } else if (sk.type === 'dmg' && !ranged && first) {
           const dir = first.home.clone().sub(v.home);
           const dist = dir.length();
@@ -408,64 +600,85 @@ export class BattleScene implements LiveScene {
           // gồng lùi ra sau (anticipation) -> lao tới quá đà -> trượt về chỗ cũ
           const back = this.tmpA.copy(dir).multiplyScalar(-0.28).clone();
           const over = to.clone().multiplyScalar(1.04);
-          this.tween(0.18, (k) => {
+          this.tween(0.12, (k) => {
             v.offset.copy(back).multiplyScalar(easeOut(k));
-            v.group.position.copy(v.home).add(v.offset);
+            this.place(v);
           });
-          this.later(0.18, () =>
-            this.tween(0.1, (k) => {
+          this.later(0.12, () =>
+            this.tween(0.08, (k) => {
               v.offset.lerpVectors(back, over, k * k);
-              v.group.position.copy(v.home).add(v.offset);
+              this.place(v);
             }),
           );
-          this.later(0.42, () =>
+          this.later(0.3, () =>
             this.tween(0.24, (k) => {
               v.offset.copy(over).multiplyScalar(1 - easeOut(k));
-              v.group.position.copy(v.home).add(v.offset);
+              this.place(v);
             }),
           );
-          this.curDelay = 0.3;
+          this.curDelay = PACE.meleeHit;
+          this.groupHold = Math.max(this.groupHold, PACE.meleeHold);
         } else if (sk.type === 'dmg') {
           v.model.play(v.role === 'archer' ? 'attack' : 'cast');
           const from = this.chest(v).setY(v.model.height * 0.8);
           for (const t of tgs) this.projectile(from, this.chest(t), col, 0.28);
-          this.curDelay = 0.38;
+          this.curDelay = PACE.rangedHit;
+          this.groupHold = Math.max(this.groupHold, PACE.rangedHold);
         } else {
           v.model.play('cast');
           const good = sk.type === 'heal' ? 0x5ee08a : 0x7fd0ff;
           for (const t of tgs) this.later(0.35, () => this.ring(t.group.position, good, 1.3, 0.55));
           this.ring(v.group.position, good, 1.1, 0.5);
-          this.curDelay = 0.4;
+          this.curDelay = PACE.supportHit;
+          this.groupHold = Math.max(this.groupHold, PACE.supportHold);
         }
         break;
       }
       case 'dmg': {
         const tg = this.views.get(ev.tg);
         if (!tg) break;
-        const d = this.curDelay;
+        const idx = this.dmgIdx++;
+        const ult = this.curUlt;
+        // số sát thương lần lượt rơi lên từng mục tiêu
+        const d = this.curDelay + idx * 0.07;
+        this.groupHold = Math.max(this.groupHold, d + 0.25);
         this.later(d, () => {
           if (tg.gone) return;
           tg.hp = ev.hp;
           tg.model.play('hit');
-          const col = ELEMENT_COLOR[this.views.get(ev.u)?.element ?? tg.element];
-          this.burst(this.chest(tg), ev.crit ? 0xfff176 : col, ev.crit ? this.q.particles + 3 : this.q.particles);
+          const att = this.views.get(ev.u);
+          this.impact(att, tg, ev.n, ev.crit, ult, idx === 0);
           this.hooks.number(ev.tg, String(ev.n), ev.crit ? 'crit' : 'dmg', { adv: ev.adv });
           this.hooks.hp(ev.tg, ev.hp, tg.maxHp);
           this.hooks.sfx(ev.crit ? 'crit' : 'hit');
-          if (ev.crit) this.shake = Math.max(this.shake, 0.12);
+          this.hooks.log?.(
+            `${att?.unit.init.name ?? '?'} gây ${ev.n} sát thương lên ${tg.unit.init.name}${ev.adv > 0 ? ' (khắc hệ)' : ev.adv < 0 ? ' (bị kháng)' : ''}${ev.crit ? ' · CHÍ MẠNG' : ''}`,
+            att?.side ?? 0,
+          );
         });
         break;
       }
       case 'heal': {
         const tg = this.views.get(ev.tg);
         if (!tg) break;
-        this.later(this.curDelay, () => {
+        const idx = this.dmgIdx++;
+        const d = this.curDelay + idx * 0.07;
+        this.groupHold = Math.max(this.groupHold, d + 0.3);
+        this.later(d, () => {
           if (tg.gone) return;
           tg.hp = ev.hp;
-          this.burst(this.chest(tg), 0x5ee08a, this.q.particles, 0.8);
+          const c = this.chestTo(tg, this.tmpB);
+          const n = this.low ? 3 : 6;
+          for (let i = 0; i < n; i++) {
+            const a = rnd() * Math.PI * 2;
+            const r = 0.25 + rnd() * 0.35;
+            this.pool.spawn(i % 2 ? 'plus' : 'spark', c.x + Math.cos(a) * r, c.y - 0.2 + rnd() * 0.3, c.z + Math.sin(a) * r, 0, 0.9 + rnd() * 0.8, 0, 0.4, 0.9, 0.3, 0.2, 0x7dffa8, 0, true);
+          }
+          this.pool.spawn('glow', c.x, c.y, c.z, 0, 0, 0, 0, 0.4, 0.5, tg.model.height * 1.5, 0x5ee08a, 0, true, 0.7);
           this.hooks.number(ev.tg, `+${ev.n}`, 'heal');
           this.hooks.hp(ev.tg, ev.hp, tg.maxHp);
           this.hooks.sfx('heal');
+          this.hooks.log?.(`${this.nm(ev.u)} hồi ${ev.n} máu cho ${tg.unit.init.name}`, tg.side);
         });
         break;
       }
@@ -476,35 +689,58 @@ export class BattleScene implements LiveScene {
           if (tg.gone) return;
           const l = EFFECT_LABEL[ev.type];
           this.hooks.number(ev.tg, l.text, 'text', { color: l.color });
-          const sec = ev.dur / 20;
+          const c = this.chestTo(tg, this.tmpB);
           if (ev.type === 'shield') {
-            const m = this.fxMat(0x7fe3ff, 0.28);
-            const bub = new THREE.Mesh(this.sphereGeo, m);
-            bub.scale.setScalar(0.8 * tg.model.height);
-            bub.position.y = tg.model.height * 0.5;
-            this.attach(tg, bub, m, sec);
+            tg.shieldOn = true;
+            this.ring(tg.group.position, 0x7fe3ff, 1.4, 0.5);
           } else if (ev.type === 'stun') {
-            const m = this.fxMat(0xffd23f, 0.95);
-            const st = new THREE.Mesh(this.torusGeo, m);
-            st.scale.setScalar(0.45);
-            st.position.y = tg.model.height + 0.1;
-            this.attach(tg, st, m, sec, 6);
+            tg.stunOn = true;
+            this.pool.spawn('star', c.x, tg.model.height + 0.3, c.z, 0, 0.6, 0, 0, 0.5, 0.2, 0.9, 0xffd23f, 3, true);
+          } else {
+            // mũi tên lên (buff) / xuống (debuff) bằng tia sáng
+            const up = ev.type !== 'defDown';
+            const colr = ev.type === 'atkUp' ? 0xff9a3d : ev.type === 'defUp' ? 0x4aa3ff : ev.type === 'spdUp' ? 0x5ee08a : 0xc77dff;
+            const k = this.low ? 2 : 4;
+            for (let i = 0; i < k; i++) {
+              const a = (i / k) * Math.PI * 2;
+              this.pool.spawn('spark', c.x + Math.cos(a) * 0.4, c.y + (up ? -0.3 : 0.5), c.z + Math.sin(a) * 0.4, 0, up ? 1.5 : -1.5, 0, 0, 0.6, 0.3, 0.05, colr, 0, true);
+            }
+            this.ring(tg.group.position, colr, 1.1, 0.45);
           }
+          this.hooks.log?.(`${tg.unit.init.name}: ${l.text.replace(/[+\-!]/g, '').trim()}`, tg.side);
         });
+        this.groupHold = Math.max(this.groupHold, this.curDelay + 0.2);
         break;
       }
       case 'die': {
         const v = this.views.get(ev.u);
         if (!v) break;
-        const d = this.curDelay + 0.05;
+        const d = this.curDelay + 0.05 + this.dmgIdx * 0.04;
         v.alive = false;
+        this.groupHold = Math.max(this.groupHold, d + PACE.dieExtra);
         this.later(d, () => {
           if (v.gone) return;
           v.hp = 0;
           v.model.play('die');
           this.hooks.died(v.uid);
+          v.shieldOn = v.stunOn = false;
           this.burst(this.chest(v), 0xffffff, this.q.particles, 1.4);
-          // đơn vị ngã rồi biến mất; hồn nhỏ bay lên
+          // tan biến: loé trắng to + vòng + sao + hồn bay lên
+          const h = Math.max(1, v.model.height * v.group.scale.y);
+          const p = v.group.position;
+          this.pool.spawn('glow', p.x, h * 0.5, p.z, 0, 0, 0, 0, 0.42, h * 0.8, h * (v.boss ? 3.4 : 2.6), 0xffffff, 0, true, 0.9);
+          this.ring(p, 0xffffff, v.boss ? 3.4 : 2, 0.55);
+          const ns = this.low ? 3 : 8;
+          const palette = [0xffe14d, 0xffffff, 0xff9ad5, 0x7fd9ff];
+          for (let i = 0; i < ns; i++) {
+            const a = (i / ns) * Math.PI * 2 + rnd();
+            this.pool.spawn('star', p.x, h * 0.5, p.z, Math.cos(a) * 2.2, 2 + rnd() * 2, Math.sin(a) * 2.2, -5.5, 0.9, 0.4, 0.1, palette[i % 4], 4, true);
+          }
+          this.pool.spawn('soul', p.x, h * 0.6, p.z, 0, 1.3, 0, 0.2, 1.4, 0.5, 0.95, 0xd8ecff, 0, false, 0.9);
+          this.slowmo(0.4, 0.45);
+          this.shake = Math.max(this.shake, v.boss ? 0.3 : 0.12);
+          this.hooks.log?.(`${v.unit.init.name} gục ngã`, v.side);
+          // đơn vị ngã rồi biến mất
           this.later(1.5, () => {
             if (v.side === 1) this.removeView(v);
             else v.group.visible = false;
@@ -513,7 +749,8 @@ export class BattleScene implements LiveScene {
         break;
       }
       case 'end': {
-        this.later(0.4, () => {
+        this.hooks.banner?.(ev.win);
+        this.later(0.2, () => {
           if (!ev.win) {
             for (const v of this.views.values()) if (v.side === 1 && v.alive) v.model.play('win');
             return;
@@ -524,6 +761,13 @@ export class BattleScene implements LiveScene {
             if (v.side !== 0 || !v.alive) continue;
             v.model.play('win');
             this.burst(this.tmpB.copy(v.group.position).setY(v.model.height + 0.3), confetti[ci++ % 4], this.q.particles, 1.6);
+          }
+          // mưa giấy hoa từ trên xuống
+          const n = this.low ? 14 : 34;
+          for (let i = 0; i < n; i++) {
+            this.later(i * 0.035, () => {
+              this.pool.spawn('star', (rnd() - 0.5) * 8, 5.5, (rnd() - 0.5) * 4, (rnd() - 0.5) * 0.8, -1.2 - rnd(), 0, -0.6, 2.4, 0.3, 0.2, confetti[(rnd() * 4) | 0], 3 + rnd() * 3, false);
+            });
           }
         });
         break;
@@ -542,13 +786,93 @@ export class BattleScene implements LiveScene {
   }
 
   /* ------------------------------ VÒNG LẶP ------------------------------ */
-  /** phiên trận đánh đẩy logic theo dt thực mỗi khung hình */
-  onTick: ((dt: number) => void) | null = null;
+  /** phiên trận đánh đẩy logic theo dt thực mỗi khung; sdt = dt đã nhân tốc độ / slow-mo / hit-stop (đồng hồ trình diễn) */
+  onTick: ((dt: number, sdt: number) => void) | null = null;
+
+  /** hào quang đầy năng lượng, khiên, sao choáng — đọc trạng thái engine (chỉ đọc) */
+  private updateView(v: UnitView, sdt: number, dt: number) {
+    const u = v.unit;
+    const vis = v.alive && v.group.visible;
+    // aura đầy năng lượng
+    const full = vis && u.energy >= ENERGY_MAX;
+    if (full) {
+      if (!v.aura) {
+        const m = this.fxMat(v.side === 0 ? ELEMENT_COLOR[v.element] : 0xff5050, 0.6);
+        m.blending = THREE.AdditiveBlending;
+        v.aura = new THREE.Mesh(this.ringGeo, m);
+        v.aura.position.y = 0.06;
+        v.group.add(v.aura);
+      }
+      const base = v.boss ? 2.1 : 1.15;
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 6);
+      v.aura.visible = true;
+      v.aura.scale.setScalar(base * (0.9 + 0.22 * pulse));
+      (v.aura.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.45 * pulse;
+      v.auraT -= dt;
+      if (v.auraT <= 0 && this.pool.active < 60) {
+        v.auraT = this.low ? 0.55 : 0.26;
+        const a = rnd() * Math.PI * 2;
+        const r = base * 0.8;
+        const p = v.group.position;
+        this.pool.spawn('spark', p.x + Math.cos(a) * r, 0.1, p.z + Math.sin(a) * r, 0, 1.5 + rnd(), 0, 0.5, 0.7, 0.22, 0.04, v.side === 0 ? 0xffe27a : 0xff8a8a, 0, true, 0.9);
+      }
+    } else if (v.aura) v.aura.visible = false;
+    // khiên: còn thì bong bóng còn (theo trạng thái engine)
+    if (u.shield <= 0) v.shieldOn = false;
+    const sh = vis && v.shieldOn;
+    if (sh && !v.shieldMesh) {
+      const m = this.fxMat(0x7fe3ff, 0.26);
+      v.shieldMesh = new THREE.Mesh(this.sphereGeo, m);
+      v.shieldMesh.position.y = v.model.height * 0.5;
+      v.group.add(v.shieldMesh);
+    }
+    if (v.shieldMesh) {
+      v.shieldMesh.visible = sh;
+      if (sh) {
+        const s = 0.85 * v.model.height * (1 + 0.04 * Math.sin(this.time * 5));
+        v.shieldMesh.scale.setScalar(s);
+        (v.shieldMesh.material as THREE.MeshBasicMaterial).opacity = 0.22 + 0.08 * Math.sin(this.time * 5);
+      }
+    }
+    // choáng: sao quay quanh đầu
+    if (this.battle && !this.battle.stunned(u)) v.stunOn = false;
+    const st = vis && v.stunOn;
+    if (st && !v.stunGroup) {
+      const g = new THREE.Group();
+      for (let i = 0; i < 3; i++) {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: fxTex('star'), color: 0xffd23f, transparent: true, depthWrite: false }));
+        const a = (i / 3) * Math.PI * 2;
+        sp.position.set(Math.cos(a) * 0.42, 0, Math.sin(a) * 0.42);
+        sp.scale.setScalar(0.3);
+        g.add(sp);
+      }
+      g.position.y = v.model.height + 0.12;
+      v.group.add(g);
+      v.stunGroup = g;
+    }
+    if (v.stunGroup) {
+      v.stunGroup.visible = st;
+      if (st) {
+        v.stunGroup.rotation.y += 4.5 * sdt;
+        v.stunGroup.position.y = v.model.height + 0.12 + 0.04 * Math.sin(this.time * 7);
+      }
+    }
+  }
 
   update(dt: number, t: number) {
-    this.onTick?.(dt);
-    const sdt = dt * this.timeScale;
     this.time = t;
+    // đồng hồ trình diễn: hit-stop đóng băng, slow-mo giảm tốc
+    let k = this.timeScale;
+    if (this.slowT > 0) {
+      this.slowT -= dt;
+      k *= this.slowK;
+    }
+    let sdt = dt * k;
+    if (this.freezeT > 0) {
+      this.freezeT -= dt;
+      sdt = 0;
+    }
+    this.onTick?.(dt, sdt);
     for (let i = this.laters.length - 1; i >= 0; i--) {
       const l = this.laters[i];
       l.t -= sdt;
@@ -560,45 +884,57 @@ export class BattleScene implements LiveScene {
     for (let i = this.tweens.length - 1; i >= 0; i--) {
       const w = this.tweens[i];
       w.t += sdt;
-      const k = Math.min(1, w.t / w.dur);
-      w.fn(k);
-      if (k >= 1) {
+      const kk = Math.min(1, w.t / w.dur);
+      w.fn(kk);
+      if (kk >= 1) {
         this.tweens.splice(i, 1);
         w.done?.();
       }
     }
-    for (let i = this.temps.length - 1; i >= 0; i--) {
-      const p = this.temps[i];
-      p.t -= sdt;
-      p.obj.rotation.y += p.spin * sdt;
-      if (p.t <= 0) {
-        p.parent.remove(p.obj);
-        p.mat.dispose();
-        this.temps.splice(i, 1);
-      }
+    for (const v of this.views.values()) {
+      if (v.gone) continue;
+      v.model.update(sdt);
+      this.updateView(v, sdt, dt);
     }
-    for (const v of this.views.values()) if (!v.gone) v.model.update(sdt);
-    // rung màn hình nhẹ
-    if (this.shake > 0) {
-      this.shake = Math.max(0, this.shake - dt * 0.8);
-      const s = this.shake * 0.25;
-      this.camera.position.x += (Math.random() - 0.5) * s;
-      this.camera.position.y += (Math.random() - 0.5) * s;
-      this.shaken = true;
-    }
+    this.pool.update(sdt);
+    this.updateCamera(dt);
   }
-  private shaken = false;
 
-  /** cho camera về đúng vị trí sau rung, rồi báo HUD cập nhật vị trí */
-  afterRender() {
-    if (this.shaken) {
-      this.shaken = false;
-      this.fitCamera();
+  /** camera: đẩy vào / zoom nhẹ khi crit / nghiêng khi cinematic / rung; chỉ ghi khi đang có hiệu ứng */
+  private updateCamera(dt: number) {
+    this.camKick = Math.max(0, this.camKick - dt * 1.4);
+    let sh = 0;
+    if (this.shake > 0) {
+      this.shake = Math.max(0, this.shake - dt * 0.9);
+      sh = this.shake * 0.45;
     }
+    const p = Math.min(1, this.cinePush + this.camKick);
+    const roll = this.cinePush * 0.05 * this.cineDir;
+    if (p < 0.002 && sh <= 0 && Math.abs(roll) < 1e-4) {
+      if (this.camDirty) {
+        this.camDirty = false;
+        this.fitCamera();
+      }
+      return;
+    }
+    this.camDirty = true;
+    const cam = this.camera;
+    cam.position.lerpVectors(this.camBase, this.camFocus, p * 0.28);
+    this.camLook.lerpVectors(this.camTarget, this.camFocus, p * 0.55);
+    if (sh > 0) {
+      cam.position.x += (rnd() - 0.5) * sh;
+      cam.position.y += (rnd() - 0.5) * sh;
+    }
+    cam.lookAt(this.camLook);
+    if (roll) cam.rotateZ(roll);
+  }
+
+  /** HUD cập nhật vị trí theo camera đang vẽ (kể cả rung / đẩy vào) */
+  afterRender() {
     this.hooks.frame?.();
   }
 
-  /** chạy các hiệu ứng còn lại tới hết (dùng khi kết thúc) */
+  /** còn hiệu ứng đang chạy (dùng khi kết thúc) */
   get busy(): boolean {
     return this.tweens.length > 0 || this.laters.length > 0;
   }
@@ -606,10 +942,13 @@ export class BattleScene implements LiveScene {
   dispose() {
     this.tweens.length = 0;
     this.laters.length = 0;
-    for (const t of this.temps) t.mat.dispose();
-    this.temps.length = 0;
-    for (const v of this.views.values()) if (!v.gone) v.model.dispose();
+    for (const v of this.views.values()) {
+      if (!v.gone) v.model.dispose();
+      this.disposeExtras(v);
+    }
     this.views.clear();
+    this.pool.dispose();
+    disposeFxTextures();
     for (const o of this.owned) o.dispose();
   }
 }

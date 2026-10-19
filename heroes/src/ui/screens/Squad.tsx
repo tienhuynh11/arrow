@@ -26,7 +26,7 @@ export function Squad() {
   const setSlots = (s: string[]) => setDrafts((d) => d.map((x, i) => (i === tab ? s : x)));
   const ops = useSquadOps(slots, setSlots, { initialSel: null });
 
-  const back = returnTo.value === 'tower' ? { id: 'tower', name: 'Tháp thử thách' } : returnTo.value ? stageOf(returnTo.value) : undefined;
+  const back = returnTo.value === 'tower' ? { id: 'tower', name: 'Tháp thử thách' } : returnTo.value === 'arena' ? { id: 'arena', name: 'Đấu trường' } : returnTo.value ? stageOf(returnTo.value) : undefined;
 
   const save = () =>
     run(async () => {
@@ -41,7 +41,7 @@ export function Squad() {
       if (dirty || !isActive) await api.setSquad(tab, slots, true);
       const id = back!.id;
       returnTo.value = null;
-      go(id === 'tower' ? { n: 'tower' } : { n: 'campaign', stage: id });
+      go(id === 'tower' ? { n: 'tower' } : id === 'arena' ? { n: 'arena' } : { n: 'campaign', stage: id });
     });
 
   const entries = useMemo(
@@ -53,7 +53,7 @@ export function Squad() {
 
   return (
     <div class="squad">
-      <section class="sq-board panel">
+      <section class="sq-board panel" data-tut="squad-board">
         {back && (
           <Btn kind="primary" big class="sq-return" busy={busy} onClick={resume}>
             <Icon n="battle" size={26} /> Chiến tiếp → {back.name}

@@ -19,8 +19,13 @@ import { BattleScreen } from './screens/Battle';
 import { Result } from './screens/Result';
 import { Tower } from './screens/Tower';
 import { TowerResult } from './screens/TowerResult';
+import { Arena } from './screens/Arena';
+import { ArenaResult } from './screens/ArenaResult';
 import { Quests } from './screens/Quests';
 import { Shop } from './screens/Shop';
+import { InstallHint, UpdateToast } from '../pwa';
+import { tutRestart } from '../tutorial-state';
+import { TutorialHost } from './tutorial';
 
 const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
   { n: 'hub', label: 'Thành', icon: 'home' },
@@ -32,14 +37,14 @@ const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
 
 function Nav() {
   const n = screen.value.n;
-  // 3 màn Hoạt động (Tháp/Nhiệm vụ/Cửa hàng) nằm dưới tab Thành
-  const cur = n === 'tower' || n === 'quests' || n === 'shop' ? 'hub' : n;
+  // 3 màn Hoạt động (Tháp/Đấu trường/Nhiệm vụ/Cửa hàng) nằm dưới tab Thành
+  const cur = n === 'tower' || n === 'arena' || n === 'quests' || n === 'shop' ? 'hub' : n;
   const tickets = me.value?.wallet.tickets ?? 0;
   const act = me.value ? hubBadges(me.value).total : 0;
   return (
     <nav class="nav" aria-label="Điều hướng">
       {TABS.map((t) => (
-        <button type="button" key={t.n} class={`tab${cur === t.n ? ' on' : ''}`} onClick={() => { if (t.n !== 'squad') returnTo.value = null; go({ n: t.n } as Screen); }} aria-label={t.label}>
+        <button type="button" key={t.n} class={`tab${cur === t.n ? ' on' : ''}`} onClick={() => { if (t.n !== 'squad') returnTo.value = null; go({ n: t.n } as Screen); }} aria-label={t.label} data-tut={`nav-${t.n}`}>
           <span class="tab-ic">
             <Icon n={t.icon} size={26} />
             {t.n === 'summon' && tickets > 0 && <i class="dot" />}
@@ -78,6 +83,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <i />
         </button>
       </div>
+      <div class="set-row">
+        <b>Hướng dẫn</b>
+        <Btn kind="blue" small onClick={() => { tutRestart(); onClose(); }}>Xem lại hướng dẫn</Btn>
+      </div>
+      <InstallHint />
       <Btn kind="red" onClick={() => void api.logout().then(() => go({ n: 'hub' }))}>
         <Icon n="logout" size={18} /> Đăng xuất
       </Btn>
@@ -127,10 +137,12 @@ function Body() {
     case 'squad': return <Squad />;
     case 'summon': return <Summon />;
     case 'campaign': return <Campaign initial={s.stage} />;
-    case 'battle': return <BattleScreen stage={s.stage} />;
+    case 'battle': return <BattleScreen stage={s.stage} opp={s.opp} />;
     case 'result': return <Result stage={s.stage} res={s.res} />;
     case 'tower': return <Tower />;
     case 'towerResult': return <TowerResult res={s.res} />;
+    case 'arena': return <Arena />;
+    case 'arenaResult': return <ArenaResult res={s.res} />;
     case 'quests': return <Quests />;
     case 'shop': return <Shop />;
   }
@@ -142,11 +154,12 @@ export function App() {
       <>
         <Login />
         <Toasts />
+        <UpdateToast />
       </>
     );
   }
   const s = screen.value;
-  const full = s.n === 'battle' || s.n === 'result' || s.n === 'towerResult';
+  const full = s.n === 'battle' || s.n === 'result' || s.n === 'towerResult' || s.n === 'arenaResult';
   return (
     <div class={`app${full ? ' full' : ''}`}>
       {!full && <Nav />}
@@ -157,6 +170,8 @@ export function App() {
         </div>
       </main>
       <Toasts />
+      <UpdateToast />
+      <TutorialHost />
     </div>
   );
 }
