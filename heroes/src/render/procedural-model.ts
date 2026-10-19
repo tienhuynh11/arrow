@@ -3,6 +3,7 @@
 // Mặt = một lớp vỏ cầu mỏng dán texture atlas biểu cảm (face-atlas.ts), đổi ô khi đổi trạng thái / chớp mắt.
 import * as THREE from 'three';
 import { FACE, faceTexture, setFaceCell } from './face-atlas';
+import { currentPreset } from './quality';
 import type { HeroAnim, HeroModel, HeroPalette } from './hero-model';
 
 export interface ProcLook {
@@ -18,30 +19,62 @@ export interface ProcLook {
   extra?: string[];
 }
 
-/* ------------------------------ THAM SỐ CHỈNH ĐƯỢC (giây / đơn vị thế giới) ------------------------------ */
+/* ------------------------------ THAM SỐ CHỈNH ĐƯỢC (giây / rad / đơn vị thế giới) ------------------------------ */
 export const ANIM = {
-  idleSpeed: 3.2, // tốc độ nhún thở
-  idleBob: 0.03, // độ nảy lên
+  /* --- lò xo (semi-implicit Euler): k = độ cứng, c = giảm chấn; zeta = c / (2*sqrt(k)) < 1 thì rung quá đà --- */
+  bodyK: 200, // thân mặc định (phục hồi sau đòn / hạ cánh): zeta ~0.42, rung 2-3 nhịp rồi tắt
+  bodyC: 12,
+  armK: 160, // tay/vũ khí mặc định
+  armC: 9,
+  maxDt: 0.05, // kẹp dt (dt đã nhân tốc độ trận) để lò xo không nổ
+  /* --- nghỉ / thế sẵn sàng --- */
+  idleSpeed: 3.2, // nhịp thở
+  idleBob: 0.03,
   idleSquash: 0.04,
-  swayZ: 0.035, // lắc thân nhẹ
-  blinkMin: 1.6, // khoảng cách giữa hai lần chớp
+  swayZ: 0.035,
+  readyBounce: 0.05, // nhún chân thế sẵn sàng (độ cao)
+  readyRate: 6.5, // tần số nhún (rad/s)
+  readyShuffle: 0.3, // biên độ đổi chân
+  blinkMin: 1.6,
   blinkMax: 4.6,
   blinkTime: 0.13,
   winkChance: 0.16,
-  // tấn công: gồng (anticipation) -> vung (overshoot) -> lắc tắt dần
-  atkWind: 0.12,
+  /* --- chạy --- */
+  runStepsMin: 7, // bước/giây khi chạy chậm
+  runStepsMax: 9, // bước/giây khi nước rút (tỉ lệ tốc độ hiển thị)
+  runHop: 0.15, // độ cao nảy mỗi bước
+  runLean: 0.4, // ngả người ra trước (rad ~23 độ)
+  runLegSwing: 0.28, // chân tiến/lùi
+  legLift: 0.16, // chân nhấc
+  runArm: 2.1, // biên độ vung tay
+  landSquash: 2.4, // xung vận tốc bẹp khi chạm đất
+  startCrouch: 0.1, // gồng lấy đà trước khi bứt
+  skidTime: 0.3, // phanh trượt
+  /* --- đòn thường: gồng -> vung -> hồi lò xo --- */
+  atkWind: 0.1,
   atkStrike: 0.08,
-  atkSettle: 0.28,
-  // niệm phép: ngồi thụt -> bật lên -> giơ tay rung -> hạ
+  atkSettle: 0.2,
+  bowDraw: 0.16, // thời gian kéo cung
+  strikeK: 900, // lò xo lúc vung (nhanh, rung quá đà)
+  strikeC: 24,
+  recoverK: 170, // lò xo lúc hồi
+  recoverC: 10,
+  /* --- niệm phép: tụ lực -> bật nhảy giơ tay -> giữ rung -> hạ --- */
   castCrouch: 0.16,
-  castSpring: 0.2,
+  castSpring: 0.18,
   castHold: 0.2,
   castSettle: 0.24,
-  hitTime: 0.38,
-  winHop: 5.5, // tần số nhảy mừng
-  dieStretch: 0.12,
-  dieTumble: 0.48,
-  dieBounce: 0.35,
+  castGlow: 0.22, // độ sáng toàn thân khi tụ phép (0 = tắt)
+  /* --- trúng đòn --- */
+  hitTime: 0.3, // thời gian mặt đau
+  hitFlash: 0.07, // thời gian nháy trắng
+  hitKick: 1, // nhân cường độ xung hất (z, ngả, bẹp, lắc)
+  /* --- thắng / chết --- */
+  winHop: 5.5,
+  dieHit: 0.08,
+  dieFly: 0.42,
+  dieBounce1: 0.26,
+  dieBounce2: 0.18,
   dieFadeStart: 0.95,
   dieFadeEnd: 1.4,
 };
@@ -612,17 +645,32 @@ export function monsterLook(key: string): ProcLook {
 }
 
 /* ------------------------------ MÔ HÌNH + HOẠT HÌNH ------------------------------ */
+/** lò xo 1 bậc tự do (x, v); ngủ khi đã yên */
+class Spr {
+  x: number;
+  v = 0;
+  constructor(x = 0) {
+    this.x = x;
+  }
+}
+/** semi-implicit Euler, chia nhỏ khi dt lớn; không cấp phát */
+function spStep(s: Spr, t: number, k: number, c: number, dt: number) {
+  if (Math.abs(t - s.x) < 1e-4 && Math.abs(s.v) < 2e-3) {
+    s.x = t;
+    s.v = 0;
+    return;
+  }
+  const n = dt > 0.02 ? 2 : 1;
+  const h = dt / n;
+  for (let i = 0; i < n; i++) {
+    s.v += (k * (t - s.x) - c * s.v) * h;
+    s.x += s.v * h;
+  }
+}
+
 const ease = (k: number) => 1 - (1 - k) * (1 - k);
-/** ra quá đà rồi về (overshoot) */
-const back = (k: number) => {
-  const s = 1.9;
-  const t = k - 1;
-  return 1 + t * t * ((s + 1) * t + s);
-};
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 const clamp01 = (k: number) => Math.max(0, Math.min(1, k));
-/** dao động tắt dần, k: 0..1 */
-const damp = (k: number, freq: number) => Math.cos(k * freq) * (1 - k) * (1 - k);
 
 /** móc chạy/đi bộ: 0 = đứng, 1 = chạy hết tốc (cảnh gọi mỗi khung; mô hình khác như glTF có thể bỏ qua) */
 export interface MoveHook {
@@ -644,26 +692,41 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
   const r = build(look, ctx);
   const own = [mats.body, mats.accent, mats.skin, mats.hair];
   const phase = Math.random() * 6.28;
+  const spd = 0.85 + (phase / 6.28) * 0.3; // mỗi mô hình một nhịp
   const { rig, head, armL, armR, legL, legR, extras } = r;
+  /* chất lượng thấp: bỏ chuyển động phụ (đuôi/tóc/cape theo quán tính, lắc đầu, đổi chân, múa vũ khí) */
+  const rich = currentPreset().level !== 'low';
+  /* họ vũ khí quyết định kiểu đòn: chém / đâm gậy / thúc khiên / kéo cung */
+  const has = (n: string) => look.props.includes(n);
+  const fam: 'slash' | 'thrust' | 'bash' | 'bow' =
+    has('bow') || has('bigbow') ? 'bow'
+      : has('staff') || has('ruyi') || has('sunstar') ? 'thrust'
+        : (has('shield') || has('bigshield')) && !has('sword') && !has('greatsword') && !has('dagger') ? 'bash'
+          : 'slash';
 
   let time = Math.random() * 3; // lệch pha để cả đội không nhún cùng nhịp
   let base: 'idle' | 'win' | 'die' = 'idle';
-  let act: { kind: 'attack' | 'cast'; t: number } | null = null;
+  let act: { kind: 'attack' | 'cast'; t: number; ph: number } | null = null;
   let hitT = -1;
   let moveK = 0;
   let moveTo = 0;
   let readyTo = 0;
   let readyK = 0;
-  /* chạy: pha bước, giờ phanh trượt, giờ gồng lấy đà, bước chân đã nhả bụi */
   let runPh = 0;
   let skidT = 0;
   let startT = 0;
   let stepIdx = 0;
+  let winIdx = 0;
   let dieT = 0;
   let flash = 0;
   let faceCell = -1;
   let blinkT = 1 + Math.random() * 3;
   let blinkCell = 0;
+
+  /* --- lớp lò xo: chỉ phản ứng (xung + đích), phần chu kỳ (thở, bước chạy) cộng trực tiếp lên trên --- */
+  const sY = new Spr(), sZ = new Spr(), sSq = new Spr(), sLean = new Spr(), sRoll = new Spr(), sYaw = new Spr();
+  const sHX = new Spr(), sHZ = new Spr(), sSec = new Spr(), sLeg = new Spr();
+  const sAL = new Spr(0.08), sAR = new Spr(0.08);
 
   function setFlash(v: number) {
     if (v === flash) return;
@@ -675,15 +738,27 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
     faceCell = cell;
     setFaceCell(r.faceTex, cell);
   }
+  /** xung vận tốc vào lò xo thứ cấp (bỏ qua khi chất lượng thấp) */
+  const kickSec = (v: number) => {
+    if (rich) sSec.v += v;
+  };
 
   const model: HeroModel & MoveHook = {
     object3d: r.root,
     onStep: null,
     setMove(k: number) {
-      // bắt đầu chạy: gồng lấy đà ngắn; dừng lại: phanh trượt (ngả ra sau) rồi vào thế sẵn sàng
-      if (k > 0 && moveTo === 0) startT = 0.12;
-      else if (k === 0 && moveTo > 0.3) {
-        skidT = 0.3;
+      if (base === 'die') return;
+      // bắt đầu chạy: ngồi gồng ngả ra sau rồi bứt; dừng: phanh trượt ngả ra sau, bụi, rồi lò xo lắc về
+      if (k > 0 && moveTo === 0) {
+        startT = ANIM.startCrouch;
+        sSq.v -= 2;
+        sLean.v -= 3;
+      } else if (k === 0 && moveTo > 0.3) {
+        skidT = ANIM.skidTime;
+        sLean.v -= 6;
+        sZ.v += 2.5;
+        sSq.v -= 2;
+        kickSec(-5);
         model.onStep?.(true);
       }
       moveTo = k;
@@ -697,277 +772,357 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
         base = 'die';
         dieT = 0;
         act = null;
+        hitT = -1;
       } else if (a === 'win') {
         if (base !== 'die') base = 'win';
       } else if (a === 'idle') {
         if (base !== 'die') base = 'idle';
         act = null;
       } else if (a === 'hit') {
-        if (base !== 'die') hitT = 0;
-      } else if (base !== 'die') act = { kind: a, t: 0 };
+        if (base === 'die') return;
+        hitT = 0;
+        // xung hất: lùi, ngả, bẹp, lắc nghiêng, đầu giật, tay văng — lò xo tự rung rồi tắt
+        const q = ANIM.hitKick;
+        sZ.v -= 3.2 * q;
+        sLean.v -= 7 * q;
+        sSq.v -= 4 * q;
+        sRoll.v += (Math.random() < 0.5 ? -1 : 1) * 5 * q;
+        sHX.v -= 6 * q;
+        sAL.v -= 7 * q;
+        sAR.v -= 7 * q;
+        kickSec(6 * q);
+      } else if (base !== 'die') act = { kind: a, t: 0, ph: 0 };
     },
-    update(dt: number) {
+    update(dtIn: number) {
+      const dt = Math.min(dtIn, ANIM.maxDt);
       time += dt;
-      let y = 0, z = 0, sx = 1, sy = 1, rotX = 0, rotY = 0, rotZ = 0;
-      let aL = 0.08, aR = 0.08, aLz = 0.12, aRz = -0.12, headX = 0, headZ = 0;
+      /* đích lò xo (mặc định = đứng yên) */
+      let tY = 0, tZ = 0, tSq = 0, tLean = 0, tRoll = 0, tHX = 0, tAL = 0.08, tAR = 0.08, tLeg = 0, tSec = 0;
+      let bk = ANIM.bodyK, bc = ANIM.bodyC, ak = ANIM.armK, ac = ANIM.armC;
+      /* phần cộng trực tiếp (chu kỳ) */
+      let dY = 0, dZ = 0, dSq = 0, dLean = 0, dRoll = 0, dYaw = 0, dHX = 0, dHZ = 0, dAL = 0, dAR = 0;
+      let aLz = 0.12, aRz = -0.12;
       let flap = 0.2 + Math.sin(time * 5 + phase) * 0.12;
+      let legSw = 0;
+      let glow = 0;
+      const dead = base === 'die';
 
-      /* --- nhún thở: squash & stretch + lắc nhẹ, mỗi mô hình một pha --- */
-      const sn = Math.sin(time * ANIM.idleSpeed + phase);
-      if (base === 'idle' || base === 'win') {
-        sy = 1 + sn * ANIM.idleSquash * 0.55;
-        sx = 1 - sn * ANIM.idleSquash * 0.35;
-        y = (sn * 0.5 + 0.5) * ANIM.idleBob;
+      /* --- nghỉ: thở squash & stretch + lắc nhẹ --- */
+      if (base === 'idle') {
+        const sn = Math.sin(time * ANIM.idleSpeed * spd + phase);
+        dSq = sn * ANIM.idleSquash * 0.55;
+        dY = (sn * 0.5 + 0.5) * ANIM.idleBob;
         aLz = 0.14 + sn * 0.05;
         aRz = -0.14 - sn * 0.05;
-        aL = 0.08 + sn * 0.04;
-        aR = 0.08 - sn * 0.04;
-        rotZ = Math.sin(time * 1.6 + phase) * ANIM.swayZ;
-        headZ = Math.sin(time * 1.3 + phase * 2) * 0.07;
+        tAL = 0.08 + sn * 0.04;
+        tAR = 0.08 - sn * 0.04;
+        dRoll = Math.sin(time * 1.6 * spd + phase) * ANIM.swayZ;
+        dHZ = Math.sin(time * 1.3 * spd + phase * 2) * 0.07;
       }
 
-      /* --- thế sẵn sàng giữa trận: nhún chân trụ, lắc trọng tâm, tay giơ — không đứng như tượng --- */
+      /* --- thế sẵn sàng giữa trận: luôn nhún, đổi trọng tâm, vũ khí đảo, đổi chân --- */
       readyK += (readyTo - readyK) * Math.min(1, dt * 9);
       if (readyK > 0.01 && base === 'idle') {
-        const bn = Math.abs(Math.sin(time * 7 + phase));
-        const sh = Math.sin(time * 2.3 + phase * 1.7);
-        y += bn * 0.045 * readyK;
-        sy *= 1 - 0.05 * readyK + bn * 0.05 * readyK;
-        sx *= 1 + 0.04 * readyK - bn * 0.03 * readyK;
-        rotX += 0.1 * readyK;
-        rotZ += sh * 0.07 * readyK;
-        aL = lerp(aL, -0.75 + sh * 0.15, readyK);
-        aR = lerp(aR, -0.35 - sh * 0.15, readyK);
-        headZ += sh * 0.05 * readyK;
+        const rk = readyK;
+        const bn = Math.abs(Math.sin(time * ANIM.readyRate * spd + phase));
+        const sh = Math.sin(time * 2.3 * spd + phase * 1.7);
+        dY += bn * ANIM.readyBounce * rk;
+        dSq += (bn - 0.5) * 0.09 * rk;
+        tLean += 0.1 * rk;
+        dRoll += sh * 0.07 * rk;
+        dHZ += sh * 0.05 * rk;
+        tAL = lerp(tAL, -0.75 + sh * 0.15, rk);
+        tAR = lerp(tAR, -0.35 - sh * 0.15, rk);
+        if (rich) {
+          dAR += Math.sin(time * 5.1 + phase) * 0.12 * rk; // vũ khí đảo nhẹ
+          dAL += Math.sin(time * 4.3 + phase * 2) * 0.08 * rk;
+          dYaw += Math.sin(time * 1.9 * spd + phase) * 0.07 * rk;
+          legSw += Math.sin(time * 3.4 * spd + phase) * ANIM.readyShuffle * rk; // đổi chân
+          tSec += Math.sin(time * 3 + phase) * 0.15 * rk;
+        }
       }
 
-      /* --- mừng chiến thắng: nhảy cẫng, đáp đất bẹp, vẫy tay --- */
+      /* --- mừng chiến thắng: nhảy cẫng, xoay vòng mỗi 3 nhịp, đấm tay lên trời --- */
       if (base === 'win') {
         const w = time * ANIM.winHop;
         const j = Math.abs(Math.sin(w));
-        y = j * 0.32;
+        const n = Math.floor(w / Math.PI);
         const land = Math.pow(1 - j, 6);
-        sy = 1 - land * 0.16 + j * 0.1;
-        sx = 1 + land * 0.12 - j * 0.06;
-        aL = -2.5 + Math.sin(w * 1.0) * 0.25;
+        dY = j * 0.36;
+        dSq = (j - 0.5) * 0.12 - land * 0.16;
+        if (n !== winIdx) {
+          winIdx = n;
+          sSq.v -= 2.5;
+          kickSec(3);
+          model.onStep?.(false);
+        }
+        dYaw = n % 3 === 2 ? Math.PI * 2 * ease(w / Math.PI - n) : Math.sin(w * 0.5) * 0.4;
+        const pump = Math.sin(time * 9);
+        tAR = -2.8 + pump * 0.4;
+        tAL = -2.5 - pump * 0.35;
         aLz = 0.35;
-        aR = -2.8;
-        aRz = -0.45 + Math.sin(time * 11) * 0.5; // vẫy tay
-        rotY = Math.sin(w * 0.5) * 0.4;
-        headZ = Math.sin(w) * 0.1;
+        aRz = -0.45;
+        ak = 600;
+        ac = 26;
+        dHZ = Math.sin(w) * 0.1;
         flap = 0.55 + Math.sin(time * 14) * 0.25;
       }
 
-      /* --- đòn thường / phép --- */
+      /* --- đòn thường / phép: gồng -> vung (lò xo cứng, rung quá đà) -> hồi lò xo --- */
       if (act) {
         act.t += dt;
         const t = act.t;
         if (act.kind === 'attack') {
-          const W = ANIM.atkWind, S = ANIM.atkStrike, E = ANIM.atkSettle;
+          const W = fam === 'bow' ? ANIM.bowDraw : ANIM.atkWind, S = ANIM.atkStrike, E = ANIM.atkSettle;
           if (t >= W + S + E) act = null;
           else if (t < W) {
-            // gồng: ngả ra sau, ngồi thấp, giơ tay cao
-            const k = ease(t / W);
-            aR = lerp(0.08, -3.1, k);
-            aL = lerp(0.08, -0.6, k);
-            rotX = -0.3 * k;
-            sy = 1 - 0.1 * k;
-            sx = 1 + 0.07 * k;
-            z = -0.05 * k;
+            // gồng: kéo ra sau + ngồi thấp
+            bk = 420; bc = 28; ak = 500; ac = 30;
+            tLeg = -0.6;
+            if (fam === 'slash') { tAR = -3.0; tAL = -0.7; tLean = -0.32; tSq = -0.15; tZ = -0.09; }
+            else if (fam === 'thrust') { tAR = 0.7; tAL = -0.9; tLean = -0.25; tSq = -0.12; tZ = -0.1; }
+            else if (fam === 'bash') { tAR = 0.5; tAL = 0.5; tLean = -0.3; tSq = -0.18; tZ = -0.12; }
+            else { tAL = -1.5; tAR = -0.5; tLean = -0.12; tSq = -0.1; tZ = -0.05; dAR = Math.sin(t * 70) * 0.03 * (t / W); }
           } else if (t < W + S) {
-            // vung xuống mạnh, vọt quá đà, kéo giãn
-            const k = (t - W) / S;
-            aR = lerp(-3.1, 0.7, back(k));
-            aL = lerp(-0.6, 0.3, k);
-            rotX = lerp(-0.3, 0.55, back(k));
-            z = lerp(-0.05, 0.1, k);
-            y = Math.sin(k * Math.PI) * 0.16;
-            sy = lerp(0.9, 1.2, k);
-            sx = lerp(1.07, 0.88, k);
+            if (act.ph < 1) {
+              act.ph = 1;
+              if (fam === 'bow') { sZ.v -= 2.5; sLean.v -= 3; kickSec(4); }
+              else { sY.v += 1.8; kickSec(-5); }
+            }
+            // vung mạnh: bật tới, kéo giãn, tay vọt quá đà
+            bk = ANIM.strikeK; bc = ANIM.strikeC; ak = 1000; ac = 22;
+            tLeg = 0.8;
+            if (fam === 'slash') { tAR = 0.9; tAL = 0.4; tLean = 0.55; tSq = 0.18; tZ = 0.16; tY = 0.1; }
+            else if (fam === 'thrust') { tAR = -1.6; tAL = -1.4; tLean = 0.65; tSq = 0.15; tZ = 0.22; }
+            else if (fam === 'bash') { tAR = -1.5; tAL = -1.3; tLean = 0.5; tSq = 0.2; tZ = 0.26; }
+            else { tAR = 0.6; tAL = -1.35; tLean = -0.1; tSq = 0.1; tZ = -0.12; }
           } else {
-            // lắc tắt dần
-            const k = (t - W - S) / E;
-            const d = damp(k, 11);
-            aR = lerp(0.7, 0.08, ease(k)) + d * 0.22;
-            rotX = 0.55 * (1 - ease(k)) + d * 0.1;
-            z = 0.1 * (1 - ease(k));
-            sy = 1 + d * 0.1;
-            sx = 1 - d * 0.07;
+            if (act.ph < 2) {
+              act.ph = 2;
+              sSq.v -= ANIM.landSquash * 0.8;
+              kickSec(4);
+            }
+            bk = ANIM.recoverK; bc = ANIM.recoverC; ak = 150; ac = 8; // zeta thấp -> lắc tắt dần
           }
         } else {
           const C = ANIM.castCrouch, P = ANIM.castSpring, H = ANIM.castHold, E = ANIM.castSettle;
           if (t >= C + P + H + E) act = null;
           else if (t < C) {
-            const k = ease(t / C);
-            sy = 1 - 0.2 * k;
-            sx = 1 + 0.12 * k;
-            aL = lerp(0.1, -1.3, k); // kéo cung / thu lực: một tay đưa ra trước, một tay kéo về
-            aR = lerp(0.1, -0.1, k);
-            rotY = -0.3 * k;
-            z = -0.06 * k;
-            headX = 0.15 * k;
+            // tụ lực: ngồi bẹp, thu tay, rung nhẹ, bắt đầu phát sáng
+            const k = t / C;
+            bk = 350; bc = 24; ak = 400; ac = 26;
+            tSq = -0.22; tAL = -0.5; tAR = -0.5; tLean = -0.1; tZ = -0.05; tHX = 0.15;
+            dRoll = Math.sin(t * 55) * 0.03 * k;
+            glow = ANIM.castGlow * k;
           } else if (t < C + P) {
-            const k = (t - C) / P;
-            y = 0.42 * Math.sin(Math.min(1, k) * Math.PI * 0.9);
-            sy = lerp(0.8, 1.18, ease(k));
-            sx = lerp(1.12, 0.9, ease(k));
-            aL = lerp(-1.3, -3.0, back(k));
-            aR = lerp(-0.1, -3.0, back(k));
-            rotY = lerp(-0.3, 0, ease(k));
-            z = lerp(-0.06, -0.14, k); // giật lùi khi thả
-            headX = lerp(0.15, -0.3, ease(k));
+            if (act.ph < 1) {
+              act.ph = 1;
+              sSq.v += 3;
+              kickSec(-6);
+              model.onStep?.(true);
+            }
+            // bật nhảy, giơ cao hai tay, giật lùi khi thả
+            bk = 260; bc = 14; ak = 500; ac = 18;
+            tY = 0.38; tSq = 0.2; tAL = -3.0; tAR = -3.0; tZ = -0.12; tHX = -0.3;
             flap = 0.6;
+            glow = ANIM.castGlow;
           } else if (t < C + P + H) {
-            const k = (t - C - P) / H;
-            y = 0.1 + Math.sin(k * Math.PI) * 0.04;
-            sy = 1.08 + Math.sin(t * 30) * 0.03;
-            sx = 1 - Math.sin(t * 30) * 0.02;
-            aL = -2.9 + Math.sin(t * 26) * 0.14;
-            aR = -2.9 - Math.sin(t * 26) * 0.14;
-            headX = -0.28;
-            rotZ = Math.sin(t * 20) * 0.04;
-            flap = 0.6 + Math.sin(t * 24) * 0.25;
+            const q = t - C - P;
+            bk = 200; bc = 12; ak = 400; ac = 20;
+            tY = 0.2; tSq = 0.06; tAL = -2.9; tAR = -2.9; tHX = -0.28; tZ = -0.1;
+            dAL = Math.sin(q * 26) * 0.14;
+            dAR = -Math.sin(q * 26) * 0.14;
+            dRoll = Math.sin(q * 20) * 0.04;
+            dSq = Math.sin(q * 30) * 0.03;
+            flap = 0.6 + Math.sin(q * 24) * 0.25;
+            glow = ANIM.castGlow * (0.55 + 0.45 * Math.sin(q * 40));
           } else {
-            const k = (t - C - P - H) / E;
-            const d = damp(k, 10);
-            y = 0.1 * (1 - ease(k));
-            sy = lerp(1.08, 1, ease(k)) + d * 0.05;
-            sx = lerp(0.98, 1, ease(k)) - d * 0.03;
-            aL = aR = lerp(-2.9, 0.1, ease(k));
-            z = -0.14 * (1 - ease(k)) * (1 - ease(k));
-            headX = -0.28 * (1 - ease(k));
+            if (act.ph < 2) {
+              act.ph = 2;
+              sSq.v -= ANIM.landSquash;
+              sY.v -= 1;
+              kickSec(4);
+            }
+            bk = 190; bc = 10; ak = 150; ac = 8;
           }
         }
       }
 
-      /* --- trúng đòn: bị hất lùi, lắc lư, nháy trắng --- */
-      if (hitT >= 0) {
-        hitT += dt;
-        const p = hitT / ANIM.hitTime;
-        if (p >= 1) {
-          hitT = -1;
-          setFlash(0);
-        } else {
-          const s = Math.sin(Math.min(1, p * 1.6) * Math.PI);
-          z -= 0.26 * s;
-          sy *= 1 - 0.2 * s + damp(p, 14) * 0.06;
-          sx *= 1 + 0.15 * s - damp(p, 14) * 0.04;
-          rotX -= 0.34 * s;
-          rotZ += Math.sin(p * 26) * 0.28 * (1 - p);
-          aL = lerp(aL, -1.0, s);
-          aR = lerp(aR, -1.0, s);
-          setFlash(p < 0.36 ? 0.95 : 0);
+      /* --- chạy: nhịp bước ∝ tốc độ, nhấc chân + vung tay biên độ lớn, nảy, ngả 23 độ, bụi mỗi bước --- */
+      moveK += (moveTo - moveK) * Math.min(1, dt * 14);
+      let swing = 0;
+      const canRun = !dead && !act;
+      let running = false;
+      if (startT > 0 && canRun) {
+        // gồng lấy đà: ngồi, ngả ra sau, rồi bứt
+        startT -= dt;
+        bk = 500; bc = 30;
+        tSq = -0.16; tLean = -0.2; tAL = 0.5; tAR = 0.5;
+        if (startT <= 0) {
+          sY.v += 2.2;
+          sLean.v += 5;
+          sSq.v += 2.5;
+          kickSec(-5);
+          model.onStep?.(true);
+        }
+      } else if (moveK > 0.02 && canRun) {
+        running = true;
+        const cad = lerp(ANIM.runStepsMin, ANIM.runStepsMax, clamp01((moveK - 0.6) / 0.4)); // bước/giây
+        runPh += dt * Math.PI * cad;
+        const sw = Math.sin(runPh);
+        swing = sw;
+        legSw = sw * moveK;
+        const hp = Math.abs(sw); // 0 = chạm đất, 1 = đỉnh nhảy
+        dY += hp * ANIM.runHop * moveK;
+        dSq += (hp - 0.5) * 0.16 * moveK; // giãn khi nhấc, bẹp khi chạm
+        dRoll += sw * 0.09 * moveK;
+        dYaw += sw * 0.14 * moveK;
+        tLean += ANIM.runLean * moveK;
+        tHX = -0.14 * moveK;
+        tAL = lerp(tAL, legSw * ANIM.runArm - 0.3, moveK);
+        tAR = lerp(tAR, -legSw * ANIM.runArm - 0.3, moveK);
+        ak = 700; ac = 30;
+        if (rich) {
+          dHX -= Math.cos(runPh * 2) * 0.06 * moveK; // đầu nảy trễ pha
+          dHZ -= sw * 0.08 * moveK;
+          tSec = 0.35 * moveK; // đuôi/tai/cape bay ra sau
+        }
+        const si = Math.floor(runPh / Math.PI);
+        if (si !== stepIdx) {
+          stepIdx = si;
+          sSq.v -= ANIM.landSquash * moveK; // chạm đất bẹp
+          if (rich) {
+            kickSec(2.2 * moveK);
+            sHX.v += 2.5 * moveK;
+          }
+          if (moveK > 0.5) model.onStep?.(false);
         }
       }
+      /* phanh trượt: ngả ra sau, trượt tới, chân dạng; hết giờ phanh lò xo tự lắc về thế sẵn sàng */
+      if (skidT > 0 && canRun) {
+        skidT -= dt;
+        const k = clamp01(skidT / ANIM.skidTime);
+        bk = 300; bc = 18;
+        tLean = -0.4 * k;
+        tZ = 0.18 * k;
+        tSq = -0.08 * k;
+        tAL = lerp(tAL, -0.9, k);
+        tAR = lerp(tAR, -0.9, k);
+        legSw = lerp(legSw, 1, k * 0.9);
+        tSec = -0.5 * k;
+        dY *= 1 - k;
+      }
+      if (running) {
+        sLeg.x = legSw; // chân chạy theo chu kỳ trực tiếp
+        sLeg.v = 0;
+      } else {
+        spStep(sLeg, tLeg, 300, 20, dt);
+        legSw += sLeg.x;
+      }
 
-      /* --- chết: bật lên, lộn nhào, nằm sõng soài, nảy, rồi co lại biến mất --- */
-      if (base === 'die') {
+      /* --- tích phân lò xo --- */
+      spStep(sY, tY, bk, bc, dt);
+      spStep(sZ, tZ, bk, bc, dt);
+      spStep(sSq, tSq, bk, bc, dt);
+      spStep(sLean, tLean, bk, bc, dt);
+      spStep(sRoll, tRoll, bk, bc, dt);
+      spStep(sYaw, 0, bk, bc, dt);
+      spStep(sHX, tHX, bk, bc, dt);
+      spStep(sHZ, 0, bk, bc, dt);
+      spStep(sSec, tSec, 120, 7, dt);
+      spStep(sAL, tAL, ak, ac, dt);
+      spStep(sAR, tAR, ak, ac, dt);
+
+      /* --- trúng đòn: nháy trắng ngắn, mặt đau; chuyển động nằm ở xung lò xo --- */
+      let flashV = glow;
+      if (hitT >= 0) {
+        hitT += dt;
+        if (hitT < ANIM.hitFlash) flashV = 0.95;
+        if (hitT >= ANIM.hitTime) hitT = -1;
+      }
+
+      /* --- ghép --- */
+      let y = sY.x + dY, z = sZ.x + dZ;
+      let sq = sSq.x + dSq;
+      let rotX = sLean.x + dLean, rotY = sYaw.x + dYaw, rotZ = sRoll.x + dRoll;
+      let headX = sHX.x + dHX, headZ = sHZ.x + dHZ;
+      let aL = sAL.x + dAL, aR = sAR.x + dAR;
+      let sx: number, sy: number;
+      const hop = base === 'win' ? Math.max(0, Math.sin(time * ANIM.winHop)) * 0.04 : 0;
+
+      /* --- chết: trúng đòn -> bay lùi + lộn nhào xoay -> nảy 2 lần trên đất -> co lại biến mất --- */
+      if (dead) {
         dieT += dt;
-        const A = ANIM.dieStretch, B = ANIM.dieTumble, C = ANIM.dieBounce;
+        const A = ANIM.dieHit, B = ANIM.dieFly;
         aLz = 0.5;
         aRz = -0.5;
+        sq = 0; y = 0; z = 0; rotX = 0; rotY = 0; rotZ = 0; headX = 0; headZ = 0;
         if (dieT < A) {
           const k = dieT / A;
-          sy = 1 + 0.25 * k;
-          sx = 1 - 0.15 * k;
-          rotX = 0.1 * k;
+          sq = 0.2 * k;
+          z = -0.12 * k;
+          rotX = -0.3 * k;
           aL = aR = lerp(0.1, -1.6, k);
         } else if (dieT < A + B) {
-          const k = ease((dieT - A) / B);
-          rotX = -Math.PI / 2 * k;
+          const k = (dieT - A) / B;
+          const e = ease(k);
+          rotX = -Math.PI / 2 * e - 0.3 * (1 - e);
           rotY = k * Math.PI * 2;
-          y = 0.3 * k + 0.55 * Math.sin(k * Math.PI);
-          aL = Math.sin(dieT * 28) * 0.9 - 1.0;
-          aR = -Math.sin(dieT * 28) * 0.9 - 1.0;
-          sy = lerp(1.25, 1, k);
-          sx = lerp(0.85, 1, k);
+          y = 0.3 * e + 0.85 * 4 * k * (1 - k);
+          z = -0.12 - 0.8 * e;
+          aL = Math.sin(dieT * 30) * 0.9 - 1.0;
+          aR = -Math.sin(dieT * 30) * 0.9 - 1.0;
+          sq = lerp(0.2, 0, k);
         } else {
+          const tc = dieT - A - B;
           rotX = -Math.PI / 2;
-          const k = clamp01((dieT - A - B) / C);
-          y = 0.3 + 0.14 * Math.abs(Math.sin(k * Math.PI * 1.6)) * (1 - k);
-          sy = 1 - damp(k, 14) * 0.1;
-          sx = 1 + damp(k, 14) * 0.08;
-          aL = aR = -0.9 + Math.sin(k * 18) * 0.15 * (1 - k);
+          z = -0.92 - 0.14 * ease(clamp01(tc / 0.5)); // trượt thêm một chút
+          const B1 = ANIM.dieBounce1, B2 = ANIM.dieBounce2;
+          let lift = 0, sqz = 0;
+          if (tc < B1) {
+            const k = tc / B1;
+            lift = 0.26 * 4 * k * (1 - k);
+            sqz = k > 0.9 ? -0.12 : 0;
+          } else if (tc < B1 + B2) {
+            const k = (tc - B1) / B2;
+            lift = 0.1 * 4 * k * (1 - k);
+          } else {
+            sqz = -0.08 * Math.max(0, 1 - (tc - B1 - B2) * 8);
+          }
+          y = 0.3 + lift;
+          sq = sqz;
+          aL = aR = -0.9 + Math.sin(tc * 18) * 0.15 * Math.max(0, 1 - tc);
         }
-        setFlash(dieT < 0.18 ? 0.6 : 0);
+        flashV = dieT < 0.15 ? 0.7 : 0;
         const sh = clamp01((dieT - ANIM.dieFadeStart) / (ANIM.dieFadeEnd - ANIM.dieFadeStart));
         r.root.scale.setScalar(look.scale * Math.max(0.001, 1 - sh * sh));
         if (sh >= 1) r.root.visible = false;
       }
+      setFlash(flashV);
 
-      /* --- chạy: nhún nảy, nghiêng người theo tốc độ, chân/tay đảo luân phiên, bẹp-giãn mỗi bước, bụi mỗi bước --- */
-      moveK += (moveTo - moveK) * Math.min(1, dt * 14);
-      let legSw = 0;
-      let swing = 0;
-      const canRun = base !== 'die' && !act;
-      if (moveK > 0.02 && canRun) {
-        runPh += dt * (13 + 6 * moveK);
-        const w = runPh;
-        const sw = Math.sin(w);
-        legSw = sw * moveK;
-        swing = sw;
-        const hp = Math.abs(sw); // 0 = chạm đất, 1 = đỉnh nhảy (mỗi chân một bước)
-        const land = Math.pow(1 - hp, 5) * moveK; // khoảnh khắc chạm đất: bẹp
-        y += hp * 0.2 * moveK;
-        sy *= 1 + (hp - 0.5) * 0.14 * moveK - land * 0.1;
-        sx *= 1 - (hp - 0.5) * 0.1 * moveK + land * 0.08;
-        rotX += 0.3 * moveK; // nghiêng người về phía trước theo tốc độ
-        rotZ += sw * 0.1 * moveK;
-        rotY += sw * 0.12 * moveK;
-        aL = lerp(aL, legSw * 1.6 - 0.2, moveK);
-        aR = lerp(aR, -legSw * 1.6 - 0.2, moveK);
-        headX -= 0.12 * moveK;
-        headZ -= sw * 0.08 * moveK;
-        // chân chạm đất mỗi nửa chu kỳ -> bụi
-        const si = Math.floor(w / Math.PI);
-        if (si !== stepIdx) {
-          stepIdx = si;
-          if (moveK > 0.5) model.onStep?.(false);
-        }
-      }
-      /* gồng lấy đà trước khi chạy */
-      if (startT > 0) {
-        startT -= dt;
-        const k = clamp01(startT / 0.12);
-        sy *= 1 - 0.12 * k;
-        sx *= 1 + 0.08 * k;
-        rotX -= 0.18 * k;
-      }
-      /* phanh trượt khi dừng ở tầm đánh: ngả ra sau, trượt tới, chân dạng ra, rồi vào thế sẵn sàng */
-      if (skidT > 0 && canRun) {
-        skidT -= dt;
-        const k = clamp01(skidT / 0.3);
-        const e = k * k;
-        rotX -= 0.38 * e;
-        z += 0.16 * e;
-        sy *= 1 - 0.1 * e + damp(1 - k, 12) * 0.03;
-        sx *= 1 + 0.08 * e;
-        aL = lerp(aL, -0.9, e);
-        aR = lerp(aR, -0.9, e);
-        legSw = lerp(legSw, 1, e * 0.9); // chân dạng ra phanh
-        y *= 1 - e;
-      }
-
-      rig.position.set(0, y, z);
+      sq = Math.max(-0.4, Math.min(0.45, sq));
+      sy = 1 + sq;
+      sx = 1 - sq * 0.65;
+      rig.position.set(0, Math.max(-0.05, y), z);
       rig.scale.set(sx, sy, sx);
       rig.rotation.set(rotX, rotY, rotZ);
       head.rotation.set(headX + Math.sin(time * 2.2 + phase) * 0.02, 0, headZ);
       armL.rotation.set(aL, 0, aLz);
       armR.rotation.set(aR, 0, aRz);
-      const hop = base === 'win' ? Math.max(0, Math.sin(time * ANIM.winHop)) * 0.04 : 0;
-      legL.position.y = 0.15 + hop + Math.max(0, legSw) * 0.14;
-      legR.position.y = 0.15 + hop + Math.max(0, -legSw) * 0.14;
-      legL.position.z = legSw * 0.22;
-      legR.position.z = -legSw * 0.22;
+      legL.position.y = 0.15 + hop + Math.max(0, legSw) * ANIM.legLift;
+      legR.position.y = 0.15 + hop + Math.max(0, -legSw) * ANIM.legLift;
+      legL.position.z = legSw * ANIM.runLegSwing;
+      legR.position.z = -legSw * ANIM.runLegSwing;
 
-      /* --- phụ kiện sống động --- */
+      /* --- phụ kiện: dao động nền + theo quán tính (sSec) --- */
       const mk = canRun ? moveK : 0;
-      if (extras.cape) extras.cape.rotation.x = 0.12 + Math.sin(time * 2.4 + phase) * 0.06 + (act ? 0.25 : 0) + (base === 'win' ? 0.2 : 0) + mk * (0.45 + swing * 0.12);
+      const sec = rich ? sSec.x : 0;
+      if (extras.cape) extras.cape.rotation.x = 0.12 + Math.sin(time * 2.4 + phase) * 0.06 + (act ? 0.25 : 0) + (base === 'win' ? 0.2 : 0) + mk * (0.45 + swing * 0.12) + sec * 0.8;
       if (extras.halo) {
         extras.halo.rotation.y = time * 1.5;
         extras.halo.position.y = 0.62 + Math.sin(time * 3) * 0.02;
       }
-      if (extras.tail) extras.tail.rotation.z = Math.sin(time * 3.4 + phase) * 0.35 + mk * (swing * 0.55 + (skidT > 0 ? 0.3 : 0));
+      if (extras.tail) extras.tail.rotation.z = Math.sin(time * 3.4 + phase) * 0.35 + mk * swing * 0.55 + sec * 0.9;
       if (extras.wings) {
         extras.wings[0].rotation.y = flap;
         extras.wings[1].rotation.y = -flap;
@@ -978,16 +1133,16 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
         else sp[i].rotation.y = time * 1.8;
       }
       const sX = extras.swayX;
-      for (let i = 0; i < sX.length; i++) sX[i].rotation.x = 0.25 + Math.sin(time * 3 + phase + i) * 0.22 + (act ? 0.3 : 0) + mk * (0.4 + Math.sin(runPh * 2 + i) * 0.25);
-      const sZ = extras.swayZ;
-      for (let i = 0; i < sZ.length; i++) sZ[i].rotation.z = Math.sin(time * 3.4 + phase + i * 1.7) * 0.18 + mk * Math.sin(runPh * 2 + i * 1.7) * 0.3;
+      for (let i = 0; i < sX.length; i++) sX[i].rotation.x = 0.25 + Math.sin(time * 3 + phase + i) * 0.22 + (act ? 0.3 : 0) + mk * (0.4 + (rich ? Math.sin(runPh * 2 + i) * 0.25 : 0)) + sec * 1.1;
+      const sZ2 = extras.swayZ;
+      for (let i = 0; i < sZ2.length; i++) sZ2[i].rotation.z = Math.sin(time * 3.4 + phase + i * 1.7) * 0.18 + (rich ? mk * Math.sin(runPh * 2 + i * 1.7) * 0.3 : 0) + sec * 0.4;
       const pu = extras.pulse;
       for (let i = 0; i < pu.length; i++) pu[i].scale.setScalar((pu[i].userData.s as number) * (1 + Math.sin(time * 5 + i) * 0.12 + (act?.kind === 'cast' ? 0.25 : 0)));
 
       /* --- khuôn mặt: chỉ đổi texture offset khi trạng thái đổi --- */
       let want: number;
-      if (base === 'die') want = FACE.die;
-      else if (hitT >= 0) want = FACE.hit;
+      if (dead) want = FACE.die;
+      else if (hitT >= 0 && hitT < ANIM.hitTime) want = FACE.hit;
       else if (base === 'win') want = FACE.win;
       else if (act) want = act.kind === 'cast' ? FACE.cast : FACE.attack;
       else {
