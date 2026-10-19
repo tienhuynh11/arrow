@@ -1,7 +1,7 @@
 // Kiểm thử lõi game thẻ tướng: engine trận (deterministic), gacha (tỉ lệ + pity), ải, AFK, thể lực.
 // Chạy: cd server && npx tsx test/heroesCore.test.ts
 import { Battle, simulate, heroUnit, advantage, type BattleEvent, type BattleSetup, type UnitInit } from '../../shared/heroes/battle.js';
-import { ARENA_LEN, BOSS_MOVE, BOSS_RANGE, FRONT_X, MIN_SEP, MOVE_EVENT_EVERY, ROLE_MOVE, ROLE_RANGE, ROW_GAP, startX, statOf } from '../../shared/heroes/combat.js';
+import { ARENA_LEN, BOSS_MOVE, BOSS_RANGE, FRONT_X, ALLY_SEP, MIN_SEP, MOVE_EVENT_EVERY, ROLE_MOVE, ROLE_RANGE, ROW_GAP, startX, statOf } from '../../shared/heroes/combat.js';
 import { arenaReward, arenaSetup, botSquad, ratingDelta } from '../../shared/heroes/arena.js';
 import { AFK_CAP_MS, BATTLE_MAX_TICKS, STAMINA_MAX, rowOfSlot } from '../../shared/heroes/config.js';
 import { monsterStatsAt, powerOf, statsAt } from '../../shared/heroes/formulas.js';
@@ -173,14 +173,19 @@ console.log('— vị trí / tầm đánh / di chuyển / tốc đánh —');
   // ---- vị trí ban đầu ----
   const b0 = new Battle(stageSetup(STAGES[0], starterTeam(), 1));
   const snap0 = b0.snapshot();
-  ok(snap0.every((u) => u.side === 0 && u.x === startX(0, u.slot) && u.x === FRONT_X - rowOfSlot(u.slot) * ROW_GAP) && snap0.length === 3, 'vị trí ban đầu người chơi: hàng trước 3600, mỗi hàng sau lùi 900');
+  ok(snap0.every((u) => u.side === 0 && u.x === startX(0, u.slot) && Math.abs(u.x - (FRONT_X - rowOfSlot(u.slot) * ROW_GAP)) === 225) && snap0.length === 3, 'vị trí ban đầu người chơi: hàng trước 3600, mỗi hàng sau lùi 900, mỗi ô lệch ±225 quanh hàng');
   const ev1 = b0.step();
   const wv = ev1.find((e) => e.k === 'wave');
   ok(!!wv && wv.k === 'wave' && wv.xs!.length === wv.units.length && wv.units.every((uid, i) => b0.pos(uid) >= 0 && wv.xs![i] === startX(1, b0.unit(uid)!.init.slot) && wv.xs![i] === ARENA_LEN - startX(0, b0.unit(uid)!.init.slot)), 'quái xuất phát đối xứng (ARENA_LEN - x), sự kiện wave mang theo xs');
   const frontP = Math.max(...b0.side(0).map((u) => u.x));
   const frontE = Math.min(...b0.side(1).map((u) => u.x));
-  ok(frontE - frontP >= 4700 && frontE - frontP <= 4800, `hai hàng trước cách xa nhau ~4800 (sau tick 1: ${frontE - frontP})`);
-  ok(snap0.filter((u) => u.slot < 2).every((u) => u.x === snap0[0].x) && b0.pos(9999) === -1, 'cùng hàng cùng x; pos(uid lạ) = -1');
+  ok(frontE - frontP >= 4150 && frontE - frontP <= 4350, `hai hàng trước cách xa nhau ~4350 (sau tick 1: ${frontE - frontP})`);
+  {
+    // so le: mọi cặp đồng minh ban đầu cách nhau ≥ ALLY_SEP, hai ô cùng hàng khác x
+    const all = [0, 1, 2, 3, 4, 5].map((sl) => startX(0, sl)).sort((a, c) => a - c);
+    ok(all.every((x, i) => i === 0 || x - all[i - 1] >= ALLY_SEP) && startX(0, 0) !== startX(0, 1) && startX(0, 2) !== startX(0, 3), `6 ô xuất phát cách nhau ≥ ${ALLY_SEP}, hai ô cùng hàng khác x`);
+    ok(b0.pos(9999) === -1, 'pos(uid lạ) = -1');
+  }
   ok(statOf(statsAt('warrior', 'R', 1, 1), 'aspd') === 100 && ROLE_RANGE.archer > ROLE_RANGE.mage && ROLE_RANGE.mage > ROLE_RANGE.healer && ROLE_RANGE.healer > ROLE_RANGE.warrior && ROLE_MOVE.warrior >= ROLE_MOVE.tank, 'bảng tầm đánh: xạ thủ > pháp sư > hồi máu > cận chiến; chiến binh đi nhanh hơn đỡ đòn');
 
   // ---- di chuyển đơn điệu, không xuyên qua nhau ----
@@ -214,11 +219,21 @@ console.log('— vị trí / tầm đánh / di chuyển / tốc đánh —');
   {
     const { events, b } = meleeDuel(5);
     const first = acts(events, 0)[0] as Extract<BattleEvent, { k: 'act' }>;
-    // hai bên cùng tiến ROLE_MOVE.warrior mỗi tick tới khi cách nhau đúng tầm: ceil((4800 - 900) / (2 * 22)) tick
-    const meet = Math.ceil((ARENA_LEN - 2 * FRONT_X - ROLE_RANGE.warrior) / (2 * ROLE_MOVE.warrior));
+    // hai bên cùng tiến ROLE_MOVE.warrior mỗi tick tới khi cách nhau đúng tầm: ceil((ARENA_LEN - 2 * startX(0, 0) - 900) / (2 * 40)) tick
+    const meet = Math.ceil((ARENA_LEN - 2 * startX(0, 0) - ROLE_RANGE.warrior) / (2 * ROLE_MOVE.warrior));
     ok(!!first && first.t >= meet && first.t <= meet + 41, `cận chiến vào tầm ở tick ${meet}, ra đòn đầu ở tick ${first?.t} (≤ ${meet + 41})`);
     ok(Math.abs(b.pos(0) - b.pos(10)) === ROLE_RANGE.warrior && first.ax === first.tx[0] - ROLE_RANGE.warrior, `hai cận chiến dừng đúng tầm ${ROLE_RANGE.warrior} và act mang ax/tx`);
     ok(meleeDuel(5).events.length === events.length, 'trận thử lặp lại cho cùng số sự kiện');
+  }
+
+  // ---- đồng minh giãn cách (ALLY_SEP), tất định ----
+  {
+    const mk = () => ({ seed: 9, player: [tu(0, 0, 'warrior'), tu(0, 1, 'warrior')], waves: [[tu(1, 0, 'tank', { atk: 1 })]] });
+    const r1 = run(mk(), 200);
+    const r2 = run(mk(), 200);
+    const xs = r1.b.side(0).map((u) => u.x);
+    ok(xs.length === 2 && Math.abs(xs[0] - xs[1]) >= ALLY_SEP, `hai chiến binh cùng hàng đứng cách nhau ≥ ${ALLY_SEP} sau khi vào tầm (${Math.abs(xs[0] - xs[1])})`);
+    ok(r1.events.length === r2.events.length && JSON.stringify(r1.events) === JSON.stringify(r2.events), 'giãn cách đồng minh tất định');
   }
 
   // ---- đánh xa ra đòn sớm hơn cận chiến ----

@@ -29,15 +29,15 @@ export const ANIM = {
   blinkTime: 0.13,
   winkChance: 0.16,
   // tấn công: gồng (anticipation) -> vung (overshoot) -> lắc tắt dần
-  atkWind: 0.18,
-  atkStrike: 0.1,
-  atkSettle: 0.32,
+  atkWind: 0.12,
+  atkStrike: 0.08,
+  atkSettle: 0.28,
   // niệm phép: ngồi thụt -> bật lên -> giơ tay rung -> hạ
-  castCrouch: 0.2,
-  castSpring: 0.25,
-  castHold: 0.25,
-  castSettle: 0.22,
-  hitTime: 0.42,
+  castCrouch: 0.16,
+  castSpring: 0.2,
+  castHold: 0.2,
+  castSettle: 0.24,
+  hitTime: 0.38,
   winHop: 5.5, // tần số nhảy mừng
   dieStretch: 0.12,
   dieTumble: 0.48,
@@ -627,6 +627,10 @@ const damp = (k: number, freq: number) => Math.cos(k * freq) * (1 - k) * (1 - k)
 /** móc chạy/đi bộ: 0 = đứng, 1 = chạy hết tốc (cảnh gọi mỗi khung; mô hình khác như glTF có thể bỏ qua) */
 export interface MoveHook {
   setMove(k: number): void;
+  /** thế sẵn sàng khi đứng ở tầm đánh giữa trận (nhún chân, tay giơ) */
+  setReady(on: boolean): void;
+  /** gọi mỗi khi chân chạm đất lúc chạy (strong = phanh/trượt) — cảnh dùng để nhả bụi */
+  onStep: ((strong: boolean) => void) | null;
 }
 
 export function createProceduralModel(look: ProcLook, outlines: boolean): HeroModel {
@@ -648,6 +652,13 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
   let hitT = -1;
   let moveK = 0;
   let moveTo = 0;
+  let readyTo = 0;
+  let readyK = 0;
+  /* chạy: pha bước, giờ phanh trượt, giờ gồng lấy đà, bước chân đã nhả bụi */
+  let runPh = 0;
+  let skidT = 0;
+  let startT = 0;
+  let stepIdx = 0;
   let dieT = 0;
   let flash = 0;
   let faceCell = -1;
@@ -667,8 +678,18 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
 
   const model: HeroModel & MoveHook = {
     object3d: r.root,
+    onStep: null,
     setMove(k: number) {
+      // bắt đầu chạy: gồng lấy đà ngắn; dừng lại: phanh trượt (ngả ra sau) rồi vào thế sẵn sàng
+      if (k > 0 && moveTo === 0) startT = 0.12;
+      else if (k === 0 && moveTo > 0.3) {
+        skidT = 0.3;
+        model.onStep?.(true);
+      }
       moveTo = k;
+    },
+    setReady(on: boolean) {
+      readyTo = on ? 1 : 0;
     },
     height: 1.55 * look.scale,
     play(a: HeroAnim) {
@@ -705,6 +726,21 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
         headZ = Math.sin(time * 1.3 + phase * 2) * 0.07;
       }
 
+      /* --- thế sẵn sàng giữa trận: nhún chân trụ, lắc trọng tâm, tay giơ — không đứng như tượng --- */
+      readyK += (readyTo - readyK) * Math.min(1, dt * 9);
+      if (readyK > 0.01 && base === 'idle') {
+        const bn = Math.abs(Math.sin(time * 7 + phase));
+        const sh = Math.sin(time * 2.3 + phase * 1.7);
+        y += bn * 0.045 * readyK;
+        sy *= 1 - 0.05 * readyK + bn * 0.05 * readyK;
+        sx *= 1 + 0.04 * readyK - bn * 0.03 * readyK;
+        rotX += 0.1 * readyK;
+        rotZ += sh * 0.07 * readyK;
+        aL = lerp(aL, -0.75 + sh * 0.15, readyK);
+        aR = lerp(aR, -0.35 - sh * 0.15, readyK);
+        headZ += sh * 0.05 * readyK;
+      }
+
       /* --- mừng chiến thắng: nhảy cẫng, đáp đất bẹp, vẫy tay --- */
       if (base === 'win') {
         const w = time * ANIM.winHop;
@@ -732,31 +768,31 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
           else if (t < W) {
             // gồng: ngả ra sau, ngồi thấp, giơ tay cao
             const k = ease(t / W);
-            aR = lerp(0.08, -2.9, k);
-            aL = lerp(0.08, -0.5, k);
-            rotX = -0.22 * k;
+            aR = lerp(0.08, -3.1, k);
+            aL = lerp(0.08, -0.6, k);
+            rotX = -0.3 * k;
             sy = 1 - 0.1 * k;
             sx = 1 + 0.07 * k;
             z = -0.05 * k;
           } else if (t < W + S) {
             // vung xuống mạnh, vọt quá đà, kéo giãn
             const k = (t - W) / S;
-            aR = lerp(-2.9, 0.55, k);
-            aL = lerp(-0.5, 0.2, k);
-            rotX = lerp(-0.22, 0.4, k);
-            z = lerp(-0.05, 0.18, k);
-            y = Math.sin(k * Math.PI) * 0.12;
-            sy = lerp(0.9, 1.14, k);
-            sx = lerp(1.07, 0.92, k);
+            aR = lerp(-3.1, 0.7, back(k));
+            aL = lerp(-0.6, 0.3, k);
+            rotX = lerp(-0.3, 0.55, back(k));
+            z = lerp(-0.05, 0.1, k);
+            y = Math.sin(k * Math.PI) * 0.16;
+            sy = lerp(0.9, 1.2, k);
+            sx = lerp(1.07, 0.88, k);
           } else {
             // lắc tắt dần
             const k = (t - W - S) / E;
             const d = damp(k, 11);
-            aR = lerp(0.55, 0.08, ease(k)) + d * 0.18;
-            rotX = 0.4 * (1 - ease(k)) + d * 0.08;
-            z = 0.18 * (1 - ease(k));
-            sy = 1 + d * 0.07;
-            sx = 1 - d * 0.05;
+            aR = lerp(0.7, 0.08, ease(k)) + d * 0.22;
+            rotX = 0.55 * (1 - ease(k)) + d * 0.1;
+            z = 0.1 * (1 - ease(k));
+            sy = 1 + d * 0.1;
+            sx = 1 - d * 0.07;
           }
         } else {
           const C = ANIM.castCrouch, P = ANIM.castSpring, H = ANIM.castHold, E = ANIM.castSettle;
@@ -765,14 +801,20 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
             const k = ease(t / C);
             sy = 1 - 0.2 * k;
             sx = 1 + 0.12 * k;
-            aL = aR = lerp(0.1, -0.5, k);
+            aL = lerp(0.1, -1.3, k); // kéo cung / thu lực: một tay đưa ra trước, một tay kéo về
+            aR = lerp(0.1, -0.1, k);
+            rotY = -0.3 * k;
+            z = -0.06 * k;
             headX = 0.15 * k;
           } else if (t < C + P) {
             const k = (t - C) / P;
             y = 0.42 * Math.sin(Math.min(1, k) * Math.PI * 0.9);
             sy = lerp(0.8, 1.18, ease(k));
             sx = lerp(1.12, 0.9, ease(k));
-            aL = aR = lerp(-0.5, -3.0, back(k));
+            aL = lerp(-1.3, -3.0, back(k));
+            aR = lerp(-0.1, -3.0, back(k));
+            rotY = lerp(-0.3, 0, ease(k));
+            z = lerp(-0.06, -0.14, k); // giật lùi khi thả
             headX = lerp(0.15, -0.3, ease(k));
             flap = 0.6;
           } else if (t < C + P + H) {
@@ -792,6 +834,7 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
             sy = lerp(1.08, 1, ease(k)) + d * 0.05;
             sx = lerp(0.98, 1, ease(k)) - d * 0.03;
             aL = aR = lerp(-2.9, 0.1, ease(k));
+            z = -0.14 * (1 - ease(k)) * (1 - ease(k));
             headX = -0.28 * (1 - ease(k));
           }
         }
@@ -806,14 +849,14 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
           setFlash(0);
         } else {
           const s = Math.sin(Math.min(1, p * 1.6) * Math.PI);
-          z -= 0.18 * s;
-          sy *= 1 - 0.16 * s + damp(p, 14) * 0.05;
-          sx *= 1 + 0.12 * s - damp(p, 14) * 0.03;
-          rotX -= 0.26 * s;
-          rotZ += Math.sin(p * 22) * 0.2 * (1 - p);
+          z -= 0.26 * s;
+          sy *= 1 - 0.2 * s + damp(p, 14) * 0.06;
+          sx *= 1 + 0.15 * s - damp(p, 14) * 0.04;
+          rotX -= 0.34 * s;
+          rotZ += Math.sin(p * 26) * 0.28 * (1 - p);
           aL = lerp(aL, -1.0, s);
           aR = lerp(aR, -1.0, s);
-          setFlash(p < 0.3 ? 0.75 : 0);
+          setFlash(p < 0.36 ? 0.95 : 0);
         }
       }
 
@@ -852,16 +895,57 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
         if (sh >= 1) r.root.visible = false;
       }
 
-      /* --- chạy: nhún bước, vung tay, chân đá luân phiên (chỉ khi không vung/niệm) --- */
-      moveK += (moveTo - moveK) * Math.min(1, dt * 12);
+      /* --- chạy: nhún nảy, nghiêng người theo tốc độ, chân/tay đảo luân phiên, bẹp-giãn mỗi bước, bụi mỗi bước --- */
+      moveK += (moveTo - moveK) * Math.min(1, dt * 14);
       let legSw = 0;
-      if (moveK > 0.02 && base !== 'die' && !act) {
-        const w = time * 15;
-        legSw = Math.sin(w) * moveK;
-        y += Math.abs(legSw) * 0.07;
-        aL = lerp(aL, legSw * 1.1, moveK);
-        aR = lerp(aR, -legSw * 1.1, moveK);
-        rotZ += Math.sin(w * 0.5) * 0.05 * moveK;
+      let swing = 0;
+      const canRun = base !== 'die' && !act;
+      if (moveK > 0.02 && canRun) {
+        runPh += dt * (13 + 6 * moveK);
+        const w = runPh;
+        const sw = Math.sin(w);
+        legSw = sw * moveK;
+        swing = sw;
+        const hp = Math.abs(sw); // 0 = chạm đất, 1 = đỉnh nhảy (mỗi chân một bước)
+        const land = Math.pow(1 - hp, 5) * moveK; // khoảnh khắc chạm đất: bẹp
+        y += hp * 0.2 * moveK;
+        sy *= 1 + (hp - 0.5) * 0.14 * moveK - land * 0.1;
+        sx *= 1 - (hp - 0.5) * 0.1 * moveK + land * 0.08;
+        rotX += 0.3 * moveK; // nghiêng người về phía trước theo tốc độ
+        rotZ += sw * 0.1 * moveK;
+        rotY += sw * 0.12 * moveK;
+        aL = lerp(aL, legSw * 1.6 - 0.2, moveK);
+        aR = lerp(aR, -legSw * 1.6 - 0.2, moveK);
+        headX -= 0.12 * moveK;
+        headZ -= sw * 0.08 * moveK;
+        // chân chạm đất mỗi nửa chu kỳ -> bụi
+        const si = Math.floor(w / Math.PI);
+        if (si !== stepIdx) {
+          stepIdx = si;
+          if (moveK > 0.5) model.onStep?.(false);
+        }
+      }
+      /* gồng lấy đà trước khi chạy */
+      if (startT > 0) {
+        startT -= dt;
+        const k = clamp01(startT / 0.12);
+        sy *= 1 - 0.12 * k;
+        sx *= 1 + 0.08 * k;
+        rotX -= 0.18 * k;
+      }
+      /* phanh trượt khi dừng ở tầm đánh: ngả ra sau, trượt tới, chân dạng ra, rồi vào thế sẵn sàng */
+      if (skidT > 0 && canRun) {
+        skidT -= dt;
+        const k = clamp01(skidT / 0.3);
+        const e = k * k;
+        rotX -= 0.38 * e;
+        z += 0.16 * e;
+        sy *= 1 - 0.1 * e + damp(1 - k, 12) * 0.03;
+        sx *= 1 + 0.08 * e;
+        aL = lerp(aL, -0.9, e);
+        aR = lerp(aR, -0.9, e);
+        legSw = lerp(legSw, 1, e * 0.9); // chân dạng ra phanh
+        y *= 1 - e;
       }
 
       rig.position.set(0, y, z);
@@ -871,18 +955,19 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
       armL.rotation.set(aL, 0, aLz);
       armR.rotation.set(aR, 0, aRz);
       const hop = base === 'win' ? Math.max(0, Math.sin(time * ANIM.winHop)) * 0.04 : 0;
-      legL.position.y = 0.15 + hop + Math.max(0, legSw) * 0.09;
-      legR.position.y = 0.15 + hop + Math.max(0, -legSw) * 0.09;
-      legL.position.z = legSw * 0.14;
-      legR.position.z = -legSw * 0.14;
+      legL.position.y = 0.15 + hop + Math.max(0, legSw) * 0.14;
+      legR.position.y = 0.15 + hop + Math.max(0, -legSw) * 0.14;
+      legL.position.z = legSw * 0.22;
+      legR.position.z = -legSw * 0.22;
 
       /* --- phụ kiện sống động --- */
-      if (extras.cape) extras.cape.rotation.x = 0.12 + Math.sin(time * 2.4 + phase) * 0.06 + (act ? 0.25 : 0) + (base === 'win' ? 0.2 : 0);
+      const mk = canRun ? moveK : 0;
+      if (extras.cape) extras.cape.rotation.x = 0.12 + Math.sin(time * 2.4 + phase) * 0.06 + (act ? 0.25 : 0) + (base === 'win' ? 0.2 : 0) + mk * (0.45 + swing * 0.12);
       if (extras.halo) {
         extras.halo.rotation.y = time * 1.5;
         extras.halo.position.y = 0.62 + Math.sin(time * 3) * 0.02;
       }
-      if (extras.tail) extras.tail.rotation.z = Math.sin(time * 3.4 + phase) * 0.35;
+      if (extras.tail) extras.tail.rotation.z = Math.sin(time * 3.4 + phase) * 0.35 + mk * (swing * 0.55 + (skidT > 0 ? 0.3 : 0));
       if (extras.wings) {
         extras.wings[0].rotation.y = flap;
         extras.wings[1].rotation.y = -flap;
@@ -893,9 +978,9 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
         else sp[i].rotation.y = time * 1.8;
       }
       const sX = extras.swayX;
-      for (let i = 0; i < sX.length; i++) sX[i].rotation.x = 0.25 + Math.sin(time * 3 + phase + i) * 0.22 + (act ? 0.3 : 0);
+      for (let i = 0; i < sX.length; i++) sX[i].rotation.x = 0.25 + Math.sin(time * 3 + phase + i) * 0.22 + (act ? 0.3 : 0) + mk * (0.4 + Math.sin(runPh * 2 + i) * 0.25);
       const sZ = extras.swayZ;
-      for (let i = 0; i < sZ.length; i++) sZ[i].rotation.z = Math.sin(time * 3.4 + phase + i * 1.7) * 0.18;
+      for (let i = 0; i < sZ.length; i++) sZ[i].rotation.z = Math.sin(time * 3.4 + phase + i * 1.7) * 0.18 + mk * Math.sin(runPh * 2 + i * 1.7) * 0.3;
       const pu = extras.pulse;
       for (let i = 0; i < pu.length; i++) pu[i].scale.setScalar((pu[i].userData.s as number) * (1 + Math.sin(time * 5 + i) * 0.12 + (act?.kind === 'cast' ? 0.25 : 0)));
 

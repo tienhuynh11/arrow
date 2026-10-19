@@ -17,17 +17,21 @@ export const HITSTOP = { normal: 0.025, crit: 0.055, ult: 0.04, final: 0.14 } as
 
 /** bố cục + di chuyển + trình diễn (đơn vị: đơn vị thế giới / giây cảnh). Đội hình KHÓA LÀN: không đuổi, không lượn. */
 export const MOTION = {
-  /* z (làn) của hai ô trong cột; x lấy từ engine */
-  rowZ: [-0.8, 0.8] as readonly number[],
-  /** boss: hơi lệch z để không đè ô còn lại của cột đầu */
-  bossZ: -0.5,
+  /* z (làn) theo từng ô 0..5; x lấy THẲNG từ engine (mỗi ô một x riêng: hai ô cùng hàng so le ~450 đv = 0.375 thế giới, hàng cách 0.75).
+     Làn trải ±1.6, 3 làn/hàng so le dạng gạch: hàng trước -1.0/+0.6, hàng giữa +1.6/-0.2, hàng sau -1.6/+1.0
+     => mọi cặp đồng đội (x engine ban đầu) cách nhau ≥ ~1.0 thế giới ngay từ lúc xuất phát (xem sepSame bên dưới nếu vẫn sát nhau khi dàn trận đổi). */
+  laneZ: [-1.0, 0.6, 1.6, -0.2, -1.6, 1.0] as readonly number[],
+  /** boss đứng giữa */
+  bossZ: 0,
+  /* tách cảnh quan thuần hình ảnh: khoảng cách thế giới tối thiểu (xz) giữa hai đơn vị cùng phe / khác phe; chỉ đẩy theo z, bám mượt sepRate (1/giây) */
+  sepSame: 0.9, sepFoe: 0.7, sepMax: 1.0, sepRate: 9,
   /** nhịp mở màn (giây THẬT): đứng yên để thấy hai đạo quân ở xa nhau trước khi tiến */
   readyReal: 0.8,
   /* x thế giới = (x_engine/12000 - 0.5) * 10 (xem worldX): nền bám x engine với tốc độ followRate (1/giây cảnh); chạy khi còn lệch > moveEps;
-     runSpeed = tốc độ (đv thế giới/giây cảnh) tương ứng chạy hết cỡ (~22 đv engine/tick x 20Hz / 1200 ≈ 0.37) */
-  followRate: 12, moveEps: 0.02, runSpeed: 0.4,
+     runSpeed = tốc độ (đv thế giới/giây cảnh) tương ứng chạy hết cỡ (~40 đv engine/tick x 20Hz / 1200 ≈ 0.67); x đích đọc thẳng từ engine mỗi khung (không đợi sự kiện move) nên model không bị giật cục/trễ */
+  followRate: 22, moveEps: 0.02, runSpeed: 0.7,
   /* đòn cận chiến TẠI CHỖ: bước tới ≤ lungeStep (≤0,25) rồi giật về, tuyệt kỹ bước hơi xa/lâu hơn */
-  lungeMin: 0.28, lungeStep: 0.22, lungeStepUlt: 0.4, lungeUlt: 0.5,
+  lungeMin: 0.24, lungeStep: 0.24, lungeStepUlt: 0.35, lungeUlt: 0.45,
   /* xoay mặt (rad/s), nghiêng người khi lao */
   turn: 14, lean: 0.22,
   /* sau khi ra đòn: giữ mặt hướng mục tiêu chừng này giây rồi quay về hướng phe */

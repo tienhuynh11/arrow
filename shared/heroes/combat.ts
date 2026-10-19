@@ -12,6 +12,10 @@ export const FRONT_X = 3600;
 export const ROW_GAP = 900;
 /** hai đơn vị PHE ĐỊCH NHAU không bao giờ lại gần hơn mức này (đồng minh được chồng lên nhau) */
 export const MIN_SEP = 350;
+/** hai đồng minh không đứng gần nhau hơn mức này trên trục x (khi đã vào tầm: kẻ đến sau bị đẩy lên trước, một chiều nên không dao động) */
+export const ALLY_SEP = 450;
+/** lệch x theo chẵn/lẻ của ô trong cùng một hàng: ô chẵn +, ô lẻ - (hai đơn vị một hàng so le nhau 2*SLOT_STAGGER = 450) */
+export const SLOT_STAGGER = 225;
 /** đơn vị đánh xa đứng sau tuyến cận chiến của phe mình ít nhất bấy nhiêu */
 export const BACK_MARGIN = 300;
 /** tầm ≤ mức này coi là cận chiến (không bị chặn "đứng sau tuyến trước") */
@@ -23,22 +27,22 @@ export const MOVE_EVENT_EVERY = 5;
 export const ROLE_RANGE: Record<Role, number> = {
   tank: 900, warrior: 900, healer: 3200, support: 3200, mage: 3600, archer: 4200,
 };
-/** tốc độ đi theo vai trò (đơn vị / tick). Hai hàng trước đối đầu: 4800 - 900 = 3900 đơn vị, khép lại ~44/tick => đụng độ sau ~4.5 giây */
+/** tốc độ đi theo vai trò (đơn vị / tick). Hai hàng trước đối đầu: 4800 - 900 = 3900 đơn vị, khép lại ~72-80/tick (x1.8 so với bản cũ) => đụng độ sau ~2.3 giây */
 export const ROLE_MOVE: Record<Role, number> = {
-  tank: 18, warrior: 22, healer: 18, support: 20, mage: 18, archer: 20,
+  tank: 32, warrior: 40, healer: 32, support: 36, mage: 32, archer: 36,
 };
 /** boss: tầm như tank nhưng bước chậm */
 export const BOSS_RANGE = 1100;
-export const BOSS_MOVE = 12;
+export const BOSS_MOVE = 22;
 
 export const rangeOf = (role: Role, boss?: boolean, override?: number): number =>
   override ?? (boss ? BOSS_RANGE : ROLE_RANGE[role]);
 export const moveOf = (role: Role, boss?: boolean, override?: number): number =>
   override ?? (boss ? BOSS_MOVE : ROLE_MOVE[role]);
 
-/** vị trí xuất phát của một ô: hàng trước ở FRONT_X, mỗi hàng sau lùi ROW_GAP; phe quái đối xứng */
+/** vị trí xuất phát của một ô: hàng trước ở FRONT_X, mỗi hàng sau lùi ROW_GAP, ô chẵn lên trước / ô lẻ lùi SLOT_STAGGER; phe quái đối xứng */
 export function startX(side: 0 | 1, slot: number): number {
-  const x = FRONT_X - rowOfSlot(slot) * ROW_GAP;
+  const x = FRONT_X - rowOfSlot(slot) * ROW_GAP + (slot % 2 === 0 ? SLOT_STAGGER : -SLOT_STAGGER);
   return side === 0 ? x : ARENA_LEN - x;
 }
 

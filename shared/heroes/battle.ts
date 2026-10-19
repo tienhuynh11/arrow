@@ -2,7 +2,7 @@
 // Chạy giống hệt ở client (để có hình ảnh, tua x3) và server (chạy lại để chấm thắng/thua, chống gian lận).
 // Engine chỉ xuất danh sách sự kiện; lớp 3D chỉ phát lại danh sách đó.
 
-import { BACK_MARGIN, MELEE_MAX_RANGE, MIN_SEP, MOVE_EVENT_EVERY, moveOf, rangeOf, startX, statOf } from './combat.js';
+import { ALLY_SEP, BACK_MARGIN, MELEE_MAX_RANGE, MIN_SEP, MOVE_EVENT_EVERY, moveOf, rangeOf, startX, statOf } from './combat.js';
 import { BATTLE_MAX_TICKS, FRONT_SLOTS } from './config.js';
 import { statsAt } from './formulas.js';
 import { addStats } from './gear.js';
@@ -113,6 +113,9 @@ export interface Unit {
   shieldUntil: number;
   effs: Eff[];
 }
+
+/** hướng tiến: phe người chơi sang phải (+1), quái sang trái (-1) */
+const dir_ = (u: Unit): 1 | -1 => (u.init.side === 0 ? 1 : -1);
 
 const BEATS: Record<Element, Element> = { forest: 'earth', earth: 'water', water: 'forest', light: 'dark', dark: 'light' };
 /** 1 = lợi thế, -1 = bất lợi, 0 = ngang */
@@ -280,7 +283,7 @@ export class Battle {
       let moved = false;
       if (u.moveSpd > 0 && !this.stunned(u)) {
         const f = this.nearestFoe(u);
-        const dir = u.init.side === 0 ? 1 : -1;
+        const dir = dir_(u);
         if (f && (f.x - u.x) * dir > u.range) {
           let step = Math.min(u.moveSpd, (f.x - u.x) * dir - u.range);
           let frontPos = -1;
@@ -304,11 +307,48 @@ export class Battle {
           }
         }
       }
+      // đã vào tầm mà còn dính sát đồng minh (< ALLY_SEP): trong mỗi cặp dính nhau, bên uid LỚN hơn bị đẩy lên trước bên uid nhỏ (thứ tự cố định, không nhảy qua nhảy lại), CHỈ tiến về phía địch
+      // => đơn điệu, bị chặn bởi MIN_SEP với địch và BACK_MARGIN với tuyến cận chiến, nên không dao động và luôn dừng
+      if (!moved && u.moveSpd > 0 && !this.stunned(u)) {
+        const f = this.nearestFoe(u);
+        if (f && (f.x - u.x) * dir_(u) <= u.range) moved = this.spreadAlly(u);
+      }
       if (u.x !== u.sentX && (!moved || t % MOVE_EVENT_EVERY === 0)) {
         u.sentX = u.x;
         out.push({ t, k: 'move', u: u.uid, x: u.x });
       }
     }
+  }
+
+  /** đẩy u lên trước để cách mọi đồng minh uid nhỏ hơn ≥ ALLY_SEP; trả true nếu đã nhích */
+  private spreadAlly(u: Unit): boolean {
+    const dir = dir_(u);
+    let want = u.x * dir;
+    let frontPos = -1;
+    let hasMelee = false;
+    for (const o of this.units) {
+      if (!o.alive || o === u) continue;
+      if (o.init.side !== u.init.side) {
+        continue;
+      }
+      if (o.range <= MELEE_MAX_RANGE) {
+        hasMelee = true;
+        frontPos = Math.max(frontPos, o.x * dir);
+      }
+      const d = (o.x - u.x) * dir;
+      if (o.uid < u.uid && Math.abs(d) < ALLY_SEP) want = Math.max(want, o.x * dir + ALLY_SEP);
+    }
+    let step = Math.min(u.moveSpd, want - u.x * dir);
+    if (step <= 0) return false;
+    for (const o of this.units) {
+      if (!o.alive || o.init.side === u.init.side) continue;
+      const ahead = (o.x - u.x) * dir;
+      if (ahead > 0) step = Math.min(step, ahead - MIN_SEP);
+    }
+    if (u.range > MELEE_MAX_RANGE && hasMelee) step = Math.min(step, frontPos - BACK_MARGIN - u.x * dir);
+    if (step <= 0) return false;
+    u.x += dir * step;
+    return true;
   }
 
   private spawnWave(n: number, out: BattleEvent[]): void {
