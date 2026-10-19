@@ -11,7 +11,7 @@ import type { ArenaBattleRes, ArenaRes, ArenaTopRes, BattleRes, MeResponse, Summ
 import { AFK_CAP_MS, SQUAD_SIZE, STAMINA_MAX } from '../../shared/heroes/config.js';
 import { DUPE_SHARDS, accountXpToNext, levelCapOf, levelUpCost, levelUpPlan } from '../../shared/heroes/formulas.js';
 import { HERO_BY_ID, STARTER_HEROES } from '../../shared/heroes/heroes.js';
-import { afkReward } from '../../shared/heroes/stages.js';
+import { STAGES, afkReward, stageSetup } from '../../shared/heroes/stages.js';
 import { _resetRateLimits } from '../src/monkey/accounts.js';
 import { loadDotEnv, useStore } from '../src/monkey/db/index.js';
 import { MemStore } from '../src/monkey/db/memStore.js';
@@ -551,7 +551,9 @@ console.log('— trang bị —');
   const b = mk(true);
   const ra = opBattle(a, '1-1', 0, seed, [], true, () => 0);
   const rb = opBattle(b, '1-1', 0, seed, [], true, () => 0);
-  ok(a.runs[0].ticks !== b.runs[0].ticks, `đồ UR cấp 10 làm đổi diễn biến trận (ticks ${a.runs[0].ticks} → ${b.runs[0].ticks})`);
+  // so toàn bộ diễn biến (không chỉ số tick: hai trận có thể tình cờ kết thúc cùng tick)
+  const evOf = (st: ReturnType<typeof mk>) => JSON.stringify(simulate(stageSetup(STAGES[0], st.squads[0].filter((id) => id && st.heroes[id]).map((id, slot) => heroUnit(st.heroes[id], slot, sumGear(st.gear.filter((g) => g.hero === id)))), seed), [], true).events);
+  ok(a.runs[0].ticks !== b.runs[0].ticks || evOf(a) !== evOf(b), `đồ UR cấp 10 làm đổi diễn biến trận (ticks ${a.runs[0].ticks} → ${b.runs[0].ticks})`);
   ok(ra.win && rb.win, 'cả hai đều thắng ải 1-1');
   const sumB = sumGear(b.gear);
   ok(sumB.atk > 0 && sumB.hp > 0 && sumB.def > 0, 'sumGear của bộ đồ đang mặc > 0');

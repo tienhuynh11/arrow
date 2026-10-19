@@ -1,5 +1,6 @@
 // Công thức chỉ số / chi phí — thuần số nguyên, dùng chung server + client.
 import { MAX_LEVEL, MAX_STAR } from './config.js';
+import { ROLE_COMBAT, STAR_COMBAT, statOf } from './combat.js';
 import type { Rarity, Role, Stats } from './types.js';
 
 /** chỉ số cấp 1, 1 sao, phẩm R theo vai trò */
@@ -27,16 +28,22 @@ export function statsAt(role: Role, rarity: Rarity, level: number, star: number)
     atk: Math.floor(base.atk * mul),
     def: Math.floor(base.def * mul),
     spd: base.spd,
+    // chỉ số chiến đấu mới: mặc định theo vai trò, tăng nhẹ theo sao
+    aspd: ROLE_COMBAT[role].aspd + STAR_COMBAT.aspd * (st - 1),
+    crit: ROLE_COMBAT[role].crit + STAR_COMBAT.crit * (st - 1),
+    critDmg: ROLE_COMBAT[role].critDmg + STAR_COMBAT.critDmg * (st - 1),
   };
 }
 /** chỉ số quái: như tướng phẩm R, 1 sao, nhân thêm hệ số (%) */
 export function monsterStatsAt(role: Role, level: number, mult: number): Stats {
   const s = statsAt(role, 'R', level, 1);
-  return { hp: Math.floor((s.hp * mult) / 100), atk: Math.floor((s.atk * mult) / 100), def: s.def, spd: s.spd };
+  return { ...s, hp: Math.floor((s.hp * mult) / 100), atk: Math.floor((s.atk * mult) / 100) };
 }
 /** lực chiến để hiển thị */
 export function powerOf(s: Stats): number {
-  return Math.floor(s.hp / 5 + s.atk * 4 + s.def * 3 + s.spd * 2);
+  // thêm một phần nhỏ cho tốc đánh / bạo kích / hút máu (chỉ tính phần vượt mặc định)
+  const extra = Math.max(0, statOf(s, 'aspd') - 100) * 3 + Math.max(0, statOf(s, 'crit') - 10) * 3 + Math.max(0, statOf(s, 'critDmg') - 150) + statOf(s, 'lifesteal') * 10;
+  return Math.floor(s.hp / 5 + s.atk * 4 + s.def * 3 + s.spd * 2 + extra);
 }
 
 /** nâng cấp tướng từ cấp `level` lên `level+1` */

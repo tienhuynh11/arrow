@@ -7,6 +7,7 @@ import { sfx } from '../audio';
 import { portraitOf } from '../render/portraits';
 import { toasts, useMedia } from '../state';
 import { ELEM_CSS, ELEM_ICON, ROLE_ICON, Icon, type IconName } from './icons';
+import { createPortal } from 'preact/compat';
 
 /** màn lớn (PC / máy tính bảng): khớp các khối @media "dk-" ở cuối styles.css; điện thoại giữ nguyên bố cục cũ */
 export const DK_Q = '(min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px)';
@@ -70,7 +71,8 @@ export function Modal(p: { title?: string; onClose?: () => void; children: Compo
     addEventListener('keydown', k);
     return () => removeEventListener('keydown', k);
   }, [p.onClose]);
-  return (
+  // vẽ vào <body> để không bị ngăn xếp lớp của màn đang mở (khung chi tiết tướng...) đè lên
+  return createPortal(
     <div class="modal-back" onPointerDown={(e) => e.target === e.currentTarget && p.onClose?.()}>
       <div class={`modal${p.wide ? ' wide' : ''} ${p.class ?? ''}`} role="dialog" aria-modal="true">
         {(p.title || p.onClose) && (
@@ -81,7 +83,8 @@ export function Modal(p: { title?: string; onClose?: () => void; children: Compo
         )}
         <div class="modal-body">{p.children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

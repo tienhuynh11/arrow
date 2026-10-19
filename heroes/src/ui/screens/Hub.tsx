@@ -106,14 +106,6 @@ export function Hub() {
       <Canvas3D key={ids.join(',')} start={start} class="hub-canvas" />
       <div class="hub-ui">
         <TutorialChip />
-        <button type="button" class={`pf-hubchip r-${avatarRarity(m) ?? 'R'}`} onClick={() => go({ n: 'profile' })} aria-label={`Hồ sơ người chơi ${m.profile.username}, cấp ${m.profile.level}`}>
-          <span class="pf-hubchip-av"><AvatarFace m={m} /></span>
-          <span class="pf-hubchip-tx">
-            <b>{m.profile.username}</b>
-            <small>Cấp {m.profile.level}</small>
-          </span>
-          {bd.profile > 0 && <i class="hb-badge hb-badge-dot" />}
-        </button>
         {leader && (
           <div class="hb-plate">
             <b>{leader.name}</b>

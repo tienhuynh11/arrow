@@ -2,8 +2,10 @@
 // Chạy giống hệt ở client (để có hình ảnh, tua x3) và server (chạy lại để chấm thắng/thua, chống gian lận).
 // Engine chỉ xuất danh sách sự kiện; lớp 3D chỉ phát lại danh sách đó.
 
+import { BACK_MARGIN, MELEE_MAX_RANGE, MIN_SEP, MOVE_EVENT_EVERY, moveOf, rangeOf, startX, statOf } from './combat.js';
 import { BATTLE_MAX_TICKS, FRONT_SLOTS } from './config.js';
 import { statsAt } from './formulas.js';
+import { addStats } from './gear.js';
 import { heroOf } from './heroes.js';
 import { mulberry32, type Rng } from './rng.js';
 import { skillOf } from './skills.js';
@@ -14,8 +16,6 @@ export const GAUGE_MAX = 4000;
 export const ENERGY_MAX = 100;
 const ENERGY_ON_ACT = 20;
 const ENERGY_ON_HIT = 10;
-const CRIT_PCT = 10;
-const CRIT_MULT = 150;
 const ADV_MULT = 120;
 const DIS_MULT = 80;
 /** nghỉ giữa hai đợt quái (tick) để trình diễn kịp */
@@ -37,6 +37,9 @@ export interface UnitInit {
   /** [đòn thường, kỹ năng, tuyệt kỹ] */
   skills: [string, string, string];
   boss?: boolean;
+  /** ghi đè tầm đánh / tốc độ đi (đơn vị, mặc định theo vai trò — combat.ts); chủ yếu để thử nghiệm */
+  range?: number;
+  moveSpd?: number;
 }
 export interface BattleSetup {
   seed: number;
@@ -58,14 +61,15 @@ export function heroUnit(o: OwnedHero, slot: number, bonus?: Stats): UnitInit {
   const d = heroOf(o.id);
   const base = statsAt(d.role, d.rarity, o.level, o.star);
   // `bonus` = tổng chỉ số từ trang bị đang mặc (xem gear.ts sumGear)
-  const stats = bonus ? { hp: base.hp + bonus.hp, atk: base.atk + bonus.atk, def: base.def + bonus.def, spd: base.spd + bonus.spd } : base;
+  const stats = bonus ? addStats(base, bonus) : base;
   return { key: d.id, name: d.name, side: 0, slot, element: d.element, role: d.role, stats, skills: d.skills };
 }
 
 /* ------------------------------ SỰ KIỆN ------------------------------ */
 export type BattleEvent =
-  | { t: number; k: 'wave'; n: number; units: number[] }
-  | { t: number; k: 'act'; u: number; s: string; tg: number[] }
+  | { t: number; k: 'wave'; n: number; units: number[]; /** x xuất phát của từng đơn vị trong `units` */ xs?: number[] }
+  | { t: number; k: 'act'; u: number; s: string; tg: number[]; /** x của người ra đòn */ ax: number; /** x của từng mục tiêu (cùng thứ tự `tg`) */ tx: number[] }
+  | { t: number; k: 'move'; u: number; x: number }
   | { t: number; k: 'dmg'; u: number; tg: number; n: number; crit: boolean; adv: number; hp: number }
   | { t: number; k: 'heal'; u: number; tg: number; n: number; hp: number }
   | { t: number; k: 'fx'; u: number; tg: number; type: EffectType; dur: number }
@@ -98,6 +102,13 @@ export interface Unit {
   /** hồi chiêu còn lại của kỹ năng chủ động (tick) */
   cd: number;
   alive: boolean;
+  /** vị trí trên trục trận đánh (số nguyên, 0..ARENA_LEN) */
+  x: number;
+  /** tầm đánh + tốc độ đi (đơn vị / tick) */
+  range: number;
+  moveSpd: number;
+  /** x đã phát trong sự kiện 'move' gần nhất */
+  sentX: number;
   shield: number;
   shieldUntil: number;
   effs: Eff[];
@@ -131,9 +142,12 @@ export class Battle {
   }
 
   private makeUnit(uid: number, init: UnitInit): Unit {
+    const x = startX(init.side, init.slot);
     return {
       uid, init, hp: init.stats.hp, maxHp: init.stats.hp, energy: 0,
-      gauge: this.rng.int(GAUGE_MAX / 2), cd: 0, alive: true, shield: 0, shieldUntil: 0, effs: [],
+      gauge: this.rng.int(GAUGE_MAX / 2), cd: 0, alive: true,
+      x, sentX: x, range: rangeOf(init.role, init.boss, init.range), moveSpd: moveOf(init.role, init.boss, init.moveSpd),
+      shield: 0, shieldUntil: 0, effs: [],
     };
   }
 
@@ -158,6 +172,33 @@ export class Battle {
   private defOf(u: Unit): number {
     const m = Math.max(10, 100 + this.effSum(u, 'defUp') - this.effSum(u, 'defDown'));
     return Math.floor((u.init.stats.def * m) / 100);
+  }
+  /** vị trí hiện tại của một đơn vị (-1 nếu không có) */
+  pos(uid: number): number {
+    return this.unit(uid)?.x ?? -1;
+  }
+  /** ảnh chụp vị trí mọi đơn vị còn sống (client dùng để dựng cảnh lúc bắt đầu / khôi phục) */
+  snapshot(): { uid: number; side: 0 | 1; slot: number; x: number; range: number }[] {
+    return this.units.filter((u) => u.alive).map((u) => ({ uid: u.uid, side: u.init.side, slot: u.init.slot, x: u.x, range: u.range }));
+  }
+  /** địch gần nhất theo |dx| (hòa → ô thấp hơn → uid thấp hơn) */
+  private nearestFoe(u: Unit): Unit | undefined {
+    let best: Unit | undefined;
+    let bd = 0;
+    for (const f of this.units) {
+      if (!f.alive || f.init.side === u.init.side) continue;
+      const d = Math.abs(f.x - u.x);
+      if (!best || d < bd || (d === bd && (f.init.slot < best.init.slot || (f.init.slot === best.init.slot && f.uid < best.uid)))) {
+        best = f;
+        bd = d;
+      }
+    }
+    return best;
+  }
+  /** có địch trong tầm đánh không (chỉ khi đó thanh hành động mới đầy và mới ra đòn) */
+  private inRange(u: Unit): boolean {
+    const f = this.nearestFoe(u);
+    return !!f && Math.abs(f.x - u.x) <= u.range;
   }
   private spdOf(u: Unit): number {
     return Math.floor((u.init.stats.spd * (100 + this.effSum(u, 'spdUp'))) / 100);
@@ -192,9 +233,14 @@ export class Battle {
       if (u.shield > 0 && u.shieldUntil <= t) u.shield = 0;
     }
 
+    // di chuyển (cả lúc chờ đợt quái: hai bên tiến lại gần nhau)
+    this.moveAll(out);
+
     if (t >= this.lockUntil) {
-      // đổ đầy thanh hành động
-      for (const u of this.units) if (u.alive && !this.stunned(u)) u.gauge += this.spdOf(u);
+      // đổ đầy thanh hành động: chỉ khi có địch trong tầm; tốc độ = spd * tốc đánh / 100
+      for (const u of this.units) {
+        if (u.alive && !this.stunned(u) && this.inRange(u)) u.gauge += Math.floor((this.spdOf(u) * statOf(u.init.stats, 'aspd')) / 100);
+      }
 
       // tuyệt kỹ người chơi bấm
       const q = this.ultQueue;
@@ -206,10 +252,10 @@ export class Battle {
 
       // tướng nào đầy thanh thì ra đòn (đầy nhiều hơn ra trước)
       const ready = this.units
-        .filter((u) => u.alive && u.gauge >= GAUGE_MAX && !this.stunned(u))
+        .filter((u) => u.alive && u.gauge >= GAUGE_MAX && !this.stunned(u) && this.inRange(u))
         .sort((a, b) => b.gauge - a.gauge || a.uid - b.uid);
       for (const u of ready) {
-        if (!u.alive || this.done || this.stunned(u)) continue;
+        if (!u.alive || this.done || this.stunned(u) || !this.inRange(u)) continue;
         u.gauge -= GAUGE_MAX;
         const wantUlt = u.energy >= ENERGY_MAX && (u.init.side === 1 || this.auto);
         const [b, a, ul] = u.init.skills;
@@ -226,17 +272,69 @@ export class Battle {
     return out;
   }
 
+  /** mỗi tick: đơn vị chọn địch gần nhất, nếu ngoài tầm thì tiến lại (không xuyên qua địch, tướng đánh xa đứng sau tuyến cận chiến) */
+  private moveAll(out: BattleEvent[]): void {
+    const t = this.tick;
+    for (const u of this.units) {
+      if (!u.alive) continue;
+      let moved = false;
+      if (u.moveSpd > 0 && !this.stunned(u)) {
+        const f = this.nearestFoe(u);
+        const dir = u.init.side === 0 ? 1 : -1;
+        if (f && (f.x - u.x) * dir > u.range) {
+          let step = Math.min(u.moveSpd, (f.x - u.x) * dir - u.range);
+          let frontPos = -1;
+          let hasMelee = false;
+          for (const o of this.units) {
+            if (!o.alive) continue;
+            if (o.init.side !== u.init.side) {
+              // không áp sát địch phía trước quá MIN_SEP
+              const ahead = (o.x - u.x) * dir;
+              if (ahead > 0) step = Math.min(step, ahead - MIN_SEP);
+            } else if (o !== u && o.range <= MELEE_MAX_RANGE) {
+              hasMelee = true;
+              frontPos = Math.max(frontPos, o.x * dir);
+            }
+          }
+          // đánh xa đứng sau tuyến cận chiến của phe mình (hết cận chiến thì được tiến)
+          if (u.range > MELEE_MAX_RANGE && hasMelee) step = Math.min(step, frontPos - BACK_MARGIN - u.x * dir);
+          if (step > 0) {
+            u.x += dir * step;
+            moved = true;
+          }
+        }
+      }
+      if (u.x !== u.sentX && (!moved || t % MOVE_EVENT_EVERY === 0)) {
+        u.sentX = u.x;
+        out.push({ t, k: 'move', u: u.uid, x: u.x });
+      }
+    }
+  }
+
   private spawnWave(n: number, out: BattleEvent[]): void {
     this.wave = n;
     const base = 10 + n * 10;
     const ids: number[] = [];
+    const xs: number[] = [];
+    // đợt mới: phe người chơi về đội hình xuất phát (hai bên lại cách xa nhau)
+    if (n > 0) {
+      for (const u of this.units) {
+        if (!u.alive || u.init.side !== 0) continue;
+        u.x = startX(0, u.init.slot);
+        if (u.x !== u.sentX) {
+          u.sentX = u.x;
+          out.push({ t: this.tick, k: 'move', u: u.uid, x: u.x });
+        }
+      }
+    }
     this.setup.waves[n].forEach((init, i) => {
       const u = this.makeUnit(base + i, init);
       this.units.push(u);
       ids.push(u.uid);
+      xs.push(u.x);
     });
     this.lockUntil = this.tick + WAVE_PAUSE;
-    out.push({ t: this.tick, k: 'wave', n, units: ids });
+    out.push({ t: this.tick, k: 'wave', n, units: ids, xs });
   }
 
   /** hết đợt/hết đội thì xử lý; trả true nếu trận đã kết thúc */
@@ -262,17 +360,20 @@ export class Battle {
     const allies = this.side(u.init.side);
     const bySlot = (a: Unit, b: Unit) => a.init.slot - b.init.slot || a.uid - b.uid;
     const ratio = (a: Unit, b: Unit) => a.hp * b.maxHp - b.hp * a.maxHp || a.uid - b.uid;
+    const dist = (a: Unit) => Math.abs(a.x - u.x);
+    const byDist = (a: Unit, b: Unit) => dist(a) - dist(b) || bySlot(a, b);
+    // đòn đơn mục tiêu chỉ nhắm địch TRONG TẦM (không ai trong tầm, ví dụ tuyệt kỹ bấm lúc đang tiến: lấy mọi địch)
+    const inR = foes.filter((f) => dist(f) <= u.range);
+    const pool = inR.length ? inR : foes;
     switch (sk.target) {
-      case 'enemy': {
-        const front = foes.filter((f) => f.init.slot < FRONT_SLOTS).sort(bySlot);
-        return [(front.length ? front : foes.sort(bySlot))[0]];
-      }
+      case 'enemy':
+        return [pool.sort(byDist)[0]];
       case 'enemyBack': {
-        const back = foes.filter((f) => f.init.slot >= FRONT_SLOTS).sort(bySlot);
-        return [(back.length ? back : foes.sort(bySlot))[0]];
+        const back = pool.filter((f) => f.init.slot >= FRONT_SLOTS).sort(bySlot);
+        return [(back.length ? back : pool.sort(byDist))[0]];
       }
       case 'enemyLowest':
-        return [foes.sort(ratio)[0]];
+        return [pool.sort(ratio)[0]];
       case 'enemyAll':
         return foes.sort(bySlot);
       case 'self':
@@ -292,7 +393,7 @@ export class Battle {
       u.energy = Math.min(ENERGY_MAX, u.energy + ENERGY_ON_ACT);
       if (sk.kind === 'active') u.cd = sk.cd;
     }
-    out.push({ t: this.tick, k: 'act', u: u.uid, s: sk.id, tg: targets.map((x) => x.uid) });
+    out.push({ t: this.tick, k: 'act', u: u.uid, s: sk.id, tg: targets.map((x) => x.uid), ax: u.x, tx: targets.map((x) => x.x) });
 
     for (const tg of targets) {
       if (sk.type === 'dmg') this.hit(u, tg, sk, out);
@@ -307,10 +408,10 @@ export class Battle {
 
   private hit(u: Unit, tg: Unit, sk: SkillDef, out: BattleEvent[]): void {
     const adv = advantage(u.init.element, tg.init.element);
-    const crit = this.rng.int(100) < CRIT_PCT;
+    const crit = this.rng.int(100) < statOf(u.init.stats, 'crit');
     let n = (this.atkOf(u) * sk.power) / 100;
     n = (n * (adv > 0 ? ADV_MULT : adv < 0 ? DIS_MULT : 100)) / 100;
-    if (crit) n = (n * CRIT_MULT) / 100;
+    if (crit) n = (n * statOf(u.init.stats, 'critDmg')) / 100;
     n = Math.max(1, Math.floor((n * 200) / (200 + this.defOf(tg))));
     if (tg.shield > 0) {
       const ab = Math.min(tg.shield, n);
@@ -323,6 +424,12 @@ export class Battle {
       tg.alive = false;
       out.push({ t: this.tick, k: 'die', u: tg.uid });
     } else tg.energy = Math.min(ENERGY_MAX, tg.energy + ENERGY_ON_HIT);
+    // hút máu: hồi cho người đánh một phần sát thương gây ra
+    const ls = Math.floor((n * statOf(u.init.stats, 'lifesteal')) / 100);
+    if (ls > 0 && u.alive && u.hp < u.maxHp) {
+      u.hp = Math.min(u.maxHp, u.hp + ls);
+      out.push({ t: this.tick, k: 'heal', u: u.uid, tg: u.uid, n: ls, hp: u.hp });
+    }
   }
 
   private applyEffect(src: Unit, tg: Unit, type: EffectType, value: number, dur: number, out: BattleEvent[]): void {

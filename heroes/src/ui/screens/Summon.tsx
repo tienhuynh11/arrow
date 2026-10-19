@@ -1,7 +1,7 @@
-// Triệu hồi: banner, x1/x10, vé/kim cương, pity, bảng tỉ lệ, hiệu ứng lật thẻ. Mỗi lần bấm một khoá chống gửi trùng.
+// Triệu hồi: banner, x1/x10, vé/kim cương, nút "!" xem tỉ lệ, lịch sử, hiệu ứng lật thẻ. Mỗi lần bấm một khoá chống gửi trùng.
 import { useState } from 'preact/hooks';
-import { BANNERS, RATES, SSR_PITY, SUMMON10_COST, SUMMON_COST, UR_PITY, NEW_PITY, type Banner } from '@shared/heroes/gacha';
-import { DUPE_SHARDS, powerOf, starUpCost, statsAt } from '@shared/heroes/formulas';
+import { BANNERS, RATES, SUMMON10_COST, SUMMON_COST, type Banner } from '@shared/heroes/gacha';
+import { DUPE_SHARDS, powerOf, statsAt } from '@shared/heroes/formulas';
 import { poolOf } from '@shared/heroes/heroes';
 import { skillOf } from '@shared/heroes/skills';
 import { ELEMENT_NAME, RARITIES, ROLE_NAME, type HeroDef, type Rarity } from '@shared/heroes/types';
@@ -64,22 +64,9 @@ function pct(x: number): string {
 }
 /** tỉ lệ cơ bản của cả phẩm (%) */
 const rateOf = (r: Rarity) => RATES[r] / 100;
-/** tỉ lệ ra đúng 1 tướng (%) ở banner này, chưa tính bảo hiểm.
- *  Banner nổi bật, phẩm UR: tướng nổi bật chiếm 50% số lượt UR, các UR còn lại chia đều 50% còn lại. */
-function chanceOf(h: HeroDef, b: Banner): number {
-  const pool = poolOf(h.rarity);
-  const base = rateOf(h.rarity);
-  if (h.rarity === 'UR' && b.featured && pool.some((x) => x.id === b.featured)) {
-    const others = pool.length - 1;
-    if (others <= 0) return base;
-    return h.id === b.featured ? base * 0.5 : (base * 0.5) / others;
-  }
-  return base / pool.length;
-}
-
 /* ------------------------------ CHI TIẾT TƯỚNG ------------------------------ */
 const KIND_LABEL = { basic: 'Đòn thường', active: 'Kỹ năng', ult: 'Tuyệt kỹ' } as const;
-function HeroInfo({ def, chance, onClose }: { def: HeroDef; chance: number; onClose: () => void }) {
+function HeroInfo({ def, onClose }: { def: HeroDef; onClose: () => void }) {
   const o = ownedMap(me.value!).get(def.id);
   const st = statsAt(def.role, def.rarity, 1, 1);
   return (
@@ -87,13 +74,11 @@ function HeroInfo({ def, chance, onClose }: { def: HeroDef; chance: number; onCl
       <div class="sm-ihead">
         <div class={`sm-iart r-${def.rarity}`}><Portrait id={def.id} rarity={def.rarity} /></div>
         <div class="sm-ibox">
-          <small class="muted">{def.title}</small>
           <div class="sm-chips">
             <RarityTag r={def.rarity} />
             <ElemChip el={def.element} label />
             <RoleChip role={def.role} label />
           </div>
-          <span class="sm-line">Tỉ lệ ra: <b>{pct(chance)}%</b> mỗi lượt</span>
           {o ? (
             <span class="sm-line">Đã có: Lv{o.level} <Stars n={o.star} size={13} /></span>
           ) : (
@@ -132,17 +117,11 @@ function PoolTab({ banner, onPick }: { banner: Banner; onPick: (h: HeroDef) => v
       {RARITIES.slice().reverse().map((r) => {
         const pool = poolOf(r);
         if (!pool.length) return null;
-        const featUR = r === 'UR' && !!banner.featured;
         return (
           <section class={`sm-rar r-${r}`} key={r}>
             <header>
               <RarityTag r={r} />
               <b class="sm-rate">{pct(rateOf(r))}%</b>
-              <small>
-                {featUR
-                  ? `${pool.length} tướng, nổi bật 50% số lượt UR`
-                  : `${pool.length} tướng, mỗi tướng ${pct(rateOf(r) / pool.length)}%`}
-              </small>
             </header>
             <div class="sm-grid">
               {pool.map((h) => {
@@ -161,7 +140,6 @@ function PoolTab({ banner, onPick }: { banner: Banner; onPick: (h: HeroDef) => v
                         </>
                       }
                     />
-                    <small class="sm-chance">{pct(chanceOf(h, banner))}%</small>
                   </div>
                 );
               })}
@@ -173,58 +151,17 @@ function PoolTab({ banner, onPick }: { banner: Banner; onPick: (h: HeroDef) => v
   );
 }
 
-/* ------------------------------ TAB: TỈ LỆ & BẢO HIỂM ------------------------------ */
-function RulesTab({ banner }: { banner: Banner }) {
-  const f = banner.featured ? defOf(banner.featured) : null;
+/* ------------------------------ HỘP THOẠI TỈ LỆ ------------------------------ */
+function RatesModal({ onClose }: { onClose: () => void }) {
   return (
-    <div class="sm-rules">
-      <table class="sm-table">
-        <thead>
-          <tr><th>Phẩm</th><th>Tỉ lệ</th><th>Số tướng</th><th>Trùng tướng</th></tr>
-        </thead>
-        <tbody>
-          {RARITIES.slice().reverse().map((r) => (
-            <tr key={r}>
-              <td><RarityTag r={r} /></td>
-              <td><b>{pct(rateOf(r))}%</b></td>
-              <td>{poolOf(r).length}</td>
-              <td>+{DUPE_SHARDS[r]} mảnh</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <h4 class="sm-h">Bảo hiểm</h4>
-      <ul class="sm-list">
-        <li>Quay x10 đảm bảo ít nhất 1 tướng SR trở lên.</li>
-        <li>Chạm mốc <b>{SSR_PITY}</b> lượt chưa ra SSR trở lên: lượt kế chắc chắn ra SSR+ (bộ đếm về 0 khi ra SSR+).</li>
-        <li>Chạm mốc <b>{UR_PITY}</b> lượt chưa ra UR: lượt kế chắc chắn ra UR (bộ đếm về 0 khi ra UR).</li>
-        {f ? (
-          <>
-            <li>Khi ra UR ở banner này: <b>50%</b> là <b>{f.name}</b>, 50% còn lại chia đều cho các UR khác.</li>
-            <li>Nếu UR vừa ra không phải {f.name}, UR kế tiếp <b>chắc chắn</b> là {f.name}.</li>
-          </>
-        ) : (
-          <li>Banner thường: mỗi phẩm chia đều cho mọi tướng trong phẩm đó.</li>
-        )}
+    <Modal title="Tỉ lệ triệu hồi" onClose={onClose} class="cl-rates">
+      <ul class="cl-rate-list">
+        {RARITIES.slice().reverse().map((r) => (
+          <li key={r}><RarityTag r={r} /><b>{pct(rateOf(r))}%</b></li>
+        ))}
       </ul>
-      <h4 class="sm-h">Tướng trùng và mảnh</h4>
-      <ul class="sm-list">
-        <li>Quay trúng tướng đã có sẽ đổi thành mảnh: {RARITIES.map((r) => `${r} +${DUPE_SHARDS[r]}`).join(', ')}.</li>
-        <li>Mảnh dùng để lên sao: sao 1 lên 2 cần {starUpCost(1)} mảnh, rồi {starUpCost(2)}, {starUpCost(3)}, {starUpCost(4)} mảnh.</li>
-      </ul>
-      <h4 class="sm-h">Chi phí</h4>
-      <table class="sm-table">
-        <tbody>
-          <tr><td></td><td><b>x1</b></td><td><b>x10</b></td></tr>
-          <tr>
-            <td><Icon n="ticket" size={18} /> Vé</td><td>{SUMMON_COST.tickets}</td><td>{SUMMON10_COST.tickets}</td>
-          </tr>
-          <tr>
-            <td><Icon n="gem" size={18} /> Kim cương</td><td>{fmt(SUMMON_COST.gems)}</td><td>{fmt(SUMMON10_COST.gems)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+      <small class="muted">Tướng trùng đổi thành mảnh.</small>
+    </Modal>
   );
 }
 
@@ -264,10 +201,9 @@ function HistTab({ hist }: { hist: HistItem[] }) {
   );
 }
 
-type Tab = 'heroes' | 'rates' | 'hist';
+type Tab = 'heroes' | 'hist';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'heroes', label: 'Tướng' },
-  { id: 'rates', label: 'Tỉ lệ & bảo hiểm' },
   { id: 'hist', label: 'Lịch sử' },
 ];
 
@@ -280,9 +216,9 @@ export function Summon() {
   const [busy, run] = useBusy();
   const [pulls, setPulls] = useState<Pull[] | null>(null);
   const [info, setInfo] = useState<HeroDef | null>(null);
+  const [rates, setRates] = useState(false);
   const [hist, setHist] = useState<HistItem[]>(() => loadHist(uid));
   const banner = BANNERS[bi];
-  const pity = m.pity[banner.id] ?? NEW_PITY;
   const w = m.wallet;
   const c1 = SUMMON_COST[pay];
   const c10 = SUMMON10_COST[pay];
@@ -290,8 +226,6 @@ export function Summon() {
   const feat = banner.featured ? defOf(banner.featured) : null;
   const payName = pay === 'tickets' ? 'vé' : 'kim cương';
   const stdTop = poolOf('UR').concat(poolOf('SSR')).slice(0, 5);
-  const leftSSR = Math.max(0, SSR_PITY - pity.sinceSSR);
-  const leftUR = Math.max(0, UR_PITY - pity.sinceUR);
 
   const doSummon = (count: 1 | 10) =>
     run(async () => {
@@ -323,6 +257,7 @@ export function Summon() {
                 {b.name}
               </button>
             ))}
+            <button type="button" class="cl-info" aria-label="Xem tỉ lệ" onClick={() => setRates(true)}>!</button>
           </div>
 
           <div class={`sm-banner${feat ? ' feat' : ''}`}>
@@ -339,7 +274,6 @@ export function Summon() {
                     <ElemChip el={feat.element} label />
                     <RoleChip role={feat.role} label />
                   </div>
-                  <p>50% số lượt UR là {feat.name}, trượt thì lần UR sau chắc chắn.</p>
                 </div>
               </>
             ) : (
@@ -367,30 +301,11 @@ export function Summon() {
 
           <div class="sm-detail">
             {tab === 'heroes' && <PoolTab banner={banner} onPick={setInfo} />}
-            {tab === 'rates' && <RulesTab banner={banner} />}
             {tab === 'hist' && <HistTab hist={hist} />}
           </div>
         </div>
 
         <div class="sm-ctrl">
-          <div class="sm-pity" data-tut="summon-pity">
-            <div class="sm-pcol">
-              <div class="sm-ptop"><span>SSR</span><b>{pity.sinceSSR}/{SSR_PITY}</b></div>
-              <div class="pbar"><i class="ssr" style={{ width: `${Math.min(100, (pity.sinceSSR * 100) / SSR_PITY)}%` }} /></div>
-              <small>Còn {leftSSR} lượt nữa chắc chắn SSR</small>
-            </div>
-            <div class="sm-pcol">
-              <div class="sm-ptop"><span>UR</span><b>{pity.sinceUR}/{UR_PITY}</b></div>
-              <div class="pbar"><i class="ur" style={{ width: `${Math.min(100, (pity.sinceUR * 100) / UR_PITY)}%` }} /></div>
-              <small>Còn {leftUR} lượt nữa chắc chắn UR</small>
-            </div>
-            {feat && (
-              <small class={`sm-guar${pity.guaranteed ? ' ok' : ''}`}>
-                {pity.guaranteed ? `UR kế tiếp chắc chắn là ${feat.name}!` : `UR kế tiếp: 50% là ${feat.name}.`}
-              </small>
-            )}
-          </div>
-
           <div class="sm-hprev">
             <div class="sm-hp-head"><b>Lượt quay gần đây</b><button type="button" class="sm-link" onClick={() => setTab('hist')}>Xem tất cả</button></div>
             {hist.length ? (
@@ -406,10 +321,10 @@ export function Summon() {
           <div class="sm-pull">
             <div class="seg wide sm-pay">
               <button type="button" class={pay === 'tickets' ? 'on' : ''} onClick={() => setPay('tickets')}>
-                <Icon n="ticket" size={18} /> Vé ({fmt(w.tickets)})
+                <Icon n="ticket" size={18} /> Vé
               </button>
               <button type="button" class={pay === 'gems' ? 'on' : ''} onClick={() => setPay('gems')}>
-                <Icon n="gem" size={18} /> Kim cương ({fmt(w.gems)})
+                <Icon n="gem" size={18} /> Kim cương
               </button>
             </div>
             <div class="summon-btns">
@@ -427,7 +342,8 @@ export function Summon() {
         </div>
       </div>
 
-      {info && <HeroInfo def={info} chance={chanceOf(info, banner)} onClose={() => setInfo(null)} />}
+      {info && <HeroInfo def={info} onClose={() => setInfo(null)} />}
+      {rates && <RatesModal onClose={() => setRates(false)} />}
       {pulls && (
         <Reveal
           pulls={pulls}

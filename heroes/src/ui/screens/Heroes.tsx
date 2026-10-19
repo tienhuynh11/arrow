@@ -1,18 +1,17 @@
 // Danh sách tướng (thanh lọc gọn) + chi tiết tướng dạng TAB (3D cố định ở trên, nút hành động ghim ở dưới).
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { levelUpCost, levelUpPlan, powerOf, starUpCost, statsAt } from '@shared/heroes/formulas';
 import { MAX_STAR } from '@shared/heroes/config';
 import { skillOf } from '@shared/heroes/skills';
 import { api, me } from '../../api';
 import { sfx } from '../../audio';
-import { describeSkill, gearBonus, gearOf, gearStatsOf, HEROES, levelCapOf, ownedMap, powerOfOwned } from '../../game';
+import { activeSquadIds, describeSkill, gearBonus, rangeWord, statOf, gearOf, gearStatsOf, HEROES, levelCapOf, ownedMap, powerOfOwned, slotsOpenOf } from '../../game';
 import { runLive } from '../../render/live';
 import { createDetailScene, type DetailScene } from '../../render/scenes';
 import { errToast, fmt, go, useMedia } from '../../state';
-import { Btn, Canvas3D, ElemChip, HeroCard, IconBtn, RarityTag, RoleChip, Stars, useDesktop } from '../common';
-import { applyFilter, EMPTY_FILTER, FilterBar, type HeroFilter } from '../filters';
+import { Btn, Canvas3D, ElemChip, HeroCard, IconBtn, Modal, RarityTag, RoleChip, Stars, useDesktop } from '../common';
 import { GearTab, GearTile, statText } from '../gear';
-import { GEAR_SLOT_NAME, GEAR_SLOTS, gearDefOf } from '@shared/heroes/gear';
+import { addStats, GEAR_SLOT_NAME, GEAR_SLOTS, gearDefOf } from '@shared/heroes/gear';
 import { Icon } from '../icons';
 
 const STAT_ROWS: { k: 'hp' | 'atk' | 'def' | 'spd'; label: string; icon: 'heart' | 'sword' | 'shield' | 'bolt' }[] = [
@@ -41,6 +40,7 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
   const def = HEROES.find((h) => h.id === id)!;
   const o = ownedMap(m).get(id);
   const [tab0, setTab] = useState<DTab>('stats');
+  const [multi, setMulti] = useState(false); // hộp xác nhận lên nhiều cấp
   const dk = useDesktop();
   const tab: DTab = dk && tab0 === 'skills' ? 'stats' : tab0;
   const sceneRef = useRef<DetailScene | null>(null);
@@ -51,7 +51,7 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
   const baseStats = statsAt(def.role, def.rarity, level, star);
   // chỉ số hiển thị = gốc + trang bị đang mặc (khớp với trận đánh)
   const gb = o ? gearBonus(m, id) : { hp: 0, atk: 0, def: 0, spd: 0 };
-  const stats = { hp: baseStats.hp + gb.hp, atk: baseStats.atk + gb.atk, def: baseStats.def + gb.def, spd: baseStats.spd + gb.spd };
+  const stats = addStats(baseStats, gb); // gồm cả tốc đánh / bạo kích / hút máu từ trang bị (khớp powerOf)
   const nextLv = o && level < levelCapOf(star) ? statsAt(def.role, def.rarity, level + 1, star) : null;
   const lvCost = levelUpCost(level);
   const cap = levelCapOf(star);
@@ -129,10 +129,7 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
         )}
         <div class="d-title">
           <RarityTag r={def.rarity} />
-          <div>
-            <h2>{def.name}</h2>
-            <small>{def.title}</small>
-          </div>
+          <h2>{def.name}</h2>
         </div>
       </div>
 
@@ -173,6 +170,13 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
                 <span>Lực chiến</span>
                 <b>{fmt(powerOf(stats))}</b>
               </div>
+            </div>
+            <div class="st-mini">
+              <div><small>Tầm đánh</small><b>{rangeWord(def.role)}</b></div>
+              <div><small>Tốc đánh</small><b>{statOf(stats, 'aspd')}%</b></div>
+              <div><small>Bạo kích</small><b>{statOf(stats, 'crit')}%</b></div>
+              <div><small>ST bạo kích</small><b>{statOf(stats, 'critDmg')}%</b></div>
+              {statOf(stats, 'lifesteal') > 0 && <div><small>Hút máu</small><b>{statOf(stats, 'lifesteal')}%</b></div>}
             </div>
             {!o && <small class="muted">Chỉ số mẫu ở Lv1, 1 sao.</small>}
             </div>
@@ -281,17 +285,8 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
                 )}
               </span>
             </Btn>
-            <Btn kind="green" disabled={plan.n < 2} onClick={() => levelUp(plan.n)}>
-              <span class="act-t">{plan.n > 1 ? `Lên +${plan.n}` : 'Lên nhiều'}</span>
-              <span class="act-s">
-                {plan.n > 1 ? (
-                  <>
-                    <Icon n="gold" size={14} />{fmt(plan.gold)} <Icon n="exp" size={14} />{fmt(plan.exp)}
-                  </>
-                ) : (
-                  'Nâng nhiều cấp'
-                )}
-              </span>
+            <Btn kind="green" disabled={plan.n < 2} onClick={() => setMulti(true)}>
+              <span class="act-t">Lên nhiều</span>
             </Btn>
             <Btn kind="purple" disabled={!canSt} onClick={starUp}>
               <span class="act-t">Lên sao</span>
@@ -302,6 +297,19 @@ export function HeroDetail({ id, onClose, onStep, pos }: { id: string; onClose?:
           <Btn kind="purple" onClick={() => go({ n: 'summon' })}>Chưa sở hữu · Đến Triệu hồi</Btn>
         )}
       </div>
+      {multi && plan.n >= 2 && (
+        <Modal title="Lên nhiều cấp" onClose={() => setMulti(false)} class="cl-multi">
+          <p class="cl-multi-t">Nâng tối đa <b>+{plan.n}</b> cấp (Lv {level} → Lv {level + plan.n})</p>
+          <span class="cost cl-multi-cost">
+            <span><Icon n="gold" size={16} />{fmt(plan.gold)}</span>
+            <span><Icon n="exp" size={16} />{fmt(plan.exp)}</span>
+          </span>
+          <div class="cl-multi-btns">
+            <Btn kind="green" onClick={() => { setMulti(false); levelUp(plan.n); }}>Nâng</Btn>
+            <Btn onClick={() => setMulti(false)}>Huỷ</Btn>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }
@@ -311,23 +319,19 @@ export function Heroes({ initial }: { initial?: string }) {
   const owned = ownedMap(m);
   // chia đôi màn hình chỉ khi đủ rộng VÀ đủ cao; màn thấp (điện thoại ngang) dùng bảng chi tiết toàn màn
   const wide = useMedia('(min-aspect-ratio: 6/5) and (min-width: 640px) and (min-height: 521px)');
-  const [f, setF] = useState<HeroFilter>(EMPTY_FILTER);
   const [sel, setSel] = useState<string | null>(initial ?? null);
   const [open, setOpen] = useState(!!initial);
 
-  const list = useMemo(
-    () =>
-      applyFilter(
-        HEROES.map((def) => ({ def, o: owned.get(def.id) })).filter((e) => f.all || e.o),
-        f,
-      ).map((e) => e.def),
-    // eslint-disable-next-line
-    [f, m.heroes, m.gear],
-  );
+  // 3 nhóm: đội đang đánh (theo ô), chưa vào đội (lực chiến giảm dần), chưa sở hữu (xám)
+  const inSquad = activeSquadIds(m).filter((id) => owned.has(id));
+  const squadSet = new Set(inSquad);
+  const sec1 = inSquad.map((id) => HEROES.find((h) => h.id === id)!);
+  const sec2 = HEROES.filter((h) => owned.has(h.id) && !squadSet.has(h.id)).sort((a, b) => powerOfOwned(owned.get(b.id)!) - powerOfOwned(owned.get(a.id)!));
+  const sec3 = HEROES.filter((h) => !owned.has(h.id));
+  const list = [...sec1, ...sec2, ...sec3];
 
-  // đang xem tướng chưa có mà tắt "hiện tướng chưa có" thì chuyển về tướng đầu danh sách
   const cur = sel && list.some((h) => h.id === sel) ? sel : (list[0]?.id ?? null);
-  // mũi tên đổi tướng (xoay vòng trong danh sách đang lọc)
+  // mũi tên đổi tướng (xoay vòng trong danh sách đã gộp các nhóm)
   const idx = list.findIndex((h) => h.id === cur);
   const step = (d: -1 | 1) => {
     if (list.length > 1 && idx >= 0) setSel(list[(idx + d + list.length) % list.length].id);
@@ -335,33 +339,35 @@ export function Heroes({ initial }: { initial?: string }) {
   const pos = list.length > 1 && idx >= 0 ? `${idx + 1}/${list.length}` : undefined;
   const onStep = list.length > 1 ? step : undefined;
 
+  const card = (h: (typeof HEROES)[number], first: boolean) => (
+    <HeroCard
+      key={h.id}
+      tut={first ? 'hero-card' : undefined}
+      def={h}
+      owned={owned.get(h.id)}
+      dim={!owned.has(h.id)}
+      selected={wide && cur === h.id}
+      onClick={() => {
+        setSel(h.id);
+        setOpen(true);
+      }}
+    />
+  );
+  const section = (label: string, arr: typeof HEROES, first: boolean) =>
+    arr.length > 0 && (
+      <>
+        <div class="cl-sec">{label}</div>
+        <div class="cl-secgrid">{arr.map((h, i) => card(h, first && i === 0))}</div>
+      </>
+    );
+
   const grid = (
     <div class="hlist">
-      <FilterBar f={f} setF={setF} unownedToggle>
-        Đã sở hữu {m.heroes.length}/{HEROES.length}
-      </FilterBar>
       <div class="fade-wrap">
-        <div class="hgrid scroll">
-          {list.map((h, i) => (
-            <HeroCard
-              key={h.id}
-              tut={i === 0 ? 'hero-card' : undefined}
-              def={h}
-              owned={owned.get(h.id)}
-              dim={!owned.has(h.id)}
-              selected={wide && cur === h.id}
-              onClick={() => {
-                setSel(h.id);
-                setOpen(true);
-              }}
-            />
-          ))}
-          {list.length === 0 && <p class="muted empty">Không có tướng phù hợp bộ lọc.</p>}
-          {!f.all && list.length > 0 && m.heroes.length < HEROES.length && (
-            <button type="button" class="more-unowned" onClick={() => setF({ ...f, all: true })}>
-              Xem {HEROES.length - m.heroes.length} tướng chưa có
-            </button>
-          )}
+        <div class="hgrid scroll cl-sections">
+          {section(`ĐỘI ĐANG ĐÁNH · ${sec1.length}/${slotsOpenOf(m)}`, sec1, true)}
+          {section(`CHƯA VÀO ĐỘI · ${sec2.length}`, sec2, sec1.length === 0)}
+          {section(`CHƯA SỞ HỮU · ${sec3.length}`, sec3, false)}
         </div>
       </div>
     </div>

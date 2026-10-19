@@ -51,7 +51,9 @@ export function botSquad(n: number, rating: number): OwnedHero[] {
   // tướng lấy tuần tự trong danh sách, ưu tiên phẩm cao dần theo điểm
   const rar = RARITIES.filter((_r, i) => i <= Math.max(0, Math.min(3, Math.floor((rating - 1000) / 250) + 0))); // luôn có ít nhất phẩm R (điểm < 550 trước đây ra đội rỗng)
   const pool = rar.flatMap((r) => poolOf(r));
-  for (let i = 0; i < 5 && pool.length; i++) {
+  // số tướng: người mới (3 ô mở) gặp bot 3 tướng; bot mạnh dần thì thêm tướng (tối đa 5)
+  const size = Math.max(3, Math.min(5, 3 + Math.floor((rating - 1000) / 150)));
+  for (let i = 0; i < 5 && out.length < size && pool.length; i++) {
     const h = pool[(n * 7 + i * 3 + Math.floor(rating / 50)) % pool.length];
     if (out.some((o) => o.id === h.id)) continue;
     out.push({ id: h.id, level: lvl, star, shards: 0 });

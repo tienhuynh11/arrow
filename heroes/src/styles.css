@@ -2018,3 +2018,61 @@ div.gtile { cursor: inherit; }
   .sq6-ribbon { font-size: 16px; line-height: 26px; padding: 2px 18px; }
   .ar-mini .ar-mh.sq6-mlock { width: clamp(22px, 2.8vh, 28px); }
 }
+
+/* Đội hình gọn: bỏ tìm kiếm/lọc, nút quay lại 1 dòng, thông báo cập nhật không đè thanh điều hướng */
+.sq6-rhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 4px; flex: none; }
+.sq6-rhead b { font-family: var(--f-title); font-size: 17px; }
+.sq6-rhead span { font-size: 12px; color: var(--ink-soft); text-align: right; }
+.sq-return { min-height: 46px !important; font-size: 17px !important; white-space: nowrap; animation: none; }
+.sq-return svg { flex: none; }
+.upd-toast { bottom: auto !important; top: calc(max(8px, env(safe-area-inset-top)) + 64px); white-space: nowrap; padding: 6px 6px 6px 14px; font-size: 15px; z-index: 130; }
+.upd-toast .btn { min-height: 38px; padding: 0 14px; }
+
+/* ===== OVERRIDES: làm gọn giao diện (cl-) ===== */
+/* danh sách tướng theo nhóm */
+.hgrid.cl-sections { display: block; }
+.cl-sec { margin: 6px 2px 6px; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; color: var(--ink); opacity: 0.7; }
+.cl-sec:first-child { margin-top: 0; }
+.cl-secgrid { display: grid; grid-template-columns: inherit; gap: inherit; align-content: start; margin-bottom: 12px; }
+.hcard.dim { opacity: 0.6; filter: grayscale(1); }
+
+/* nút đóng / mũi tên chi tiết tướng: nhỏ, trong mờ, vùng chạm >= 44px */
+.d-back, .d-nav { width: 36px; height: 36px; border-width: 2px; border-radius: 12px; box-shadow: 0 2px 0 rgba(30, 42, 74, 0.6); opacity: 0.7; z-index: 3; }
+.d-back::after, .d-nav::after { content: ''; position: absolute; inset: -5px; }
+.d-back .ic, .d-nav .ic { width: 18px; height: 18px; }
+.d-nav { top: 50%; }
+.d-nav.prev { left: 4px; }
+.d-nav.next { right: 4px; }
+.d-pos { top: 8px; font-size: 12px; padding: 1px 8px; opacity: 0.75; }
+.d-title small { display: none; }
+
+/* thẻ tướng: Lv to rõ, sao hàng riêng phía trên */
+.hc-lv { padding: 0 6px; border-radius: 9px; background: var(--ink); color: #fff; font-size: 14px; font-weight: 800; line-height: 18px; bottom: 21px; left: 3px; }
+.hcard:not(.mini) .stars { right: auto; left: 3px; bottom: 41px; }
+.hcard:not(.mini) .stars .ic, .hcard .stars .ic { width: 13px; height: 13px; }
+.hcard.mini .hc-lv { font-size: 12px; line-height: 15px; bottom: 3px; }
+@media (min-width: 900px) and (min-height: 560px), (min-width: 700px) and (min-height: 800px) {
+  .hcard:not(.mini) .hc-lv { font-size: 15px; line-height: 20px; bottom: 34px; left: 5px; }
+  .hcard:not(.mini) .stars { right: auto; left: 5px; bottom: 56px; }
+  .hcard:not(.mini) .stars .ic { width: 15px; height: 15px; }
+}
+
+/* triệu hồi: nút "!" xem tỉ lệ */
+.cl-info { flex: none; width: 34px; height: 34px; margin-left: auto; border-radius: 50%; border: 2px solid var(--ink); background: linear-gradient(#fff, #dbe6f7); color: var(--ink); font-family: var(--f-title); font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; padding: 0; position: relative; }
+.cl-info::after { content: ''; position: absolute; inset: -6px; }
+.cl-rate-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cl-rate-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 16px; }
+.cl-sections .sm-rar header { gap: 8px; }
+
+/* hộp xác nhận lên nhiều cấp */
+.cl-multi-t { margin: 0 0 8px; font-size: 16px; }
+.cl-multi-cost { display: flex; gap: 14px; margin-bottom: 12px; font-weight: 800; }
+.cl-multi-cost span { display: inline-flex; align-items: center; gap: 4px; }
+.cl-multi-btns { display: flex; gap: 10px; }
+.cl-multi-btns .btn { flex: 1; }
+
+/* ---- st-: chỉ số chiến đấu mới (tab Chỉ số của tướng) ---- */
+.st-mini { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 6px; margin-top: 6px; }
+.st-mini > div { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 10px; border-radius: 10px; background: #f4f7ff; border: 2px solid rgba(30, 42, 74, 0.18); }
+.st-mini small { font-size: 12px; color: #4a5778; }
+.st-mini b { font-family: var(--f-title); font-weight: 800; font-size: 14px; }

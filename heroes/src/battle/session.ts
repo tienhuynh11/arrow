@@ -6,11 +6,12 @@
 // được phát NGAY và song song (mỗi đơn vị tự hoạt hoá). Đầu vào ult/auto ghi `battle.tick` hiện tại (tick đã chạy xong)
 // và áp ở step kế tiếp — y hệt vòng lặp simulate().
 import { signal } from '@preact/signals';
+import { statOf } from '@shared/heroes/combat';
 import { Battle, ENERGY_MAX, GAUGE_MAX, type BattleInput, type BattleSetup, type Unit } from '@shared/heroes/battle';
 import { BATTLE_HZ, BATTLE_MAX_TICKS } from '@shared/heroes/config';
 import type { BattleScene } from '../render/battle-scene';
 import type { BattleOverlay } from './overlay';
-import { PACE, SPEED_MULT } from './pacing';
+import { MOTION, PACE, SPEED_MULT } from './pacing';
 
 export interface HudUnit {
   uid: number;
@@ -20,7 +21,7 @@ export interface HudUnit {
   ready: boolean;
   alive: boolean;
   hpPct: number;
-  /** giây (thời gian trận) tới lượt hành động kế tiếp của tướng này; -1 = đang choáng/đã gục */
+  /** giây (thời gian trận) tới lượt hành động kế tiếp của tướng này; -1 = đang choáng/đã gục; -2 = đang tiến (chưa có địch trong tầm) */
   cd: number;
 }
 export interface HudState {
@@ -46,6 +47,9 @@ export class BattleSession {
   private endWait = 0;
   private endFired = false;
   private hudAcc = 0;
+  /** nhịp mở màn: giây thật còn lại trước khi engine chạy; opened = đã dựng đợt đầu (tick 1) để hiện hai đạo quân */
+  private ready: number = MOTION.readyReal;
+  private opened = false;
   /** uid đã bấm ult nhưng chưa tới step kế (chống ghi trùng input trong cùng một tick) */
   private pendingUlt = new Set<number>();
 
@@ -83,6 +87,17 @@ export class BattleSession {
         this.endFired = true;
         this.onEnd(this.battle.win);
       }
+      return;
+    }
+
+    // mở màn: dựng đợt đầu bằng đúng step() đầu tiên (tick 1, hai bên còn cách xa), rồi đứng yên ~0.8 s thật
+    if (this.ready > 0) {
+      if (!this.opened) {
+        this.opened = true;
+        this.stepOnce();
+        this.publish();
+      }
+      this.ready -= dt;
       return;
     }
 
@@ -175,7 +190,16 @@ export class BattleSession {
     if (!u.alive || b.stunned(u)) return -1;
     let pct = 100;
     for (const e of u.effs) if (e.type === 'spdUp' && e.until > b.tick) pct += e.value;
-    const spd = Math.max(1, Math.floor((u.init.stats.spd * pct) / 100));
+    // ngoài tầm (đang tiến): thanh hành động không đầy
+    let near = false;
+    for (const f of b.units) {
+      if (f.alive && f.init.side !== u.init.side && Math.abs(f.x - u.x) <= u.range) {
+        near = true;
+        break;
+      }
+    }
+    if (!near) return -2;
+    const spd = Math.max(1, Math.floor((Math.floor((u.init.stats.spd * pct) / 100) * statOf(u.init.stats, 'aspd')) / 100));
     return Math.max(0, (GAUGE_MAX - u.gauge) / spd / BATTLE_HZ);
   }
 

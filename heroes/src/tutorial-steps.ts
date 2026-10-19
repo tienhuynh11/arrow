@@ -1,6 +1,5 @@
 // Kịch bản hướng dẫn tân thủ: mỗi bước có hàm plan() tính lại liên tục theo màn hình hiện tại,
 // nên người chơi đi lạc sang màn khác thì lời nhắc tự đổi thành "chạm tab ... để quay lại".
-import { SSR_PITY, UR_PITY } from '@shared/heroes/gacha';
 import { me } from './api';
 import { screen } from './state';
 
@@ -87,8 +86,8 @@ export const STEPS: Step[] = [
     id: 'pity',
     hold: () => !!document.querySelector('.reveal'), // chờ người chơi xác nhận xong màn lật thẻ
     plan: () => ({
-      target: scr() === 'summon' ? 'summon-pity' : null,
-      text: `Thanh bảo hiểm: sau ${SSR_PITY} lượt chưa ra SSR thì lượt kế chắc chắn ra SSR, sau ${UR_PITY} lượt thì chắc chắn ra UR. Tướng trùng sẽ đổi thành mảnh để lên sao.`,
+      target: scr() === 'summon' ? 'summon-x1' : null,
+      text: 'Tướng trùng sẽ đổi thành mảnh để lên sao. Bấm nút "!" cạnh banner để xem tỉ lệ.',
     }),
   },
   {

@@ -58,8 +58,8 @@ export function Squad() {
     <div class="squad">
       <section class="sq-board panel" data-tut="squad-board">
         {back && (
-          <Btn kind="primary" big class="sq-return" busy={busy} onClick={resume}>
-            <Icon n="battle" size={26} /> Chiến tiếp → {back.name}
+          <Btn kind="primary" class="sq-return" busy={busy} onClick={resume}>
+            <Icon n="battle" size={20} /> Chiến tiếp · {back.name}
           </Btn>
         )}
         <div class="seg wide sq-tabs" role="tablist">
@@ -80,7 +80,6 @@ export function Squad() {
         <SquadBoard m={m} slots={slots} sel={ops.sel} onTapSlot={ops.tapSlot} onDrop={ops.drop} />
         <div class="sq-foot">
           <span class="power"><Icon n="sparkle" size={18} /> Lực chiến <b>{fmt(squadPower(m, slots))}</b></span>
-          <small class="sq6-info">{open}/{SQUAD_SIZE} ô mở · Cấp {SLOT_LEVEL.slice(3).join(', ')} mở thêm ô</small>
           <Btn kind="ghost" small onClick={() => { setSlots(autoSquad(m)); ops.setSel(null); }}>Tự xếp mạnh nhất</Btn>
           {ops.sel !== null && slots[ops.sel] && (
             <Btn kind="ghost" small onClick={() => { const s = slots.slice(); s[ops.sel!] = ''; setSlots(s); }}>Gỡ ô {ops.sel + 1}</Btn>
@@ -92,12 +91,10 @@ export function Squad() {
       </section>
 
       <section class="sq-roster panel">
-        <FilterBar f={f} setF={setF}>
-          {entries.length}/{m.heroes.length}
-        </FilterBar>
-        <small class="hint">
-          {ops.sel !== null ? `Chạm tướng để xếp vào ô ${ops.sel + 1}` : `Kéo tướng vào ô (hoặc chạm ô rồi chạm tướng). Kéo ô về đây để gỡ. Đang mở ${open}/${SQUAD_SIZE} ô.`}
-        </small>
+        <div class="sq6-rhead">
+          <b>Tướng của bạn</b>
+          <span>{ops.sel !== null ? `Chạm tướng để xếp vào ô ${ops.sel + 1}` : 'Kéo vào ô hoặc chạm ô rồi chạm tướng'}</span>
+        </div>
         <Roster heroes={heroes} slots={slots} onTap={ops.tapHero} onDrop={ops.drop} />
       </section>
     </div>

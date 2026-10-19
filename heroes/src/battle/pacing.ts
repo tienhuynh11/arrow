@@ -17,16 +17,17 @@ export const HITSTOP = { normal: 0.025, crit: 0.055, ult: 0.04, final: 0.14 } as
 
 /** bố cục + di chuyển + trình diễn (đơn vị: đơn vị thế giới / giây cảnh). Đội hình KHÓA LÀN: không đuổi, không lượn. */
 export const MOTION = {
-  /* cột x (khoảng cách tới vạch giữa) theo hàng: Trước, Giữa, Sau; lệch x thêm cho ô lẻ của cột (so le); z của hai hàng trong cột */
-  colX: [0.95, 2.3, 3.65] as readonly number[],
-  stagger: 0.3,
+  /* z (làn) của hai ô trong cột; x lấy từ engine */
   rowZ: [-0.8, 0.8] as readonly number[],
-  /** boss: đứng đầu phe, hơi lệch z để không đè ô còn lại của cột đầu */
-  bossX: 1.25, bossZ: -0.5,
-  /* cận chiến bước tới 'vị trí tiền tuyến' một đoạn ngắn rồi khoá; không bao giờ qua minX */
-  stepFwd: 0.9, minX: 0.6, stepRate: 7,
-  /* lao tới đòn: thời lượng giây cảnh (≤0,35), dừng cách mục tiêu `lungeGap` (boss to hơn), tuyệt kỹ cận chiến lao xa + lâu hơn */
-  lungeMin: 0.26, lungeMax: 0.35, lungeUlt: 0.6, lungeGap: 0.95, lungeGapBoss: 1.7, lungeCap: 6.5,
+  /** boss: hơi lệch z để không đè ô còn lại của cột đầu */
+  bossZ: -0.5,
+  /** nhịp mở màn (giây THẬT): đứng yên để thấy hai đạo quân ở xa nhau trước khi tiến */
+  readyReal: 0.8,
+  /* x thế giới = (x_engine/12000 - 0.5) * 10 (xem worldX): nền bám x engine với tốc độ followRate (1/giây cảnh); chạy khi còn lệch > moveEps;
+     runSpeed = tốc độ (đv thế giới/giây cảnh) tương ứng chạy hết cỡ (~22 đv engine/tick x 20Hz / 1200 ≈ 0.37) */
+  followRate: 12, moveEps: 0.02, runSpeed: 0.4,
+  /* đòn cận chiến TẠI CHỖ: bước tới ≤ lungeStep (≤0,25) rồi giật về, tuyệt kỹ bước hơi xa/lâu hơn */
+  lungeMin: 0.28, lungeStep: 0.22, lungeStepUlt: 0.4, lungeUlt: 0.5,
   /* xoay mặt (rad/s), nghiêng người khi lao */
   turn: 14, lean: 0.22,
   /* sau khi ra đòn: giữ mặt hướng mục tiêu chừng này giây rồi quay về hướng phe */
@@ -34,7 +35,7 @@ export const MOTION = {
   /* thời điểm đòn (giây cảnh kể từ act) */
   meleeHit: 0.17,
   releaseArcher: 0.18, releaseMage: 0.24, releaseSupport: 0.22,
-  flightMin: 0.2, flightMax: 0.38, flightSpeed: 16,
+  flightMin: 0.16, flightMax: 0.62, flightSpeed: 10,
   aoeStagger: 0.05,
   ultHit: 0.5,
   /* cắt cảnh tuyệt kỹ nhẹ (giây THẬT) + đẩy camera */

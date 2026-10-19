@@ -17,18 +17,21 @@ import {
 import type { Rarity, Stats } from '@shared/heroes/types';
 import { api, me } from '../api';
 import { sfx } from '../audio';
-import { bagBySlot, gearBonus, gearOf, gearPower, gearStatsOf, gearUpgradePlan, HERO_BY_ID, ownedMap, powerOfOwned, STAT_LABEL, statDiff, statEntries, type StatKey } from '../game';
+import { bagBySlot, gearBonus, gearOf, gearPower, gearStatsOf, gearUpgradePlan, HERO_BY_ID, ownedMap, powerOfOwned, STAT_LABEL, statDiff, statEntries, statFmt, statRaw, type StatKey } from '../game';
 import { errToast, fmt, toast } from '../state';
 import { Btn, HeroCard, IconBtn, Modal, Portrait, RarityTag } from './common';
 import { ELEM_ICON, GEAR_ICON, Icon } from './icons';
+import { createPortal } from 'preact/compat';
 
 const RANK: Record<Rarity, number> = { R: 0, SR: 1, SSR: 2, UR: 3 };
-const STAT_ICON: Record<StatKey, 'heart' | 'sword' | 'shield' | 'bolt'> = { hp: 'heart', atk: 'sword', def: 'shield', spd: 'bolt' };
+const STAT_ICON: Record<StatKey, 'heart' | 'sword' | 'shield' | 'bolt' | 'star' | 'sparkle'> = {
+  hp: 'heart', atk: 'sword', def: 'shield', spd: 'bolt', aspd: 'bolt', crit: 'star', critDmg: 'sparkle', lifesteal: 'heart',
+};
 
 /** "+12 Công · +60 Máu" */
 export function statText(s: Stats): string {
   return statEntries(s)
-    .map((e) => `+${e.v} ${STAT_LABEL[e.k]}`)
+    .map((e) => `+${statFmt(e.k, e.v)} ${STAT_LABEL[e.k]}`)
     .join(' · ');
 }
 
@@ -103,7 +106,7 @@ function Diff({ d }: { d: Stats }) {
       {e.map((x) => (
         <i key={x.k} class={`gd ${x.v > 0 ? 'up' : 'down'}`}>
           {x.v > 0 ? '▲ +' : '▼ '}
-          {x.v} {STAT_LABEL[x.k]}
+          {statFmt(x.k, x.v)} {STAT_LABEL[x.k]}
         </i>
       ))}
     </>
@@ -122,7 +125,8 @@ function Sheet(p: { title: string; onClose: () => void; children: ComponentChild
     addEventListener('keydown', k, true);
     return () => removeEventListener('keydown', k, true);
   }, [p.onClose]);
-  return (
+  // vẽ thẳng vào <body>: nếu nằm trong khung chi tiết tướng thì bị kẹt trong ngăn xếp lớp của nó và bị mũi tên/nút của khung đè lên
+  return createPortal(
     <div class="gs-back" onPointerDown={(e) => e.target === e.currentTarget && p.onClose()}>
       <div class={`gsheet ${p.class ?? ''}`} role="dialog" aria-modal="true">
         <div class="gs-head">
@@ -131,7 +135,8 @@ function Sheet(p: { title: string; onClose: () => void; children: ComponentChild
         </div>
         <div class="gs-body">{p.children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -236,7 +241,7 @@ export function GearTab({ heroId }: { heroId: string }) {
           {statEntries(bonus).length ? (
             statEntries(bonus).map((e) => (
               <span key={e.k}>
-                <Icon n={STAT_ICON[e.k]} size={16} />+{e.v}
+                <Icon n={STAT_ICON[e.k]} size={16} />+{statFmt(e.k, e.v)}
               </span>
             ))
           ) : (
@@ -342,8 +347,8 @@ export function GearSheet({ uid, onClose }: { uid: number; onClose: () => void }
             <div class="stat" key={e.k}>
               <Icon n={STAT_ICON[e.k]} size={18} />
               <span>{STAT_LABEL[e.k]}</span>
-              <b>+{st[e.k]}</b>
-              {nextSt && nextSt[e.k] > st[e.k] && <em>▲ +{nextSt[e.k] - st[e.k]}</em>}
+              <b>+{statFmt(e.k, statRaw(st, e.k))}</b>
+              {nextSt && statRaw(nextSt, e.k) > statRaw(st, e.k) && <em>▲ +{statRaw(nextSt, e.k) - statRaw(st, e.k)}</em>}
             </div>
           ))}
         </div>

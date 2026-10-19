@@ -1,16 +1,17 @@
 // Kiểm thử lõi game thẻ tướng: engine trận (deterministic), gacha (tỉ lệ + pity), ải, AFK, thể lực.
 // Chạy: cd server && npx tsx test/heroesCore.test.ts
-import { Battle, simulate, heroUnit, advantage, type BattleSetup } from '../../shared/heroes/battle.js';
+import { Battle, simulate, heroUnit, advantage, type BattleEvent, type BattleSetup, type UnitInit } from '../../shared/heroes/battle.js';
+import { ARENA_LEN, BOSS_MOVE, BOSS_RANGE, FRONT_X, MIN_SEP, MOVE_EVENT_EVERY, ROLE_MOVE, ROLE_RANGE, ROW_GAP, startX, statOf } from '../../shared/heroes/combat.js';
 import { arenaReward, arenaSetup, botSquad, ratingDelta } from '../../shared/heroes/arena.js';
-import { AFK_CAP_MS, BATTLE_MAX_TICKS, STAMINA_MAX } from '../../shared/heroes/config.js';
-import { statsAt } from '../../shared/heroes/formulas.js';
+import { AFK_CAP_MS, BATTLE_MAX_TICKS, STAMINA_MAX, rowOfSlot } from '../../shared/heroes/config.js';
+import { monsterStatsAt, powerOf, statsAt } from '../../shared/heroes/formulas.js';
 import { BANNER_BY_ID, NEW_PITY, SSR_PITY, UR_PITY, summon, type PityState } from '../../shared/heroes/gacha.js';
 import { GEAR_BY_ID, GEAR_DEFS, MAX_GEAR_LEVEL, STARTER_GEAR, enhanceCost, gearStats, rollGearDrops, salvageStones, sumGear } from '../../shared/heroes/gear.js';
 import { HEROES, STARTER_HEROES } from '../../shared/heroes/heroes.js';
 import { mulberry32 } from '../../shared/heroes/rng.js';
 import { SKILL_LIST, skillOf } from '../../shared/heroes/skills.js';
 import { STAGES, afkReward, staminaNow, stageSetup, starsOf } from '../../shared/heroes/stages.js';
-import type { OwnedHero } from '../../shared/heroes/types.js';
+import type { OwnedHero, Role, Stats } from '../../shared/heroes/types.js';
 import { MONSTERS } from '../../shared/heroes/stages.js';
 import { QUEST_DEFS, dayKey, nextDayStart } from '../../shared/heroes/quests.js';
 import { SHOP_ITEMS } from '../../shared/heroes/shop.js';
@@ -26,7 +27,7 @@ import { HERO_BY_ID } from '../../shared/heroes/heroes.js';
 import { MAX_ACCOUNT_LEVEL, SQUAD_COUNT, SQUAD_SIZE } from '../../shared/heroes/config.js';
 import { LEVEL_UNLOCKS, SLOT_GEMS, SLOT_LEVEL, SQUAD_LEVEL, levelReward, slotsByLevel, slotsOpen, squadsOpen, unlocksBetween } from '../../shared/heroes/progression.js';
 import { ACHIEVEMENTS, ACH_BY_ID, achBadge, achClaimable, type AchState } from '../../shared/heroes/achievements.js';
-import { newState, openSlotIds, padSquad, levelClaimable } from '../src/heroes/rules.js';
+import { newState, openSlotIds, padSquad, levelClaimable, opBattle } from '../src/heroes/rules.js';
 import { achProgress, achList, claimableLevels } from '../src/heroes/progress.js';
 
 let fails = 0;
@@ -36,7 +37,8 @@ const ok = (cond: boolean, msg: string) => {
 };
 
 const owned = (id: string, level = 1, star = 1): OwnedHero => ({ id, level, star, shards: 0 });
-const starterTeam = (level = 1) => STARTER_HEROES.map((id, i) => heroUnit(owned(id, level), i));
+const STARTER3 = STARTER_HEROES.slice(0, 3); // tài khoản mới: 3 tướng đầu vào đội hình
+const starterTeam = (level = 1) => STARTER3.map((id, i) => heroUnit(owned(id, level), i));
 
 console.log('— dữ liệu —');
 ok(HEROES.length === 12, '12 tướng');
@@ -134,7 +136,7 @@ console.log('— cân bằng chiến dịch (đội tân binh lên cấp dần) 
   for (const st of STAGES) {
     let lv = 1;
     for (; lv <= 60; lv++) {
-      const team = STARTER_HEROES.map((id, i) => heroUnit(owned(id, lv, Math.min(5, 1 + Math.floor(lv / 12))), i));
+      const team = STARTER3.map((id, i) => heroUnit(owned(id, lv, Math.min(5, 1 + Math.floor(lv / 12))), i));
       if (simulate(stageSetup(st, team, 100 + st.index), [], true).win) break;
     }
     need.push(lv);
@@ -143,6 +145,274 @@ console.log('— cân bằng chiến dịch (đội tân binh lên cấp dần) 
   ok(need[0] === 1, 'ải 1-1 thắng ngay ở cấp 1');
   ok(need.every((n) => n <= 60), 'mọi ải thắng được ở cấp ≤ 60 với đội tân binh');
   ok(need[29] > need[0] + 15, 'độ khó tăng dần qua chiến dịch');
+  const avg = (from: number, to: number) => need.slice(from, to).reduce((x, y) => x + y, 0) / (to - from);
+  ok(avg(0, 10) < avg(10, 20) && avg(10, 20) < avg(20, 30), `cấp trung bình mỗi chương tăng dần (${avg(0, 10).toFixed(1)} < ${avg(10, 20).toFixed(1)} < ${avg(20, 30).toFixed(1)})`);
+  ok([1, 2].every((c) => need[c * 10 + 4] > need[c * 10 + 3] && need[c * 10 + 9] > need[c * 10 + 8]) && need[4] > need[3] && need[9] > need[8], 'ải boss (5 và 10) là bước nhảy rõ rệt so với ải ngay trước nhưng vẫn thắng được');
+  ok(need[9] <= 30 && need[4] <= 12, 'boss chương 1 vẫn trong tầm với đội đang lên cấp (ải 1-5 ≤ 12, 1-10 ≤ 30)');
+}
+
+console.log('— vị trí / tầm đánh / di chuyển / tốc đánh —');
+{
+  // đơn vị thử nghiệm: máu rất lớn, chỉ số đặt tay, kỹ năng quái (đòn thường + chủ động + tuyệt kỹ)
+  const tu = (side: 0 | 1, slot: number, role: Role, st: Partial<Stats> = {}, over: Partial<UnitInit> = {}): UnitInit => ({
+    key: 'test', name: 'T', side, slot, element: 'forest', role,
+    stats: { hp: 1_000_000, atk: 100, def: 0, spd: 100, ...st }, skills: ['m_basic', 'm_a1', 'm_ult'], ...over,
+  });
+  const run = (setup: BattleSetup, ticks: number, each?: (b: Battle, ev: BattleEvent[]) => void) => {
+    const b = new Battle(setup);
+    const events: BattleEvent[] = [];
+    for (let i = 0; i < ticks && !b.done; i++) {
+      const ev = b.step();
+      events.push(...ev);
+      each?.(b, ev);
+    }
+    return { b, events };
+  };
+  const acts = (events: BattleEvent[], uid: number) => events.filter((e) => e.k === 'act' && e.u === uid);
+
+  // ---- vị trí ban đầu ----
+  const b0 = new Battle(stageSetup(STAGES[0], starterTeam(), 1));
+  const snap0 = b0.snapshot();
+  ok(snap0.every((u) => u.side === 0 && u.x === startX(0, u.slot) && u.x === FRONT_X - rowOfSlot(u.slot) * ROW_GAP) && snap0.length === 3, 'vị trí ban đầu người chơi: hàng trước 3600, mỗi hàng sau lùi 900');
+  const ev1 = b0.step();
+  const wv = ev1.find((e) => e.k === 'wave');
+  ok(!!wv && wv.k === 'wave' && wv.xs!.length === wv.units.length && wv.units.every((uid, i) => b0.pos(uid) >= 0 && wv.xs![i] === startX(1, b0.unit(uid)!.init.slot) && wv.xs![i] === ARENA_LEN - startX(0, b0.unit(uid)!.init.slot)), 'quái xuất phát đối xứng (ARENA_LEN - x), sự kiện wave mang theo xs');
+  const frontP = Math.max(...b0.side(0).map((u) => u.x));
+  const frontE = Math.min(...b0.side(1).map((u) => u.x));
+  ok(frontE - frontP >= 4700 && frontE - frontP <= 4800, `hai hàng trước cách xa nhau ~4800 (sau tick 1: ${frontE - frontP})`);
+  ok(snap0.filter((u) => u.slot < 2).every((u) => u.x === snap0[0].x) && b0.pos(9999) === -1, 'cùng hàng cùng x; pos(uid lạ) = -1');
+  ok(statOf(statsAt('warrior', 'R', 1, 1), 'aspd') === 100 && ROLE_RANGE.archer > ROLE_RANGE.mage && ROLE_RANGE.mage > ROLE_RANGE.healer && ROLE_RANGE.healer > ROLE_RANGE.warrior && ROLE_MOVE.warrior >= ROLE_MOVE.tank, 'bảng tầm đánh: xạ thủ > pháp sư > hồi máu > cận chiến; chiến binh đi nhanh hơn đỡ đòn');
+
+  // ---- di chuyển đơn điệu, không xuyên qua nhau ----
+  {
+    const setup = stageSetup(STAGES[9], starterTeam(10), 33);
+    const last = new Map<number, number>();
+    let mono = true, sep = true, inBounds = true, firstDmg = -1;
+    const { events } = run(setup, 400, (b, ev) => {
+      if (firstDmg < 0 && ev.some((e) => e.k === 'dmg')) firstDmg = b.tick;
+      let pMax = -1, eMin = ARENA_LEN + 1;
+      for (const u of b.units) {
+        if (!u.alive) continue;
+        const prev = last.get(u.uid);
+        if (prev !== undefined && (u.init.side === 0 ? u.x < prev : u.x > prev)) mono = false;
+        last.set(u.uid, u.x);
+        if (u.x < 0 || u.x > ARENA_LEN) inBounds = false;
+        if (u.init.side === 0) pMax = Math.max(pMax, u.x);
+        else eMin = Math.min(eMin, u.x);
+      }
+      if (pMax >= 0 && eMin <= ARENA_LEN && eMin - pMax < MIN_SEP) sep = false;
+    });
+    ok(mono, 'mỗi đơn vị chỉ đi TỚI phía địch (x đơn điệu), không lùi');
+    ok(sep && inBounds, `không bao giờ xuyên qua tuyến địch (cách ≥ ${MIN_SEP}) và luôn trong sân`);
+    ok(firstDmg > 31, `chưa ai trúng đòn trong lúc tiến lại gần (đòn đầu ở tick ${firstDmg})`);
+    const mv = events.filter((e) => e.k === 'move');
+    ok(mv.length > 0, 'có sự kiện move');
+  }
+
+  // ---- cận chiến gặp nhau đúng thời điểm dự kiến ----
+  const meleeDuel = (seed: number) => run({ seed, player: [tu(0, 0, 'warrior')], waves: [[tu(1, 0, 'warrior', { atk: 1 })]] }, 400);
+  {
+    const { events, b } = meleeDuel(5);
+    const first = acts(events, 0)[0] as Extract<BattleEvent, { k: 'act' }>;
+    // hai bên cùng tiến ROLE_MOVE.warrior mỗi tick tới khi cách nhau đúng tầm: ceil((4800 - 900) / (2 * 22)) tick
+    const meet = Math.ceil((ARENA_LEN - 2 * FRONT_X - ROLE_RANGE.warrior) / (2 * ROLE_MOVE.warrior));
+    ok(!!first && first.t >= meet && first.t <= meet + 41, `cận chiến vào tầm ở tick ${meet}, ra đòn đầu ở tick ${first?.t} (≤ ${meet + 41})`);
+    ok(Math.abs(b.pos(0) - b.pos(10)) === ROLE_RANGE.warrior && first.ax === first.tx[0] - ROLE_RANGE.warrior, `hai cận chiến dừng đúng tầm ${ROLE_RANGE.warrior} và act mang ax/tx`);
+    ok(meleeDuel(5).events.length === events.length, 'trận thử lặp lại cho cùng số sự kiện');
+  }
+
+  // ---- đánh xa ra đòn sớm hơn cận chiến ----
+  {
+    const firstOf = (role: Role) => {
+      const { events } = run({ seed: 5, player: [tu(0, 0, role)], waves: [[tu(1, 0, 'warrior', { atk: 1 })]] }, 400);
+      return (acts(events, 0)[0] as Extract<BattleEvent, { k: 'act' }>).t;
+    };
+    const tm = firstOf('warrior'), ta = firstOf('archer'), tg = firstOf('mage');
+    ok(ta < tm && tg < tm && ta <= tg, `xạ thủ (tick ${ta}) và pháp sư (${tg}) ra đòn sớm hơn chiến binh (${tm})`);
+  }
+
+  // ---- ngoài tầm thì không ra đòn, trong tầm thì có ----
+  {
+    const frozen = (range: number) => run({ seed: 3, player: [tu(0, 0, 'warrior', {}, { moveSpd: 0, range })], waves: [[tu(1, 0, 'warrior', { atk: 1 }, { moveSpd: 0, range })]] }, 600);
+    ok(acts(frozen(4000).events, 0).length === 0 && acts(frozen(4000).events, 10).length === 0, 'đứng yên, cách 4800 > tầm 4000: cả hai không ra đòn nào');
+    ok(acts(frozen(4900).events, 0).length > 5 && acts(frozen(4900).events, 10).length > 5, 'đứng yên, tầm 4900 ≥ khoảng cách: cả hai ra đòn đều');
+    // mọi đòn đơn mục tiêu gây sát thương đều nằm trong tầm của người đánh
+    const { b, events } = run(stageSetup(STAGES[14], starterTeam(15), 77), BATTLE_MAX_TICKS);
+    let outRange = 0, singles = 0;
+    for (const e of events) {
+      if (e.k !== 'act') continue;
+      const sk = skillOf(e.s);
+      if (sk.type !== 'dmg' || sk.target === 'enemyAll') continue;
+      singles++;
+      if (Math.abs(e.ax - e.tx[0]) > b.unit(e.u)!.range) outRange++;
+    }
+    ok(singles > 20 && outRange === 0, `${singles} đòn đơn mục tiêu, đều trong tầm người đánh`);
+  }
+
+  // ---- đánh xa đứng sau tuyến cận chiến ----
+  {
+    const setup: BattleSetup = { seed: 8, player: [tu(0, 0, 'tank', { hp: 10_000_000 }), tu(0, 4, 'mage', { hp: 10_000_000 })], waves: [[tu(1, 0, 'tank', { atk: 1 }, { moveSpd: 0 })]] };
+    let behind = true;
+    run(setup, 300, (b) => {
+      if (b.unit(1)!.x > b.unit(0)!.x) behind = false;
+    });
+    ok(behind, 'pháp sư không bao giờ vượt qua tuyến cận chiến của phe mình');
+  }
+
+  // ---- tốc đánh ----
+  {
+    const count = (aspd: number | undefined) => {
+      const { events } = run({ seed: 11, player: [tu(0, 0, 'warrior', aspd === undefined ? {} : { aspd }, { moveSpd: 0, range: 6000 })], waves: [[tu(1, 0, 'warrior', { atk: 1 }, { moveSpd: 0, range: 6000 })]] }, 2000);
+      return acts(events, 0).length;
+    };
+    const a100 = count(100), a150 = count(150), a200 = count(200), aDef = count(undefined);
+    console.log(`  tốc đánh: số đòn trong 2000 tick — aspd 100: ${a100}, 150: ${a150}, 200: ${a200}`);
+    ok(a100 === aDef, 'thiếu aspd = mặc định 100');
+    ok(Math.abs(a150 / a100 - 1.5) <= 0.1 && Math.abs(a200 / a100 - 2) <= 0.1, 'aspd tỉ lệ thuận với số đòn (±10%)');
+  }
+
+  // ---- bạo kích / sát thương bạo kích ----
+  {
+    const six = (st: Partial<Stats>) => ({ seed: 21, player: [0, 1, 2, 3, 4, 5].map((s) => tu(0, s, 'warrior', { aspd: 800, ...st }, { moveSpd: 0, range: 7000 })), waves: [[tu(1, 0, 'warrior', { atk: 1 }, { moveSpd: 0, range: 7000 })]] });
+    const dmgs = (st: Partial<Stats>) => run(six(st), 3000).events.filter((e): e is Extract<BattleEvent, { k: 'dmg' }> => e.k === 'dmg' && e.u < 6);
+    const rate = (st: Partial<Stats>) => {
+      const d = dmgs(st);
+      return { n: d.length, r: d.filter((e) => e.crit).length / d.length };
+    };
+    const c0 = rate({ crit: 0 }), c50 = rate({ crit: 50 }), c100 = rate({ crit: 100 }), cDef = rate({});
+    console.log(`  bạo kích: crit 0 → ${(c0.r * 100).toFixed(1)}%, 50 → ${(c50.r * 100).toFixed(1)}%, 100 → ${(c100.r * 100).toFixed(1)}%, mặc định → ${(cDef.r * 100).toFixed(1)}% (${c50.n} đòn)`);
+    ok(c50.n > 3000 && c0.r === 0 && c100.r === 1 && Math.abs(c50.r - 0.5) < 0.03 && Math.abs(cDef.r - 0.1) < 0.03, 'tỉ lệ bạo kích khớp chỉ số crit (mẫu lớn), mặc định 10%');
+    const total = (st: Partial<Stats>) => dmgs({ crit: 100, ...st }).reduce((a2, e) => a2 + e.n, 0);
+    const d150 = total({ critDmg: 150 }), d300 = total({ critDmg: 300 });
+    ok(Math.abs(d300 / d150 - 2) < 0.03, `critDmg 300 gây gấp đôi critDmg 150 khi luôn bạo kích (${(d300 / d150).toFixed(3)}x)`);
+    ok(total({}) === d150, 'thiếu critDmg = mặc định 150');
+  }
+
+  // ---- hút máu ----
+  {
+    const fight = (ls: number | undefined) => run({
+      seed: 4,
+      player: [tu(0, 0, 'warrior', { hp: 100_000, atk: 400, ...(ls === undefined ? {} : { lifesteal: ls }) }, { moveSpd: 0, range: 6000 })],
+      waves: [[tu(1, 0, 'warrior', { atk: 300 }, { moveSpd: 0, range: 6000 })]],
+    }, 1200);
+    const f50 = fight(50), f0 = fight(undefined);
+    const self = (evs: BattleEvent[]) => evs.filter((e): e is Extract<BattleEvent, { k: 'heal' }> => e.k === 'heal' && e.u === 0 && e.tg === 0);
+    const heals = self(f50.events);
+    let sum = 0, okEach = true;
+    for (const h of heals) {
+      sum += h.n;
+      const d = f50.events.filter((e): e is Extract<BattleEvent, { k: 'dmg' }> => e.k === 'dmg' && e.u === 0 && e.t === h.t);
+      if (!d.length || h.n > Math.floor(d[d.length - 1].n / 2) || h.hp > 100_000) okEach = false;
+    }
+    const dealt = f50.events.reduce((a2, e) => a2 + (e.k === 'dmg' && e.u === 0 ? e.n : 0), 0);
+    ok(heals.length > 5 && okEach && sum <= Math.floor(dealt / 2) && self(f0.events).length === 0, `hút máu 50%: ${heals.length} lần hồi tổng ${sum} (≤ nửa ${dealt} sát thương gây ra); không có chỉ số thì không hồi`);
+    ok(f50.b.unit(0)!.hp > f0.b.unit(0)!.hp, `người hút máu còn nhiều máu hơn (${f50.b.unit(0)!.hp} > ${f0.b.unit(0)!.hp})`);
+  }
+
+  // ---- tất định + phát lại ----
+  {
+    const setup = stageSetup(STAGES[8], starterTeam(10), 2024);
+    const r1 = simulate(setup, [], true), r2 = simulate(setup, [], true);
+    const moves = (r: { events: BattleEvent[] }) => JSON.stringify(r.events.filter((e) => e.k === 'move'));
+    ok(moves(r1) === moves(r2) && moves(r1).length > 2 && JSON.stringify(r1) === JSON.stringify(r2), 'vị trí (sự kiện move) và toàn bộ trận giống hệt qua hai lần chạy');
+    // hai Battle chạy song song, so ảnh chụp vị trí mỗi 7 tick
+    const ba = new Battle(setup), bb = new Battle(setup);
+    ba.setAuto(true);
+    bb.setAuto(true);
+    let same = true;
+    while (!ba.done) {
+      ba.step();
+      bb.step();
+      if (ba.tick % 7 === 0 && JSON.stringify(ba.snapshot()) !== JSON.stringify(bb.snapshot())) same = false;
+    }
+    ok(same && ba.done === bb.done && ba.tick === bb.tick, 'ảnh chụp vị trí giống nhau từng tick giữa hai Battle');
+    // chơi tay (input) rồi simulate phát lại: sự kiện + vị trí cuối trùng khớp
+    const live = new Battle(stageSetup(STAGES[3], starterTeam(5), 4242));
+    const inputs: { tick: number; ult?: number }[] = [];
+    const evs: BattleEvent[] = [];
+    while (!live.done) {
+      for (const u of live.side(0)) if (live.canUlt(u.uid)) {
+        inputs.push({ tick: live.tick, ult: u.uid });
+        live.ult(u.uid);
+      }
+      evs.push(...live.step());
+    }
+    const rep = simulate(stageSetup(STAGES[3], starterTeam(5), 4242), inputs);
+    ok(inputs.length > 0 && JSON.stringify(rep.events) === JSON.stringify(evs), `phát lại simulate(input) trùng khớp TỪNG sự kiện với chạy trực tiếp (${inputs.length} lần bấm, ${evs.length} sự kiện)`);
+  }
+
+  // ---- tuyệt kỹ bằng tay khi đang tiến lại gần ----
+  {
+    const b = new Battle(stageSetup(STAGES[0], starterTeam(5), 9));
+    for (let i = 0; i < 40; i++) b.step();
+    const ULT = 1; // Lính Rừng: tuyệt kỹ gây sát thương diện rộng
+    ok(!b.units.some((u) => u.hp < u.maxHp), 'tick 40: hai bên vẫn đang tiến, chưa ai mất máu');
+    b.unit(ULT)!.energy = 100;
+    ok(b.canUlt(ULT), 'đủ năng lượng thì bấm được tuyệt kỹ dù chưa giáp mặt');
+    b.ult(ULT);
+    const ev = b.step();
+    const ult = ev.find((e) => e.k === 'act' && e.u === ULT);
+    ok(!!ult && ult.k === 'act' && skillOf(ult.s).kind === 'ult' && ev.some((e) => e.k === 'dmg' && e.u === ULT), 'tuyệt kỹ bấm lúc đang tiến vẫn tung ra và gây sát thương');
+  }
+
+  // ---- luôn kết thúc, số sự kiện move bị chặn ----
+  {
+    const stuck = simulate({ seed: 1, player: [tu(0, 0, 'healer', {}, { moveSpd: 0, range: 100 })], waves: [[tu(1, 0, 'healer', {}, { moveSpd: 0, range: 100 })]] }, [], true);
+    ok(!stuck.win && stuck.ticks === BATTLE_MAX_TICKS && stuck.events[stuck.events.length - 1].k === 'end', 'hai bên không thể chạm nhau: hết giờ = thua, dừng đúng BATTLE_MAX_TICKS');
+    const full = simulate(stageSetup(STAGES[29], starterTeam(40), 5), [], true);
+    const per = new Map<number, number>();
+    for (const e of full.events) if (e.k === 'move') per.set(e.u, (per.get(e.u) ?? 0) + 1);
+    const cap = Math.ceil(full.ticks / MOVE_EVENT_EVERY) + 2;
+    ok(per.size > 0 && [...per.values()].every((n) => n <= cap), `sự kiện move mỗi đơn vị ≤ ticks/${MOVE_EVENT_EVERY}+2 (tối đa ${Math.max(...per.values())} / ${cap})`);
+    ok(full.events.filter((e) => e.k === 'move').every((e) => e.k === 'move' && e.x >= 0 && e.x <= ARENA_LEN && Number.isInteger(e.x)), 'toạ độ move là số nguyên trong sân');
+    const bossB = new Battle(bossSetup(1, 0, 1, starterTeam(10)));
+    bossB.step();
+    ok(bossB.unit(BOSS_UID)!.range === BOSS_RANGE && bossB.unit(BOSS_UID)!.moveSpd === BOSS_MOVE && BOSS_MOVE < ROLE_MOVE.tank, 'boss: tầm 1100, đi chậm hơn đỡ đòn');
+  }
+
+  // ---- chỉ số mặc định + trang bị ----
+  {
+    const arch = statsAt('archer', 'R', 1, 1), tank = statsAt('tank', 'R', 1, 1), arch5 = statsAt('archer', 'R', 1, 5);
+    ok(statOf(arch, 'aspd') > statOf(tank, 'aspd') && statOf(arch, 'crit') > statOf(tank, 'crit'), 'xạ thủ đánh nhanh/bạo kích hơn đỡ đòn');
+    ok(statOf(arch5, 'aspd') > statOf(arch, 'aspd') && statOf(arch5, 'crit') > statOf(arch, 'crit') && statOf(arch5, 'critDmg') > statOf(arch, 'critDmg'), 'lên sao tăng nhẹ tốc đánh / bạo kích / sát thương bạo kích');
+    ok(powerOf({ ...arch, aspd: 130 }) > powerOf(arch) && powerOf({ hp: 1, atk: 1, def: 1, spd: 1 }) === powerOf({ hp: 1, atk: 1, def: 1, spd: 1, aspd: 100, crit: 10, critDmg: 150, lifesteal: 0 }), 'lực chiến có thêm một phần nhỏ cho tốc đánh (mặc định không đổi)');
+    const m = monsterStatsAt('archer', 10, 100);
+    ok(statOf(m, 'aspd') === statOf(statsAt('archer', 'R', 10, 1), 'aspd'), 'quái có chỉ số chiến đấu theo vai trò');
+    const hero = owned('linh_rung');
+    const base = heroUnit(hero, 0);
+    const wUR = heroUnit(hero, 0, sumGear([{ def: 'weapon_forest_UR', level: 0 }]));
+    const wUR10 = heroUnit(hero, 0, sumGear([{ def: 'weapon_forest_UR', level: 10 }]));
+    ok(statOf(wUR.stats, 'aspd') === statOf(base.stats, 'aspd') + 12 && statOf(wUR10.stats, 'aspd') === statOf(base.stats, 'aspd') + 24 && wUR.stats.atk > base.stats.atk, 'vũ khí UR cộng +12 tốc đánh (cấp 10: +24) vào đơn vị ra trận');
+    const acc = heroUnit(hero, 0, sumGear([{ def: 'accessory_water_SSR', level: 0 }, { def: 'helmet_earth_UR', level: 0 }]));
+    ok(statOf(acc.stats, 'crit') === statOf(base.stats, 'crit') + 6 && statOf(acc.stats, 'lifesteal') === 2, 'phụ kiện SSR +6 bạo kích, mũ UR +2 hút máu');
+    ok(statOf(heroUnit(hero, 0, sumGear([{ def: 'weapon_forest_R', level: 3 }, { def: 'accessory_forest_R', level: 3 }])).stats, 'aspd') === statOf(base.stats, 'aspd'), 'phẩm R không cộng chỉ số mới');
+    // cùng seed, vũ khí tốc đánh cao ra nhiều đòn hơn
+    const cnt = (u: UnitInit) => acts(run({ seed: 6, player: [{ ...u, range: 6000, moveSpd: 0 }], waves: [[tu(1, 0, 'warrior', { atk: 1 }, { moveSpd: 0, range: 6000 })]] }, 1600).events, 0).length;
+    ok(cnt(wUR10) > cnt(base), `tướng cầm vũ khí UR cấp 10 ra đòn nhiều hơn (${cnt(wUR10)} > ${cnt(base)} đòn / 1600 tick)`);
+  }
+
+  // ---- server (opBattle) chấm đúng như client chạy ----
+  {
+    const st = newState(1, Date.now());
+    const seed = 31337;
+    const units = st.squads[0].map((id, slot) => (id ? heroUnit(st.heroes[id], slot, sumGear([])) : null)).filter((u): u is UnitInit => !!u);
+    const client = simulate(stageSetup(STAGES[0], units, seed), [], true);
+    opBattle(st, '1-1', 0, seed, [], true, () => 0);
+    ok(st.runs[0].ticks === client.ticks && st.runs[0].win === client.win && client.win, `opBattle chấm trùng kết quả client (thắng, ${client.ticks} tick)`);
+  }
+
+  // ---- đấu trường ----
+  {
+    const bot = (rating: number, n = 0) => botSquad(n, rating).map((h, i) => heroUnit(h, i));
+    let winStarter = 0, winWeak = 0;
+    for (let n = 0; n < 6; n++) {
+      if (simulate(arenaSetup(starterTeam(1), bot(1000, n), 100 + n), [], true).win) winStarter++;
+      if (simulate(arenaSetup([heroUnit(owned('thay_thuoc'), 0)], bot(1000, n), 200 + n), [], true).win) winWeak++;
+    }
+    console.log(`  [cân bằng] đấu trường, bot 1000 điểm (6 bot): đội khởi đầu cấp 1 thắng ${winStarter}/6; 1 thầy thuốc cấp 1 thắng ${winWeak}/6`);
+    ok(winStarter >= 4, 'đội khởi đầu thắng đa số bot 1000 điểm');
+    ok(winWeak === 0, 'đội yếu (1 thầy thuốc cấp 1) vẫn thua bot 1000 điểm');
+  }
 }
 
 console.log('— gacha —');
@@ -313,7 +583,7 @@ console.log('— Tháp / mốc ngày —');
 
 console.log('— cân bằng Tháp (báo cáo, không ép chặt) —');
 {
-  const teamAt = (lv: number, star: number) => STARTER_HEROES.map((id, i) => heroUnit(owned(id, lv, star), i));
+  const teamAt = (lv: number, star: number) => STARTER3.map((id, i) => heroUnit(owned(id, lv, star), i));
   const floors = [1, 5, 10, 20, 30, 40, 50, 60, 80, 100];
   const need: Record<number, number> = {};
   for (const f of floors) {
@@ -331,6 +601,8 @@ console.log('— cân bằng Tháp (báo cáo, không ép chặt) —');
   if (need[10] > 40) console.log('  CẢNH BÁO: tầng 10 cần cấp > 40 (quá khó)');
   ok(need[1] <= 5, 'tầng 1 dễ (đội khởi đầu cấp ≤ 5 là qua)');
   ok(need[100] >= need[10], 'tầng cao khó hơn tầng thấp');
+  ok(need[10] <= 22, 'tầng 10 cần đội khởi đầu cấp ≤ ~20');
+  ok(wins100 === 0 && need[100] > 60, 'tầng 100 không qua được bằng đội cấp 60, 5 sao, không trang bị');
 }
 
 console.log('— đấu trường —');
@@ -399,7 +671,7 @@ console.log('— bang hội: boss —');
   const firstDayOfCycle = Array.from({ length: 21 }, (_, d) => C0 + d * 86_400_000).find((ms) => dayKey(ms) % BOSS_CYCLE_DAYS === 0)!;
   ok(bossCycle(firstDayOfCycle) === bossCycle(firstDayOfCycle - 1) + 1 && bossCycle(firstDayOfCycle + 6 * 86_400_000 + 3_600_000) === bossCycle(firstDayOfCycle), 'biên chu kỳ: 23:59 hôm trước = chu kỳ cũ, 00:00 = chu kỳ mới');
   ok(bossName(0) !== bossName(1) && bossName(3) === bossName(0), 'bossName xoay vòng');
-  ok(bossHpMax(1) === 3_000_000 && bossHpMax(10) > bossHpMax(9) && bossHpMax(2) > bossHpMax(1), 'bossHpMax tăng theo cấp bang');
+  ok(bossHpMax(1) === 5_000_000 && bossHpMax(10) > bossHpMax(9) && bossHpMax(2) > bossHpMax(1), 'bossHpMax tăng theo cấp bang');
   ok(bossLevel(1) === 24 && bossLevel(10) === 60 && bossLevel(GUILD_MAX_LEVEL) <= 60, 'bossLevel chặn 60');
   let mono = true;
   for (let l = 1; l < GUILD_MAX_LEVEL; l++) {

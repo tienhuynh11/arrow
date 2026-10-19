@@ -1,5 +1,6 @@
 // Trang bị: 4 ô, 4 phẩm, cường hoá 0-10, rớt từ ải. Dữ liệu + công thức thuần, dùng chung server + client.
 // Mọi món trang bị chỉ được TẠO ở server (rớt ải, quà khởi đầu, admin).
+import { EXTRA_STATS, type ExtraStat } from './combat.js';
 import type { Rarity, Stats } from './types.js';
 
 export type GearSlot = 'weapon' | 'armor' | 'helmet' | 'accessory';
@@ -62,19 +63,33 @@ const MAIN: Record<GearSlot, Record<Rarity, number>> = {
 };
 export const ZERO_STATS: Stats = { hp: 0, atk: 0, def: 0, spd: 0 };
 
+/** cộng hai bộ chỉ số; các chỉ số mới (aspd/crit/critDmg/lifesteal) chỉ xuất hiện nếu một trong hai có */
 export function addStats(a: Stats, b: Stats): Stats {
-  return { hp: a.hp + b.hp, atk: a.atk + b.atk, def: a.def + b.def, spd: a.spd + b.spd };
+  const out: Stats = { hp: a.hp + b.hp, atk: a.atk + b.atk, def: a.def + b.def, spd: a.spd + b.spd };
+  for (const k of EXTRA_STATS) if (a[k] !== undefined || b[k] !== undefined) out[k] = (a[k] ?? 0) + (b[k] ?? 0);
+  return out;
 }
+/** cộng thêm cho chỉ số mới (nhỏ, chỉ từ phẩm SR trở lên): vũ khí → tốc đánh, phụ kiện → bạo kích, mũ UR → hút máu */
+const EXTRA: Partial<Record<GearSlot, { stat: ExtraStat; by: Partial<Record<Rarity, number>> }>> = {
+  weapon: { stat: 'aspd', by: { SR: 4, SSR: 8, UR: 12 } },
+  accessory: { stat: 'crit', by: { SR: 3, SSR: 6, UR: 9 } },
+  helmet: { stat: 'lifesteal', by: { UR: 2 } },
+};
 /** chỉ số của một món ở cấp cường hoá `level` (mỗi cấp +10% chỉ số gốc) */
 export function gearStats(def: GearDef, level: number): Stats {
   const lv = Math.max(0, Math.min(MAX_GEAR_LEVEL, Math.floor(level)));
   const v = Math.floor((MAIN[def.slot][def.rarity] * (10 + lv)) / 10);
+  let s: Stats;
   switch (def.slot) {
-    case 'weapon': return { hp: 0, atk: v, def: 0, spd: 0 };
-    case 'armor': return { hp: v, atk: 0, def: 0, spd: 0 };
-    case 'helmet': return { hp: 0, atk: 0, def: v, spd: 0 };
-    case 'accessory': return { hp: v * 5, atk: Math.floor(v / 2), def: 0, spd: 0 };
+    case 'weapon': s = { hp: 0, atk: v, def: 0, spd: 0 }; break;
+    case 'armor': s = { hp: v, atk: 0, def: 0, spd: 0 }; break;
+    case 'helmet': s = { hp: 0, atk: 0, def: v, spd: 0 }; break;
+    case 'accessory': s = { hp: v * 5, atk: Math.floor(v / 2), def: 0, spd: 0 }; break;
   }
+  const ex = EXTRA[def.slot];
+  const b = ex?.by[def.rarity];
+  if (ex && b) s[ex.stat] = Math.floor((b * (10 + lv)) / 10);
+  return s;
 }
 /** tổng chỉ số cộng thêm từ các món đang mặc */
 export function sumGear(items: readonly { def: string; level: number }[]): Stats {

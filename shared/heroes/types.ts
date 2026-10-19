@@ -21,7 +21,17 @@ export interface Stats {
   hp: number;
   atk: number;
   def: number;
+  /** tốc độ hành động (ATB / thứ tự ra đòn) */
   spd: number;
+  /** các chỉ số chiến đấu MỚI — tuỳ chọn, thiếu thì dùng STAT_DEFAULTS (combat.ts) */
+  /** tốc đánh %: thanh hành động đầy với tốc độ spd * aspd / 100 (mặc định 100) */
+  aspd?: number;
+  /** tỉ lệ bạo kích % (mặc định 10) */
+  crit?: number;
+  /** sát thương khi bạo kích % (mặc định 150) */
+  critDmg?: number;
+  /** hút máu % sát thương gây ra (mặc định 0) */
+  lifesteal?: number;
 }
 
 /* ------------------------------ KỸ NĂNG ------------------------------ */

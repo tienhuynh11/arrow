@@ -19,8 +19,8 @@ export const ROW_NAME = ['Hàng Trước', 'Hàng Giữa', 'Hàng Sau'] as const
 
 /** trận đánh chạy 20Hz */
 export const BATTLE_HZ = 20;
-/** quá 120 giây không thắng là thua */
-export const BATTLE_MAX_TICKS = 120 * BATTLE_HZ;
+/** quá 180 giây (gồm cả thời gian hai bên tiến lại gần nhau) không thắng là thua; vẫn nằm gọn trong hạn seed 10 phút của server */
+export const BATTLE_MAX_TICKS = 180 * BATTLE_HZ;
 
 export const MAX_LEVEL = 60;
 export const MAX_STAR = 5;

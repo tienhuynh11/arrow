@@ -66,7 +66,7 @@ const BACK_POOL = ['mk_nem', 'mk_phap'];
 export const BOSS_STAGE_NS: readonly number[] = [5, 10];
 export const isBossStageN = (n: number) => BOSS_STAGE_NS.includes(n);
 /** hệ số độ khó (%) cho boss: ải 5 nhẹ hơn ải 10 */
-const BOSS_DIFF = { 5: 78, 10: 100 } as Record<number, number>;
+const BOSS_DIFF = { 5: 88, 10: 100 } as Record<number, number>;
 
 function buildStage(chapter: number, n: number): StageDef {
   const index = (chapter - 1) * STAGES_PER_CHAPTER + (n - 1);
@@ -89,7 +89,8 @@ function buildStage(chapter: number, n: number): StageDef {
     diff: Math.floor(Math.min(100, 40 + index * 8) * (boss ? (BOSS_DIFF[n] ?? 100) / 100 : 1)),
     waves: [row], boss,
     reward: { gold: 100 + 40 * index, exp: 15 + 8 * index, xp: 20 + 6 * index, gems: boss ? 100 : 30 },
-    star3Ticks: 70 * BATTLE_HZ,
+    // 70 giây đánh + ~6 giây hai bên tiến lại gần nhau
+    star3Ticks: 76 * BATTLE_HZ,
   };
 }
 export const STAGES: StageDef[] = CHAPTERS.flatMap((_, c) =>

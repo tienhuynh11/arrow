@@ -3,6 +3,7 @@
 // Phần "trình diễn" (hit-stop, slow-mo, rung, zoom, cinematic tuyệt kỹ, hạt) chỉ là hình ảnh — không đụng kết quả tính toán.
 import * as THREE from 'three';
 import { rowOfSlot } from '@shared/heroes/config';
+import { ARENA_LEN } from '@shared/heroes/combat';
 import { ENERGY_MAX, type Battle, type BattleEvent, type Unit } from '@shared/heroes/battle';
 import { skillOf } from '@shared/heroes/skills';
 import type { EffectType, Element, Role } from '@shared/heroes/types';
@@ -89,10 +90,12 @@ export interface UnitView {
   blob: THREE.Mesh;
   /** ô đội hình theo slot — luôn là làn (z) của đơn vị */
   home: THREE.Vector3;
-  /** 'vị trí tiền tuyến' của cận chiến (bước tới ngắn trước vạch giữa); tầm xa/boss = home */
-  spot: THREE.Vector3;
-  /** vị trí nền hiện tại (xz): tiến mượt từ home tới spot, không rời làn */
+  /** vị trí nền hiện tại (xz): x bám mượt theo x của engine (tx), z = làn cố định */
   pos: THREE.Vector3;
+  /** x thế giới đích (từ sự kiện 'move' / snapshot của engine) */
+  tx: number;
+  /** đếm giờ nhả bụi dưới chân khi chạy */
+  dustT: number;
   /** độ lệch lao đòn cộng thêm vào pos (đã nhân profile) */
   ox: number;
   oz: number;
@@ -138,6 +141,13 @@ interface Later {
   t: number;
   fn(): void;
 }
+
+/**
+ * TỈ LỆ THẾ GIỚI: trục engine [0, ARENA_LEN=12000] -> x thế giới [-5, +5] (1 đơn vị thế giới = 1200 đơn vị engine).
+ * Phe ta bên TRÁI. Đường xuất phát: hàng trước ±2.0, hàng giữa ±2.75, hàng sau ±3.5; tầm cận chiến 900 ≈ 0.75, tầm xa 4200 ≈ 3.5.
+ */
+export const WORLD_HALF = 5;
+export const worldX = (x: number): number => (x / ARENA_LEN - 0.5) * 2 * WORLD_HALF;
 
 const easeOut = (k: number) => 1 - (1 - k) * (1 - k);
 const rnd = Math.random;
@@ -233,27 +243,10 @@ export class BattleScene implements LiveScene {
   }
 
   /* ------------------------------ BỐ TRÍ ------------------------------ */
-  /**
-   * Ô đội hình theo slot THẬT: 3 cột (Trước gần vạch giữa, Giữa, Sau xa nhất), mỗi cột 2 hàng so le theo z; phe địch đối xứng.
-   * Phe ta x<0 (nhìn sang phải), địch x>0 (nhìn sang trái). Boss (1.7x) đứng đầu phe.
-   */
-  private homeOf(side: 0 | 1, slot: number, boss: boolean, out: THREE.Vector3): THREE.Vector3 {
-    const s = side === 0 ? -1 : 1;
-    const lane = slot & 1;
-    let x: number = MOTION.colX[rowOfSlot(slot)] + (lane ? MOTION.stagger : 0);
-    let z: number = MOTION.rowZ[lane];
-    if (boss) {
-      x = MOTION.bossX;
-      z = MOTION.bossZ;
-    }
-    return out.set(s * x, 0, z);
-  }
-  private spotOf(v: UnitView) {
-    v.spot.copy(v.home);
-    if (v.melee && !v.boss) {
-      const s = v.side === 0 ? -1 : 1;
-      v.spot.x = s * Math.max(MOTION.minX, Math.abs(v.home.x) - MOTION.stepFwd);
-    }
+  /** Ô của đơn vị: x lấy từ vị trí engine (xuất phát xa nhau), z là LÀN cố định theo ô (so le, chỉ để đẹp, không va chạm). */
+  private homeOf(slot: number, boss: boolean, engineX: number, out: THREE.Vector3): THREE.Vector3 {
+    const z = boss ? MOTION.bossZ : MOTION.rowZ[slot & 1];
+    return out.set(worldX(engineX), 0, z);
   }
   private faceOf(side: 0 | 1): number {
     return side === 0 ? Math.PI / 2 : -Math.PI / 2;
@@ -270,7 +263,7 @@ export class BattleScene implements LiveScene {
     if (this.portrait) {
       this.camera.fov = 36;
       el = (37 * Math.PI) / 180;
-      W = 7.6; // bề ngang thế giới nhìn thấy tại mặt phẳng tâm: 2 phe (±4,45) vừa khít
+      W = 8.4; // bề ngang thế giới nhìn thấy tại mặt phẳng tâm: hàng sau hai phe ở ±3.5 (+ nửa thân) vừa khít; 390px => 1 đơn vị ≈ 12% bề ngang
       H = 0;
       this.camTarget.set(0, 1.5, -0.5);
     } else {
@@ -306,15 +299,15 @@ export class BattleScene implements LiveScene {
     group.add(blob);
     const v: UnitView = {
       uid: u.uid, key: init.key, side: init.side, slot: init.slot, role: init.role, element: init.element, boss,
-      unit: u, group, model, blob, home: this.homeOf(init.side, init.slot, boss, new THREE.Vector3()), spot: new THREE.Vector3(),
-      pos: new THREE.Vector3(), ox: 0, oz: 0, rx: 0, rz: 0, rvx: 0, rvz: 0, kick: new THREE.Vector3(),
+      unit: u, group, model, blob, home: this.homeOf(init.slot, boss, u.x, new THREE.Vector3()),
+      pos: new THREE.Vector3(), tx: 0, dustT: 0, ox: 0, oz: 0, rx: 0, rz: 0, rvx: 0, rvz: 0, kick: new THREE.Vector3(),
       melee: init.role === 'warrior' || init.role === 'tank',
       lt: -1, ld: 0.3, lax: 0, laz: 0, face: this.faceOf(init.side), faceT: 0, yaw: this.faceOf(init.side),
       freeze: 0, hp: u.hp, maxHp: u.maxHp, alive: true, gone: false, leaned: false,
       aura: null, auraT: 0, shieldMesh: null, shieldOn: false, stunGroup: null, stunOn: false,
     };
-    this.spotOf(v);
     v.pos.copy(v.home);
+    v.tx = v.home.x;
     this.alive[init.side]++;
     model.object3d.rotation.y = v.yaw;
     group.position.copy(v.home);
@@ -323,7 +316,7 @@ export class BattleScene implements LiveScene {
     if (pop) {
       // trượt vào từ mép phe mình + nảy to dần
       const sgn = init.side === 0 ? -1 : 1;
-      const ax = sgn * 3.2;
+      const ax = sgn * 1.6;
       group.scale.setScalar(0.01);
       this.tween(0.5, (k) => {
         const s = k < 0.7 ? easeOut(k / 0.7) * 1.15 : 1.15 - 0.15 * ((k - 0.7) / 0.3);
@@ -537,22 +530,19 @@ export class BattleScene implements LiveScene {
   }
 
   /**
-   * Lao đòn: từ ô (pos) tới TRƯỚC MẶT mục tiêu rồi lùi về — chỉ là độ lệch tạm (ox,oz), nền pos không đổi.
-   * 'hit' ≤ 0,35 s; 'aoe' ngắn (đi tới ~1,6); 'ult' xa hơn và lâu hơn.
+   * Đòn cận chiến TẠI CHỖ: mục tiêu đã nằm trong tầm (≤ ~0.75) nên chỉ bước tới một nhịp ngắn rồi giật về
+   * (độ lệch tạm ox, KHÔNG đổi nền pos). 'hit' ≤ MOTION.lungeStep; 'aoe' gần như vậy; 'ult' bước dài hơn một chút và lâu hơn.
    */
   private lunge(v: UnitView, t: UnitView, mode: 'hit' | 'aoe' | 'ult') {
     const dx = t.pos.x - v.pos.x;
-    const dz = t.pos.z - v.pos.z;
-    const d = Math.hypot(dx, dz);
-    if (d < 1e-3) return;
-    const gap = t.boss || v.boss ? MOTION.lungeGapBoss : MOTION.lungeGap;
-    let reach = Math.max(0, Math.min(MOTION.lungeCap, d - gap));
-    if (mode === 'aoe') reach = Math.min(reach, 1.6);
-    v.lax = (dx / d) * reach;
-    v.laz = (dz / d) * reach;
-    v.ld = mode === 'ult' ? MOTION.lungeUlt : Math.min(MOTION.lungeMax, MOTION.lungeMin + (reach / MOTION.lungeCap) * (MOTION.lungeMax - MOTION.lungeMin));
+    if (Math.abs(dx) < 1e-3) return;
+    const dir = dx > 0 ? 1 : -1;
+    const reach = Math.min(Math.abs(dx), mode === 'ult' ? MOTION.lungeStepUlt : MOTION.lungeStep);
+    v.lax = dir * reach;
+    v.laz = 0;
+    v.ld = mode === 'ult' ? MOTION.lungeUlt : MOTION.lungeMin;
     v.lt = 0;
-    v.face = Math.atan2(dx, dz);
+    v.face = Math.atan2(dx, t.pos.z - v.pos.z);
     v.faceT = MOTION.faceHold;
   }
 
@@ -588,6 +578,7 @@ export class BattleScene implements LiveScene {
 
   /** thời gian bay của đạn theo khoảng cách (giây cảnh) */
   private flight(a: UnitView, b: UnitView): number {
+    // thời gian bay tỉ lệ khoảng cách THẬT (vị trí hiện tại của hai bên): bắn xa -> bay lâu hơn
     const d = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
     return Math.min(MOTION.flightMax, Math.max(MOTION.flightMin, d / MOTION.flightSpeed));
   }
@@ -606,9 +597,22 @@ export class BattleScene implements LiveScene {
           const u = battle.unit(uid);
           if (u && !this.views.has(uid)) this.addUnit(u, true);
         }
-        // đội hình KHÔNG xếp lại: ai đứng ô nào thì giữ nguyên ô đó
+        // đợt mới: phe ta engine đã đưa về đội hình xuất phát (sự kiện 'move' vừa tới) -> đặt thẳng tại đó, hai bên lại cách xa
+        for (const v of this.views.values()) {
+          if (v.gone || !v.alive || v.side !== 0) continue;
+          const nx = worldX(v.unit.x);
+          if (Math.abs(nx - v.pos.x) > 0.3) this.ring(this.tmpC.set(nx, 0, v.pos.z), ELEMENT_COLOR[v.element], 1.0, 0.35);
+          v.tx = v.pos.x = nx;
+          v.home.x = nx;
+        }
         this.curDelay = 0;
         this.hooks.wave(ev.n);
+        break;
+      }
+      case 'move': {
+        // vị trí thật từ engine: nền sẽ bám mượt tới đây (xem moveUnit); người đã gục đứng yên tại chỗ ngã
+        const v = this.views.get(ev.u);
+        if (v && v.alive) v.tx = worldX(ev.x);
         break;
       }
       case 'act': {
@@ -922,20 +926,23 @@ export class BattleScene implements LiveScene {
       this.place(v);
       return;
     }
-    const bt = this.battle;
-    const stunned = !!bt && bt.stunned(v.unit);
-
-    // 1) nền: cận chiến bước tới tiền tuyến khi có địch; còn lại về/giữ ô (z luôn là làn của ô)
-    let tx = v.home.x;
-    const tz = v.home.z;
-    if (v.melee && !v.boss && !stunned && this.alive[1 - v.side] > 0) tx = v.spot.x;
-    if (this.fightOver) tx = v.pos.x;
+    // 1) nền: x bám mượt theo x engine (tốc độ bám đủ nhanh để độ trễ ~0.04 ở mọi tốc độ x1..x3, vì dt đã nhân tốc độ);
+    //    z KHÓA ở làn của ô
     const px = v.pos.x;
-    v.pos.x += (tx - px) * Math.min(1, MOTION.stepRate * dt);
-    v.pos.z = tz;
+    const gap = v.tx - px;
+    v.pos.x = Math.abs(gap) < 0.002 ? v.tx : px + gap * Math.min(1, MOTION.followRate * dt);
+    v.pos.z = v.home.z;
     let speed = Math.abs(v.pos.x - px) / dt;
+    const running = !this.fightOver && (Math.abs(v.tx - v.pos.x) > MOTION.moveEps || speed > MOTION.runSpeed * 0.3);
+    if (running && !this.low && v.dustT <= 0 && this.pool.active < 70) {
+      // bụi nhỏ dưới chân khi chạy
+      v.dustT = 0.13;
+      const back = v.side === 0 ? -1 : 1;
+      this.pool.spawn('dot', v.pos.x + back * 0.2, 0.07, v.pos.z + (rnd() - 0.5) * 0.3, back * 0.35, 0.45, 0, -0.5, 0.42, 0.14, 0.5, 0xd8cdb4, 0, false, 0.42);
+    }
+    if (v.dustT > 0) v.dustT -= dt;
 
-    // 2) lao đòn
+    // 2) đòn cận chiến tại chỗ: bước tới ngắn rồi giật về
     v.ox = v.oz = 0;
     let lk = -1;
     if (v.lt >= 0) {
@@ -948,11 +955,10 @@ export class BattleScene implements LiveScene {
         const pr = lungeProfile(lk);
         v.ox = v.lax * pr;
         v.oz = v.laz * pr;
-        if (lk < 0.4 || lk > 0.55) speed = Math.max(speed, MOTION.stepRate * 0.6);
       }
     }
-    const mk = Math.min(1, speed / 4.2);
-    mh.setMove?.(mk > 0.12 ? mk : 0);
+    // chạy khi còn lệch x so với engine; đứng yên (idle) khi đã tới tầm
+    mh.setMove?.(running ? 0.6 + 0.4 * Math.min(1, speed / MOTION.runSpeed) : 0);
 
     // 3) hướng mặt: vừa ra đòn thì nhìn mục tiêu, sau đó về hướng phe
     if (v.faceT > 0) v.faceT -= dt;

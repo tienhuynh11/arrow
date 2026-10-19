@@ -22,7 +22,7 @@ import { Icon } from '../icons';
 import { BossHp } from './Guild';
 
 /** nhãn hồi chiêu phía trên thẻ: "8.2s" tới lượt kế, "ĐẦY" khi đủ năng lượng (chạm để tung), "--" khi choáng */
-const cdLabel = (u: HudUnit) => (!u.alive ? '' : u.ready ? 'ĐẦY' : u.cd < 0 ? '--' : `${u.cd.toFixed(1)}s`);
+const cdLabel = (u: HudUnit) => (!u.alive ? '' : u.ready ? 'ĐẦY' : u.cd === -2 ? 'Tiến...' : u.cd < 0 ? '--' : `${u.cd.toFixed(1)}s`);
 
 function UltBtn({ u, hot, lv, star, onUlt }: { u: HudUnit; hot: number; lv: number; star: number; onUlt: () => void }) {
   const d = defOf(u.key);

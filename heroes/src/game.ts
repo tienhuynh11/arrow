@@ -4,6 +4,7 @@ import { slotsOpen, squadsOpen } from '@shared/heroes/progression';
 import { levelCapOf, powerOf, statsAt } from '@shared/heroes/formulas';
 import { HERO_BY_ID, HEROES } from '@shared/heroes/heroes';
 import { afkReward, STAGES, type StageDef } from '@shared/heroes/stages';
+import { EXTRA_STATS, ROLE_RANGE, statOf, type ExtraStat } from '@shared/heroes/combat';
 import type { EffectType, HeroDef, OwnedHero, SkillDef, SkillTarget, Stats } from '@shared/heroes/types';
 import type { MeResponse } from '@shared/heroes/api';
 import { QUEST_DEFS, type QuestState } from '@shared/heroes/quests';
@@ -42,17 +43,41 @@ export function gearStatsOf(g: { def: string; level: number }): Stats {
 export function gearPower(g: { def: string; level: number }): number {
   return powerOf(gearStatsOf(g));
 }
-export type StatKey = 'hp' | 'atk' | 'def' | 'spd';
-export const STAT_KEYS: StatKey[] = ['hp', 'atk', 'def', 'spd'];
-export const STAT_LABEL: Record<StatKey, string> = { hp: 'Máu', atk: 'Công', def: 'Thủ', spd: 'Tốc' };
-/** các chỉ số khác 0 của một bộ chỉ số */
+export type MainStatKey = 'hp' | 'atk' | 'def' | 'spd';
+export type StatKey = MainStatKey | ExtraStat;
+/** 4 chỉ số chính (Summon dùng) */
+export const STAT_KEYS: MainStatKey[] = ['hp', 'atk', 'def', 'spd'];
+/** cả chỉ số chính + chỉ số chiến đấu mới (thứ tự hiển thị) */
+export const ALL_STAT_KEYS: StatKey[] = [...STAT_KEYS, ...EXTRA_STATS];
+export const STAT_LABEL: Record<StatKey, string> = {
+  hp: 'Máu', atk: 'Công', def: 'Thủ', spd: 'Tốc',
+  aspd: 'Tốc đánh', crit: 'Bạo kích', critDmg: 'ST bạo kích', lifesteal: 'Hút máu',
+};
+/** đọc một chỉ số (thiếu = 0, dùng cho cộng/trừ bonus trang bị) */
+export const statRaw = (s: Stats, k: StatKey): number => s[k] ?? 0;
+/** số hiển thị của một mục bonus: hút máu có dấu % */
+export function statFmt(k: StatKey, v: number): string {
+  return k === 'lifesteal' ? `${v}%` : String(v);
+}
+/** các chỉ số khác 0 của một bộ chỉ số (bonus trang bị: gồm cả tốc đánh/bạo kích/hút máu) */
 export function statEntries(s: Stats): { k: StatKey; v: number }[] {
-  return STAT_KEYS.filter((k) => s[k] !== 0).map((k) => ({ k, v: s[k] }));
+  return ALL_STAT_KEYS.filter((k) => statRaw(s, k) !== 0).map((k) => ({ k, v: statRaw(s, k) }));
 }
 /** chênh lệch chỉ số b - a */
 export function statDiff(b: Stats, a: Stats): Stats {
-  return { hp: b.hp - a.hp, atk: b.atk - a.atk, def: b.def - a.def, spd: b.spd - a.spd };
+  const out: Stats = { hp: b.hp - a.hp, atk: b.atk - a.atk, def: b.def - a.def, spd: b.spd - a.spd };
+  for (const k of EXTRA_STATS) {
+    const d = statRaw(b, k) - statRaw(a, k);
+    if (d !== 0) out[k] = d;
+  }
+  return out;
 }
+/** tầm đánh theo vai trò -> chữ: Cận / Trung / Xa / Rất xa */
+export function rangeWord(role: HeroDef['role']): string {
+  const r = ROLE_RANGE[role];
+  return r <= 1500 ? 'Cận' : r <= 3300 ? 'Trung' : r <= 3800 ? 'Xa' : 'Rất xa';
+}
+export { statOf };
 /** chỉ số tướng (đã gồm trang bị). `m` mặc định là hồ sơ hiện tại */
 export function statsOfOwned(o: OwnedHero, m: MeResponse | null = me.value): Stats {
   const d = HERO_BY_ID[o.id];

@@ -43,7 +43,8 @@ export function bossName(cycle: number): string {
 }
 /** tổng máu boss của cả bang trong một chu kỳ */
 export function bossHpMax(guildLevel: number): number {
-  return 3_000_000 * (1 + 0.6 * (guildLevel - 1));
+  // đã chỉnh lại cho engine có vị trí/tốc đánh (trận dài tới 180 giây => sát thương mỗi lượt tăng ~1.7x): MỘT người cấp 60 mất ~6 ngày
+  return 5_000_000 * (1 + 0.6 * (guildLevel - 1));
 }
 /** cấp tương đương của boss dùng cho chỉ số (chặn 60 như tướng) */
 export function bossLevel(guildLevel: number): number {

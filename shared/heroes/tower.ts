@@ -62,7 +62,8 @@ export function towerStage(floor: number): StageDef {
     diff: Math.floor((f <= 10 ? 50 + f * 5 : 100 + (f - 10) * 1.6) * (boss && f > 10 ? 0.85 : 1)),
     waves, boss,
     reward: { gold: r.gold, exp: r.exp, xp: r.xp, gems: r.gems },
-    star3Ticks: 90 * BATTLE_HZ,
+    // 90 giây đánh + ~6 giây tiến lại gần nhau
+    star3Ticks: 96 * BATTLE_HZ,
   };
 }
 
