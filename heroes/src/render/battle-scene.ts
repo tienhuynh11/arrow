@@ -248,7 +248,7 @@ export class BattleScene implements LiveScene {
   /* ------------------------------ BỐ TRÍ ------------------------------ */
   /** Ô của đơn vị: x lấy từ vị trí engine (xuất phát xa nhau), z là LÀN cố định theo ô (MOTION.laneZ, trải ±1.6, so le kiểu gạch) cộng độ lệch tách mềm `sz` (xem separate). */
   private homeOf(slot: number, boss: boolean, engineX: number, out: THREE.Vector3): THREE.Vector3 {
-    const z = boss ? MOTION.bossZ : ((MOTION.laneZ[slot] ?? 0) * (this.portrait ? 2.1 : 1));
+    const z = boss ? MOTION.bossZ : ((MOTION.laneZ[slot] ?? 0) * (this.portrait ? 1.35 : 1));
     return out.set(worldX(engineX), 0, z);
   }
   private faceOf(side: 0 | 1): number {
@@ -264,14 +264,14 @@ export class BattleScene implements LiveScene {
     this.portrait = aspect < 1;
     let el: number, W: number, H: number;
     if (this.portrait) {
-      this.camera.fov = 36;
-      el = (37 * Math.PI) / 180;
+      this.camera.fov = 32;
+      el = (26 * Math.PI) / 180; // thấp để nhìn nhân vật từ BÊN HÔNG (thấy chân tay chạy), không nhìn từ đỉnh đầu như 37° cũ
       W = 8.4; // (x giữ nguyên tỉ lệ; làn z trải ±1.6 chỉ tốn chiều dọc, màn dọc còn dư nên đơn vị vẫn ≥ ~11% bề ngang) bề ngang thế giới nhìn thấy tại mặt phẳng tâm: hàng sau hai phe ở ±3.5 (+ nửa thân) vừa khít; 390px => 1 đơn vị ≈ 12% bề ngang
       H = 0;
-      this.camTarget.set(0, 1.5, 0);
+      this.camTarget.set(0, 1.0, 0.2);
     } else {
       this.camera.fov = 34;
-      el = (29 * Math.PI) / 180;
+      el = (15 * Math.PI) / 180;
       W = 13;
       H = 11; // chiều cao thế giới tối thiểu (chừa chỗ cho thanh trên + thẻ tướng)
       this.camTarget.set(0, 1.0, 0);

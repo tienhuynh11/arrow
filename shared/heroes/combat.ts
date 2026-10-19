@@ -27,13 +27,13 @@ export const MOVE_EVENT_EVERY = 5;
 export const ROLE_RANGE: Record<Role, number> = {
   tank: 900, warrior: 900, healer: 3200, support: 3200, mage: 3600, archer: 4200,
 };
-/** tốc độ đi theo vai trò (đơn vị / tick). Hai hàng trước đối đầu: 4800 - 900 = 3900 đơn vị, khép lại ~72-80/tick (x1.8 so với bản cũ) => đụng độ sau ~2.3 giây */
+/** tốc độ đi theo vai trò (đơn vị / tick). Hai hàng trước đối đầu: 4800 - 900 = 3900 đơn vị, khép lại ~122-136/tick (x1.7 so với bản trước) => đụng độ sau ~1.4 giây */
 export const ROLE_MOVE: Record<Role, number> = {
-  tank: 32, warrior: 40, healer: 32, support: 36, mage: 32, archer: 36,
+  tank: 54, warrior: 68, healer: 54, support: 61, mage: 54, archer: 61,
 };
 /** boss: tầm như tank nhưng bước chậm */
 export const BOSS_RANGE = 1100;
-export const BOSS_MOVE = 22;
+export const BOSS_MOVE = 37;
 
 export const rangeOf = (role: Role, boss?: boolean, override?: number): number =>
   override ?? (boss ? BOSS_RANGE : ROLE_RANGE[role]);

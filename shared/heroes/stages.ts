@@ -66,7 +66,7 @@ const BACK_POOL = ['mk_nem', 'mk_phap'];
 export const BOSS_STAGE_NS: readonly number[] = [5, 10];
 export const isBossStageN = (n: number) => BOSS_STAGE_NS.includes(n);
 /** hệ số độ khó (%) cho boss: ải 5 nhẹ hơn ải 10 */
-const BOSS_DIFF = { 5: 92, 10: 100 } as Record<number, number>;
+const BOSS_DIFF = { 5: 97, 10: 100 } as Record<number, number>;
 
 function buildStage(chapter: number, n: number): StageDef {
   const index = (chapter - 1) * STAGES_PER_CHAPTER + (n - 1);
