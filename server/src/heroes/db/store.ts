@@ -75,7 +75,23 @@ export interface HState {
   guildId: number | null;
   /** các sự kiện đang diễn ra tại thời điểm giao dịch + tiến trình của tài khoản (chỉ nạp sự kiện còn hiệu lực) */
   events: EventState[];
+  /** gói Tân thủ (PG: bảng h_newbie, tạo lười ở lần ghi đầu tiên khác mặc định) */
+  newbie: NewbieState;
 }
+
+/** trạng thái gói Tân thủ của một tài khoản */
+export interface NewbieState {
+  /** số ngày điểm danh đã nhận (0..7) */
+  loginClaimed: number;
+  /** dayKey của lần nhận điểm danh gần nhất (0 = chưa nhận) — mỗi ngày chỉ nhận 1 lần */
+  loginDay: number;
+  starterUsed: boolean;
+  /** id các mốc Hành trình tân thủ đã nhận */
+  milestones: string[];
+  /** tổng số lượt triệu hồi tính từ migration v6 (tài khoản cũ bắt đầu từ 0) */
+  pullsTotal: number;
+}
+export const newNewbie = (): NewbieState => ({ loginClaimed: 0, loginDay: 0, starterUsed: false, milestones: [], pullsTotal: 0 });
 
 /** một sự kiện đang hiệu lực + tiến trình theo id mục tiêu */
 export interface EventState {

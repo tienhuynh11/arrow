@@ -6,6 +6,7 @@ import type { PityState, Pull } from './gacha.js';
 import type { GearInst } from './gear.js';
 import type { ArenaOpponent, ArenaState } from './arena.js';
 import type { EventDef, EventView } from './events.js';
+import type { NewbieView } from './newbie.js';
 import type { GuildBrief, GuildChatMsg, GuildInfo } from './guild.js';
 import type { QuestsView } from './quests.js';
 import type { TowerState } from './tower.js';
@@ -49,6 +50,10 @@ export const ROUTES = {
   guildCheckin: 'guild-checkin',
   guildBoss: 'guild-boss',
   guildChat: 'guild-chat',
+  newbie: 'newbie',
+  newbieLoginClaim: 'newbie-login-claim',
+  newbieMilestoneClaim: 'newbie-milestone-claim',
+  newbieStarterSummon: 'newbie-starter-summon',
   adminEvents: 'admin/events',
   adminEventSave: 'admin/event-save',
   adminEventDelete: 'admin/event-delete',
@@ -92,6 +97,9 @@ export interface MeResponse {
   /** id bang đang ở (null = chưa có bang) và số mục sự kiện có thể nhận ngay (để hiện chấm đỏ) */
   guildId: number | null;
   eventsClaimable: number;
+  /** số mục Tân thủ có thể nhận ngay (chấm đỏ) và đã xong hết chưa (ẩn nút) */
+  newbieBadge: number;
+  newbieDone: boolean;
   /** SQUAD_COUNT đội, mỗi đội SQUAD_SIZE ô chứa id tướng ('' = trống) */
   squads: string[][];
   activeSquad: number;
@@ -377,4 +385,30 @@ export interface GuildChatRes {
 }
 export interface GuildChatPostReq {
   text: string;
+}
+
+/* ------------------------------ TÂN THỦ ------------------------------ */
+/** GET newbie: điểm danh 7 ngày + tiến trình các mốc + cờ lượt quay khởi đầu (tính tại thời điểm gọi, đã reset ngày) */
+export interface NewbieRes {
+  view: NewbieView;
+}
+/** nhận quà điểm danh của ngày kế tiếp (1 lần/ngày, thứ tự 1→7) */
+export interface NewbieLoginClaimRes extends MutateRes {
+  day: number;
+  reward: { wallet: Partial<Wallet>; shards?: { hero: string; n: number }; gear: string[]; heroGranted?: string };
+  view: NewbieView;
+}
+export interface NewbieMilestoneClaimReq {
+  id: string;
+}
+export interface NewbieMilestoneClaimRes extends MutateRes {
+  reward: { wallet: Partial<Wallet>; shards?: { hero: string; n: number }; gear: string[] };
+  view: NewbieView;
+}
+/** quay khởi đầu miễn phí 10 lượt (1 lần/tài khoản), `key` chống gửi trùng như summon */
+export interface NewbieStarterSummonReq {
+  key: string;
+}
+export interface NewbieStarterSummonRes extends SummonRes {
+  view: NewbieView;
 }

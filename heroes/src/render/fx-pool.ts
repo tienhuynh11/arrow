@@ -226,6 +226,127 @@ export class FxPool {
   }
 }
 
+/* ------------------------------ ĐẠN BAY (tái dùng, không cấp phát mỗi khung) ------------------------------ */
+export type ProjKind = 'arrow' | 'orb' | 'heal' | 'note';
+
+interface Pj {
+  g: THREE.Group;
+  arrow: THREE.Group;
+  arrowMat: THREE.MeshBasicMaterial;
+  glow: THREE.Sprite;
+  glowMat: THREE.SpriteMaterial;
+  core: THREE.Sprite;
+  coreMat: THREE.SpriteMaterial;
+  on: boolean;
+  kind: ProjKind;
+  t: number;
+  dur: number;
+  ax: number; ay: number; az: number;
+  bx: number; by: number; bz: number;
+  arc: number;
+  trailT: number;
+  color: number;
+  size: number;
+}
+
+/** Đạn bay dựng sẵn: mũi tên (mesh), cầu phép (glow + lõi), cầu hồi máu (dấu cộng xanh), nốt/sao hỗ trợ.
+ *  `trailGap` = giây giữa hai hạt đuôi (0 = không đuôi, dùng cho máy yếu). Tất cả chỉ là hình ảnh. */
+export class ProjPool {
+  private ps: Pj[] = [];
+  private next = 0;
+  private tmp = new THREE.Vector3();
+  private geos: THREE.BufferGeometry[] = [];
+
+  constructor(private scene: THREE.Scene, size: number, private fx: FxPool, private trailGap: number) {
+    const shaft = new THREE.CylinderGeometry(0.018, 0.018, 0.55, 5).rotateX(Math.PI / 2);
+    const head = new THREE.ConeGeometry(0.06, 0.18, 6).rotateX(Math.PI / 2).translate(0, 0, 0.36);
+    const fl = new THREE.BoxGeometry(0.1, 0.012, 0.12).translate(0, 0, -0.26);
+    this.geos.push(shaft, head, fl);
+    for (let i = 0; i < size; i++) {
+      const g = new THREE.Group();
+      const arrowMat = new THREE.MeshBasicMaterial({ color: 0xfff0c0 });
+      const arrow = new THREE.Group();
+      arrow.add(new THREE.Mesh(shaft, arrowMat), new THREE.Mesh(head, arrowMat), new THREE.Mesh(fl, arrowMat));
+      const glowMat = new THREE.SpriteMaterial({ map: fxTex('glow'), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
+      const glow = new THREE.Sprite(glowMat);
+      glow.renderOrder = 21;
+      const coreMat = new THREE.SpriteMaterial({ map: fxTex('dot'), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, color: 0xffffff });
+      const core = new THREE.Sprite(coreMat);
+      core.renderOrder = 22;
+      g.add(arrow, glow, core);
+      g.visible = false;
+      scene.add(g);
+      this.ps.push({ g, arrow, arrowMat, glow, glowMat, core, coreMat, on: false, kind: 'orb', t: 0, dur: 1, ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, arc: 0, trailT: 0, color: 0xffffff, size: 1 });
+    }
+  }
+
+  fire(kind: ProjKind, ax: number, ay: number, az: number, bx: number, by: number, bz: number, color: number, dur: number, arc = 0.3, size = 1) {
+    const p = this.ps[this.next];
+    this.next = (this.next + 1) % this.ps.length; // hết chỗ: ghi đè viên cũ nhất
+    p.on = true;
+    p.kind = kind;
+    p.t = 0;
+    p.dur = Math.max(0.05, dur);
+    p.ax = ax; p.ay = ay; p.az = az; p.bx = bx; p.by = by; p.bz = bz;
+    p.arc = arc;
+    p.trailT = 0;
+    p.color = color;
+    p.size = size;
+    p.arrow.visible = kind === 'arrow';
+    p.glowMat.map = fxTex(kind === 'heal' ? 'plus' : kind === 'note' ? 'star' : 'glow');
+    p.glowMat.color.setHex(color);
+    p.coreMat.visible = kind === 'orb';
+    p.core.visible = kind === 'orb';
+    const gs = kind === 'arrow' ? 0.32 : kind === 'orb' ? 0.62 : 0.5;
+    p.glow.scale.set(gs * size, gs * size, 1);
+    p.core.scale.set(0.26 * size, 0.26 * size, 1);
+    p.g.position.set(ax, ay, az);
+    p.g.visible = true;
+  }
+
+  private at(p: Pj, k: number, out: THREE.Vector3) {
+    out.set(p.ax + (p.bx - p.ax) * k, p.ay + (p.by - p.ay) * k + Math.sin(k * Math.PI) * p.arc, p.az + (p.bz - p.az) * k);
+  }
+
+  update(dt: number) {
+    if (dt <= 0) return;
+    for (const p of this.ps) {
+      if (!p.on) continue;
+      p.t += dt;
+      const k = p.t / p.dur;
+      if (k >= 1) {
+        p.on = false;
+        p.g.visible = false;
+        continue;
+      }
+      this.at(p, k, p.g.position);
+      if (p.kind === 'arrow') {
+        this.at(p, Math.min(1, k + 0.05), this.tmp);
+        p.g.lookAt(this.tmp);
+      } else if (p.kind !== 'orb') p.glowMat.rotation += dt * (p.kind === 'note' ? 9 : 0);
+      if (this.trailGap > 0) {
+        p.trailT -= dt;
+        if (p.trailT <= 0) {
+          p.trailT = this.trailGap;
+          const q = p.g.position;
+          this.fx.spawn('dot', q.x, q.y, q.z, 0, 0, 0, 0, 0.22, 0.2 * p.size, 0.02, p.color, 0, true, 0.75);
+        }
+      }
+    }
+  }
+
+  dispose() {
+    for (const p of this.ps) {
+      this.scene.remove(p.g);
+      p.arrowMat.dispose();
+      p.glowMat.dispose();
+      p.coreMat.dispose();
+    }
+    for (const g of this.geos) g.dispose();
+    this.ps.length = 0;
+  }
+}
+
 /** giải phóng texture dùng chung (khi rời màn trận) */
 export function disposeFxTextures() {
   for (const t of texCache.values()) t.dispose();

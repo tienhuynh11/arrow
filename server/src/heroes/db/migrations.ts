@@ -198,6 +198,17 @@ CREATE TABLE ${S}h_guild_reward (
 );
 `;
   },
+  // v6 — Gói Tân thủ: điểm danh 7 ngày, lượt quay khởi đầu, mốc hành trình, tổng lượt quay. Hàng tạo lười (thiếu hàng = mặc định).
+  (S) => `
+CREATE TABLE ${S}h_newbie (
+  account_id      integer PRIMARY KEY REFERENCES ${S}accounts(id) ON DELETE CASCADE,
+  login_claimed   integer NOT NULL DEFAULT 0 CHECK (login_claimed BETWEEN 0 AND 7),
+  login_day       integer NOT NULL DEFAULT 0,
+  starter_used    boolean NOT NULL DEFAULT false,
+  milestones      text[] NOT NULL DEFAULT '{}',
+  pulls_total     integer NOT NULL DEFAULT 0 CHECK (pulls_total >= 0)
+);
+`,
 ];
 
 /** chạy các migration còn thiếu, một giao dịch có khoá advisory (khác khoá của Bầy Khỉ) */

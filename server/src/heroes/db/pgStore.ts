@@ -14,7 +14,7 @@ import { assertWallet, gainKillRewards, ledgerOf, newState, rollDay, STARTER_WAL
 import { migrateHeroes } from './migrations.js';
 import {
   StoreError, type ArenaRank, type EventState, type GuildCtx, type GuildListRow, type GuildMemberRow, type GuildRow, type HState, type HeroStore,
-  type LeaderEntry, type MutateOpts,
+  type LeaderEntry, type MutateOpts, newNewbie,
 } from './store.js';
 
 type Q = pg.PoolClient;
@@ -101,8 +101,15 @@ export class HeroPgStore implements HeroStore {
       heroes: {}, squads, progress: {}, runs: [], gear: [], newGear: [],
       towerFloor: p.tower_floor, towerDay: p.tower_day, towerTries: p.tower_tries, day: 0, quests: {}, questBonus: false, shop: {},
       arenaOn: false, arenaRating: ARENA_START_RATING, arenaDay: 0, arenaTries: 0, arenaDefense: 0, arenaWins: 0, arenaLosses: 0,
-      guildLeftAt: p.guild_left_at, guildId: p.guild_id ?? null, events: light ? [] : await this.loadEvents(c, id, nowMs),
+      guildLeftAt: p.guild_left_at, guildId: p.guild_id ?? null, events: light ? [] : await this.loadEvents(c, id, nowMs), newbie: newNewbie(),
     };
+    if (!light) {
+      const nb = await c.query(`SELECT login_claimed, login_day, starter_used, milestones, pulls_total FROM ${S}h_newbie WHERE account_id = $1`, [id]);
+      if (nb.rows.length) {
+        const n = nb.rows[0];
+        s.newbie = { loginClaimed: n.login_claimed, loginDay: n.login_day, starterUsed: n.starter_used, milestones: [...(n.milestones as string[])], pullsTotal: n.pulls_total };
+      }
+    }
     if (ar.rows.length) {
       const a = ar.rows[0];
       Object.assign(s, { arenaOn: true, arenaRating: a.rating, arenaDay: a.day, arenaTries: a.tries, arenaDefense: a.defense_squad, arenaWins: a.wins, arenaLosses: a.losses });
@@ -264,6 +271,17 @@ export class HeroPgStore implements HeroStore {
       );
       for (const r of ins.rows) s.gear.push({ uid: r.uid, def: r.def_id, level: 0, hero: null });
       s.newGear = [];
+    }
+    // Tân thủ: hàng tạo lười — chỉ ghi khi đã khác mặc định
+    const nb = s.newbie;
+    if (nb.loginClaimed > 0 || nb.loginDay > 0 || nb.starterUsed || nb.milestones.length || nb.pullsTotal > 0) {
+      await c.query(
+        `INSERT INTO ${S}h_newbie (account_id, login_claimed, login_day, starter_used, milestones, pulls_total)
+         VALUES ($1,$2,$3,$4,$5::text[],$6)
+         ON CONFLICT (account_id) DO UPDATE SET login_claimed = EXCLUDED.login_claimed, login_day = EXCLUDED.login_day,
+           starter_used = EXCLUDED.starter_used, milestones = EXCLUDED.milestones, pulls_total = EXCLUDED.pulls_total`,
+        [id, nb.loginClaimed, nb.loginDay, nb.starterUsed, nb.milestones, nb.pullsTotal],
+      );
     }
     for (const r of s.runs) {
       await c.query(`INSERT INTO ${S}h_runs (account_id, stage, win, stars, ticks) VALUES ($1,$2,$3,$4,$5)`, [id, r.stage, r.win, r.stars, r.ticks]);

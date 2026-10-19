@@ -25,7 +25,7 @@ interface Saved {
   sfxVol: number;
 }
 function load(): Saved {
-  const d: Saved = { quality: 'auto', sound: true, auto: false, speed: 1, musicVol: 0.7, sfxVol: 0.9 };
+  const d: Saved = { quality: 'auto', sound: true, auto: true, speed: 1, musicVol: 0.7, sfxVol: 0.9 };
   try {
     const o = JSON.parse(store(KEY) || '{}');
     if (['auto', 'high', 'medium', 'low'].includes(o.quality)) d.quality = o.quality;

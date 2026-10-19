@@ -11,7 +11,7 @@ type IconName =
   | 'clock' | 'up' | 'down' | 'leaf' | 'rock' | 'drop' | 'sun' | 'moon' | 'wand' | 'bow' | 'plus' | 'note' | 'crown'
   | 'sparkle' | 'logout' | 'info' | 'chest' | 'skip' | 'user' | 'sound' | 'mute' | 'filter' | 'search'
   | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop' | 'grid' | 'arena'
-  | 'events' | 'guild' | 'boss' | 'chat';
+  | 'events' | 'guild' | 'boss' | 'chat' | 'gift' | 'calendar';
 
 const PATHS: Record<IconName, JSX.Element> = {
   gold: (
@@ -343,6 +343,23 @@ const PATHS: Record<IconName, JSX.Element> = {
       <circle cx="8" cy="10.500" r="1.400" fill={INK} />
       <circle cx="12" cy="10.500" r="1.400" fill={INK} />
       <circle cx="16" cy="10.500" r="1.400" fill={INK} />
+    </>
+  ),
+  gift: (
+    <>
+      <rect x="3.500" y="9" width="17" height="4" rx="1" fill="#ff7ab0" {...st} />
+      <path d="M5 13h14v7.500a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z" fill="#ffcb2e" {...st} />
+      <path d="M12 9v12.500" stroke={INK} stroke-width="1.800" />
+      <path d="M12 9C9 9 7 7.800 7 6.300 7 4.800 8.600 4 9.800 4.800 11 5.600 12 9 12 9zM12 9c3 0 5-1.200 5-2.700 0-1.500-1.600-2.300-2.800-1.500C13 5.600 12 9 12 9z" fill="#ff5c6c" {...st} />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="3.500" y="5" width="17" height="15.500" rx="2.500" fill="#fff" {...st} />
+      <path d="M3.500 9.500h17V7.500a2.500 2.500 0 0 0-2.500-2.500H6a2.500 2.500 0 0 0-2.500 2.500z" fill="#ff5c6c" stroke={INK} stroke-width="1.800" stroke-linejoin="round" />
+      <path d="M8 3v4M16 3v4" stroke={INK} stroke-width="2" stroke-linecap="round" />
+      <path d="M8 13.500l1.800 1.800 3.400-3.600" fill="none" stroke="#35b84a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="16" cy="16.500" r="1.200" fill={INK} />
     </>
   ),
 };

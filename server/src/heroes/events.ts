@@ -41,8 +41,15 @@ export function opEventClaim(s: HState, nowMs: number, eventId: unknown, objId: 
   if (!row || row.progress < obj.target) throw new StoreError('Mục tiêu chưa hoàn thành', 400);
   if (row.claimed) throw new StoreError('Đã nhận thưởng mục tiêu này rồi', 400);
   row.claimed = true;
+  return payReward(s, obj.reward);
+}
+
+/**
+ * Trả một EventReward vào hồ sơ (dùng chung sự kiện + Tân thủ): ví (chặn MONEY_CAP), mảnh (tướng chưa có → tặng tướng cấp 1, 1 sao
+ * với `n` mảnh), trang bị qua addDrops. Trả phần thực nhận (ví đã gồm đá từ món vượt kho).
+ */
+export function payReward(s: HState, r: EventReward): EventClaimRes['reward'] {
   const before = { ...s.wallet };
-  const r = obj.reward;
   if (r.wallet) gain(s, r.wallet);
   let shards: { hero: string; n: number } | undefined;
   if (r.shards && HERO_BY_ID[r.shards.hero]) {
@@ -53,7 +60,6 @@ export function opEventClaim(s: HState, nowMs: number, eventId: unknown, objId: 
     shards = { hero, n };
   }
   const gear = r.gear ? addDrops(s, r.gear.filter((id) => !!GEAR_BY_ID[id])) : [];
-  // ví thực nhận (đã gồm đá từ món vượt kho)
   const wallet: Partial<Wallet> = {};
   for (const k of WALLET_KEYS) if (s.wallet[k] !== before[k]) wallet[k] = s.wallet[k] - before[k];
   return shards ? { wallet, shards, gear } : { wallet, gear };

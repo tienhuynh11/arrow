@@ -1,9 +1,9 @@
 // Màn chính: tiểu cảnh 3D nổi với đội hình đang dùng, nút CHIẾN lớn, khung AFK.
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { GEAR_CAP } from '@shared/heroes/gear';
 import { AFK_CAP_MS, SQUAD_SIZE } from '@shared/heroes/config';
 import { afkRatePerHour } from '@shared/heroes/stages';
-import { api, me } from '../../api';
+import { api, me, newbieView } from '../../api';
 import { activeSquadIds, afkNow, defOf, highestIndex, hubBadges, nextStageOf, squadPower } from '../../game';
 import { runLive } from '../../render/live';
 import { createHubScene } from '../../render/scenes';
@@ -11,6 +11,7 @@ import { fmt, fmtDur, go, useBusy, useTicker, toast } from '../../state';
 import { Btn, Canvas3D, Modal } from '../common';
 import { GearBag } from '../gear';
 import { Icon, type IconName } from '../icons';
+import { tutRunning } from '../../tutorial-state';
 import { TutorialChip } from '../tutorial';
 
 export function AfkPanel({ onClose }: { onClose: () => void }) {
@@ -61,6 +62,14 @@ export function Hub() {
   const leader = ids[0] ? defOf(ids[0]) : null;
   const power = squadPower(m, ids);
 
+  // Tân thủ: nạp tình trạng một lần để biết có hiện chip "Quà tân thủ" không
+  useEffect(() => {
+    if (!m.newbieDone && !newbieView.value) void api.newbie().catch(() => {});
+  }, []);
+  const nv = newbieView.value;
+  // chip nổi bật chỉ cho tài khoản mới tinh: chưa quay lượt nào, chưa dùng quay khởi đầu, hướng dẫn không đang chạy
+  const nbCta = !!nv && !m.newbieDone && !nv.starterUsed && !tutRunning.value && (nv.milestones.find((x) => x.id === 'm_pull10')?.progress ?? 0) === 0;
+
   const start = (canvas: HTMLCanvasElement) => {
     const sc = createHubScene(ids);
     const h = runLive(canvas, sc, 40);
@@ -75,8 +84,9 @@ export function Hub() {
     };
   };
 
-  // bảy mục phụ: dùng chung cho dock bên phải (ngang/PC) và bảng Hoạt động (điện thoại dọc)
+  // các mục phụ (7, thêm Tân thủ khi còn quà): dùng chung cho dock bên phải (ngang/PC) và bảng Hoạt động (điện thoại dọc)
   const items: { k: string; ic: IconName; label: string; sub?: string; badge?: number | boolean; aria: string; run: () => void }[] = [
+    ...(m.newbieDone ? [] : [{ k: 'newbie', ic: 'gift' as IconName, label: 'Tân thủ', badge: bd.newbie, aria: `Tân thủ${bd.newbie ? `, ${bd.newbie} có thể nhận` : ''}`, run: () => go({ n: 'newbie' }) }]),
     { k: 'tower', ic: 'tower', label: 'Tháp', badge: bd.tower, aria: 'Tháp', run: () => go({ n: 'tower' }) },
     { k: 'arena', ic: 'arena', label: 'Đấu trường', badge: bd.arena, aria: 'Đấu trường', run: () => go({ n: 'arena' }) },
     { k: 'quests', ic: 'quest', label: 'Nhiệm vụ', badge: bd.quests, aria: `Nhiệm vụ${bd.quests ? `, ${bd.quests} có thể nhận` : ''}`, run: () => go({ n: 'quests' }) },
@@ -142,6 +152,15 @@ export function Hub() {
             {a.gold > 0 && <i class="dot" />}
           </button>
           <div class="hb-cta">
+            {nbCta && (
+              <button type="button" class="nb-cta" onClick={() => go({ n: 'newbie' })} aria-label="Quà tân thủ: 10 lượt quay miễn phí">
+                <Icon n="gift" size={26} />
+                <span>
+                  <b>Quà tân thủ</b>
+                  <small>10 lượt quay miễn phí</small>
+                </span>
+              </button>
+            )}
             <div class="hb-strip">
               <span><Icon n="squad" size={16} /> Đội hình {ids.length}/{SQUAD_SIZE}</span>
               <span><Icon n="sword" size={16} /> Lực chiến {fmt(power)}</span>

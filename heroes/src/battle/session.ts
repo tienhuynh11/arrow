@@ -2,16 +2,15 @@
 // ghi lại đầu vào {tick: battle.tick lúc bấm, ult/auto} đúng như simulate() của shared sẽ phát lại ở server.
 //
 // BẤT BIẾN (quyết định tính đúng của server): trình diễn chỉ quyết định KHI NÀO gọi step(); engine không bao giờ
-// bị đổi kết quả. Mỗi lần step() cho ra sự kiện, ta chia thành các "nhóm" (một hành động = một nhóm), xếp hàng,
-// rồi KHÔNG gọi step() tiếp cho tới khi nhóm cuối đã được diễn xong + khoảng giữ (presentation gap). Đầu vào ult/auto
-// luôn ghi `battle.tick` hiện tại (tick đã chạy xong) và áp ở step kế tiếp — y hệt vòng lặp simulate().
+// bị đổi kết quả. Phiên gọi step() đều đặn 20Hz × SPEED_MULT, KHÔNG bao giờ giữ engine chờ hoạt ảnh; sự kiện của mỗi step
+// được phát NGAY và song song (mỗi đơn vị tự hoạt hoá). Đầu vào ult/auto ghi `battle.tick` hiện tại (tick đã chạy xong)
+// và áp ở step kế tiếp — y hệt vòng lặp simulate().
 import { signal } from '@preact/signals';
-import { Battle, ENERGY_MAX, type BattleEvent, type BattleInput, type BattleSetup } from '@shared/heroes/battle';
+import { Battle, ENERGY_MAX, type BattleInput, type BattleSetup } from '@shared/heroes/battle';
 import { BATTLE_HZ, BATTLE_MAX_TICKS } from '@shared/heroes/config';
-import { skillOf } from '@shared/heroes/skills';
 import type { BattleScene } from '../render/battle-scene';
 import type { BattleOverlay } from './overlay';
-import { IDLE_BOOST, PACE, SPEED_MULT } from './pacing';
+import { PACE, SPEED_MULT } from './pacing';
 
 export interface HudUnit {
   uid: number;
@@ -32,14 +31,6 @@ export interface HudState {
   paused: boolean;
 }
 
-/** một hành động để trình diễn (act + các dmg/heal/fx/die đi kèm), hoặc wave / end */
-interface Group {
-  evs: BattleEvent[];
-  ult: boolean;
-  boss: boolean;
-  lastBlow: boolean;
-}
-
 export class BattleSession {
   readonly battle: Battle;
   readonly inputs: BattleInput[] = [];
@@ -53,13 +44,7 @@ export class BattleSession {
   private endWait = 0;
   private endFired = false;
   private hudAcc = 0;
-  /* hàng đợi trình diễn */
-  private queue: Group[] = [];
-  private qHead = 0;
-  private pre: Group | null = null;
-  private preT = 0;
-  private holdT = 0;
-  /** uid đã bấm ult nhưng chưa tới step kế (chống ghi trùng input khi sim đang giữ) */
+  /** uid đã bấm ult nhưng chưa tới step kế (chống ghi trùng input trong cùng một tick) */
   private pendingUlt = new Set<number>();
 
   constructor(
@@ -83,8 +68,8 @@ export class BattleSession {
     this.publish();
   }
 
-  /** gọi mỗi khung hình: dt thực (giây), sdt = dt đã nhân tốc độ/slow-mo/hit-stop (0 khi tạm dừng hay khựng) */
-  advance(dt: number, sdt: number) {
+  /** gọi mỗi khung hình: dt thực (giây). Nhịp engine = dt × 20Hz × SPEED_MULT, không phụ thuộc hoạt ảnh/hit-stop/slow-mo */
+  advance(dt: number, _sdt?: number) {
     if (this.paused) return;
     if (this.ended) {
       this.endWait += dt;
@@ -99,33 +84,20 @@ export class BattleSession {
       return;
     }
 
-    // 1) đồng hồ trình diễn
-    if (this.preT > 0) this.preT -= sdt;
-    else if (this.holdT > 0) this.holdT -= sdt;
-    this.pump();
-
-    // 2) chỉ khi không còn gì để diễn mới cho engine tiến (tua nhanh nhẹ trong lúc chờ thanh hành động)
-    if (this.idle() && !this.battle.done) {
-      this.accum += sdt * BATTLE_HZ * IDLE_BOOST;
-      let steps = 0;
-      while (this.accum >= 1 && !this.battle.done && steps < 12) {
-        this.accum -= 1;
-        steps++;
-        if (this.stepOnce()) {
-          // có sự kiện: dừng engine, trình diễn xong mới step tiếp
-          this.accum = 0;
-          this.pump();
-          break;
-        }
-      }
-      if (this.accum > 12) this.accum = 0;
+    this.accum += dt * BATTLE_HZ * SPEED_MULT[this.speed];
+    let steps = 0;
+    while (this.accum >= 1 && !this.battle.done && steps < 8) {
+      this.accum -= 1;
+      steps++;
+      this.stepOnce();
     }
+    if (this.accum > 8) this.accum = 0; // tab bị treo lâu: bỏ phần dồn, không đuổi
 
-    // 3) engine đã xong và trình diễn đã diễn hết -> vào pha chờ nộp
-    if (this.battle.done && this.idle()) {
+    if (this.battle.done) {
       this.ended = true;
       this.endWait = 0;
       this.publish();
+      return;
     }
 
     this.hudAcc += dt;
@@ -135,80 +107,25 @@ export class BattleSession {
     }
   }
 
-  private idle(): boolean {
-    return this.qHead >= this.queue.length && !this.pre && this.preT <= 0 && this.holdT <= 0;
-  }
-
-  /** lấy nhóm kế tiếp ra diễn khi đã hết khoảng giữ */
-  private pump() {
-    let guard = 8;
-    while (this.preT <= 0 && this.holdT <= 0 && guard-- > 0) {
-      if (this.pre) {
-        const g = this.pre;
-        this.pre = null;
-        this.play(g);
-        continue;
-      }
-      if (this.qHead >= this.queue.length) {
-        this.queue.length = 0;
-        this.qHead = 0;
-        break;
-      }
-      const g = this.queue[this.qHead++];
-      if (g.ult) {
-        const act = g.evs[0];
-        const pre = act.k === 'act' ? this.scene.cineStart(act, g.boss) : 0;
-        if (pre > 0) {
-          this.pre = g;
-          this.preT = pre;
-          break;
-        }
-      }
-      this.play(g);
-    }
-  }
-
-  private play(g: Group) {
-    this.scene.groupHold = 0;
-    for (const ev of g.evs) {
+  /** tiến engine 1 tick và phát NGAY mọi sự kiện (đồng thời) */
+  private stepOnce() {
+    const evs = this.battle.step();
+    this.pendingUlt.clear();
+    if (!evs.length) return;
+    let die = false;
+    let end = false;
+    for (const ev of evs) {
       if (ev.k === 'wave') {
         for (const uid of ev.units) {
           const u = this.battle.unit(uid);
           if (u) this.overlay.addBar(uid, 1, !!u.init.boss);
         }
-      }
+      } else if (ev.k === 'die') die = true;
+      else if (ev.k === 'end') end = true;
       this.scene.handle(ev, this.battle);
     }
-    if (g.lastBlow) this.scene.finalBlow();
-    // kết thúc: không giữ sim nữa, chờ endHoldReal giây thật rồi nộp (xem advance)
-    this.holdT = g.evs[0].k === 'end' ? 0 : this.scene.groupHold;
-  }
-
-  /** tiến engine 1 tick; true nếu có sự kiện (đã xếp hàng) */
-  private stepOnce(): boolean {
-    const evs = this.battle.step();
-    this.pendingUlt.clear();
-    if (!evs.length) return false;
-    let g: Group | null = null;
-    for (const ev of evs) {
-      if (!g || ev.k === 'act' || ev.k === 'wave' || ev.k === 'end') {
-        if (ev.k === 'end') {
-          // nhóm ngay trước 'end' có ai gục thì đó là nhát cuối (slow-mo)
-          const prev = g ?? (this.qHead < this.queue.length ? this.queue[this.queue.length - 1] : null);
-          if (prev && prev.evs.some((e) => e.k === 'die')) prev.lastBlow = true;
-        }
-        g ={ evs: [], ult: false, boss: false, lastBlow: false };
-        if (ev.k === 'act') {
-          g.ult = skillOf(ev.s).kind === 'ult';
-          const au = this.battle.unit(ev.u);
-          // chỉ quái (mk_*) dùng bản cinematic nhẹ; tướng đối thủ ở đấu trường vẫn có chân dung đầy đủ
-          g.boss = !!au && au.init.side === 1 && au.init.key.startsWith('mk_');
-        }
-        this.queue.push(g);
-      }
-      g.evs.push(ev);
-    }
-    return true;
+    // trận kết thúc ngay sau một cú hạ gục: nhát cuối (slow-mo, engine đã xong nên không ảnh hưởng gì)
+    if (end && die) this.scene.finalBlow();
   }
 
   /* ---- điều khiển của người chơi (có ghi lại) ---- */
@@ -244,10 +161,6 @@ export class BattleSession {
     while (!this.battle.done && guard-- > 0) this.battle.step();
     this.ended = true;
     this.endFired = true;
-    this.queue.length = 0;
-    this.qHead = 0;
-    this.pre = null;
-    this.preT = this.holdT = 0;
     this.scene.resetFx();
     this.overlay.clearCine();
     this.publish();

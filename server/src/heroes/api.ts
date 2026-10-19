@@ -5,7 +5,7 @@
 
 import { randomInt } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { ROUTES, type ArenaRes, type ArenaTopRes, type AuthRes, type EventsRes, type GuildBossRes, type GuildChatRes, type GuildRes, type GuildSearchRes, type LeaderRow, type MeResponse } from '../../../shared/heroes/api.js';
+import { ROUTES, type ArenaRes, type ArenaTopRes, type AuthRes, type EventsRes, type GuildBossRes, type GuildChatRes, type GuildRes, type GuildSearchRes, type LeaderRow, type MeResponse, type NewbieRes } from '../../../shared/heroes/api.js';
 import { GUILD_CHAT_MAX } from '../../../shared/heroes/guild.js';
 import { ARENA_OPPONENTS, ARENA_TOP_N, type ArenaOpponent } from '../../../shared/heroes/arena.js';
 import { dayKey } from '../../../shared/heroes/quests.js';
@@ -17,6 +17,7 @@ import { login, logout, register, resolveToken } from '../monkey/accounts.js';
 import { storeReady } from '../monkey/db/index.js';
 import { StoreError, heroStoreReady, type HState, type HeroStore } from './db/index.js';
 import type { GuildCtx } from './db/store.js';
+import { newbieView, opNewbieLoginClaim, opNewbieMilestoneClaim, opNewbieStarterSummon } from './newbie.js';
 import { eventViews, opEventClaim, validateEventInput } from './events.js';
 import {
   cleanText, foldName, guildInfoOf, briefOf, opGuildBoss, opGuildCheckin, opGuildCreate, opGuildDonate, opGuildJoin, opGuildKick, opGuildLeave, opGuildNotice, opGuildTransfer,
@@ -132,6 +133,13 @@ async function act<T extends object>(store: HeroStore, id: number, kind: string,
   // hồ sơ dựng SAU giao dịch: món trang bị mới chỉ có uid khi store đã ghi (xem HState.newGear)
   const r = await store.mutate(id, now, kind, (s) => op(s, now.getTime()));
   return { ...r, me: await store.view(id, now, (s) => buildMe(s, name, now)) };
+}
+
+/** như act() cho Tân thủ (nhãn ledger 'newbie') + trả `view` mới dựng sau giao dịch */
+async function newbieAct<T extends object>(store: HeroStore, id: number, op: (s: HState, nowMs: number) => T) {
+  const now = nowDate();
+  const r = await act(store, id, 'newbie', op);
+  return { ...r, view: await store.view(id, now, (s) => newbieView(s, now.getTime())) };
 }
 
 /** như act() nhưng trong giao dịch có bang (khoá hàng bang); `target` = bang đích khi xin vào, null = bang của tôi */
@@ -274,6 +282,11 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
     const now = nowDate();
     return json(res, 200, { events: await store.view(id, now, (s) => eventViews(s, now.getTime())), now: now.getTime() } satisfies EventsRes);
   }
+  if (r === ROUTES.newbie && method === 'GET') {
+    const id = await auth(req);
+    const now = nowDate();
+    return json(res, 200, { view: await store.view(id, now, (s) => newbieView(s, now.getTime())) } satisfies NewbieRes);
+  }
   if (r === ROUTES.guild && method === 'GET') {
     const id = await auth(req);
     await settle(store, id);
@@ -383,6 +396,26 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
         idem: { key, tag: `${banner}|${count}|${pay}` },
       });
       return json(res, 200, { me: await meOf(store, id), pulls });
+    }
+    case ROUTES.newbieLoginClaim: {
+      const id = await auth(req);
+      await read();
+      return json(res, 200, await newbieAct(store, id, (s, now) => opNewbieLoginClaim(s, now)));
+    }
+    case ROUTES.newbieMilestoneClaim: {
+      const id = await auth(req);
+      const mid = str((await read()).id, 'Mốc', 40, 1);
+      return json(res, 200, await newbieAct(store, id, (s) => opNewbieMilestoneClaim(s, mid)));
+    }
+    case ROUTES.newbieStarterSummon: {
+      const id = await auth(req);
+      const key = str((await read()).key, 'Khoá yêu cầu', 64, 8);
+      if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new HttpError(400, 'Khoá yêu cầu không hợp lệ');
+      const now = nowDate();
+      // cùng key → trả lại kết quả đã lưu (không quay lại); khác key sau khi đã dùng → 400
+      const pulls = await store.mutate(id, now, 'newbie', (s) => opNewbieStarterSummon(s, (n) => randomInt(n)), { idem: { key, tag: 'newbie-starter' } });
+      const me = await meOf(store, id);
+      return json(res, 200, { me, pulls, view: await store.view(id, now, (s) => newbieView(s, now.getTime())) });
     }
     case ROUTES.levelUp: {
       const id = await auth(req);

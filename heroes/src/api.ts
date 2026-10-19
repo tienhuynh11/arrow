@@ -45,6 +45,10 @@ import {
   type LevelUpRes,
   type MeResponse,
   type MutateRes,
+  type NewbieLoginClaimRes,
+  type NewbieMilestoneClaimRes,
+  type NewbieRes,
+  type NewbieStarterSummonRes,
   type SetSquadReq,
   type SummonReq,
   type SummonRes,
@@ -56,6 +60,7 @@ import {
   type TowerBattleReq,
   type TowerBattleRes,
 } from '@shared/heroes/api';
+import { newbieBadge, newbieDone, type NewbieView } from '@shared/heroes/newbie';
 import { QUEST_BONUS, QUEST_BY_ID } from '@shared/heroes/quests';
 import { SHOP_BY_ID } from '@shared/heroes/shop';
 import { enhanceCost, GEAR_BY_ID, gearDefOf, salvageStones } from '@shared/heroes/gear';
@@ -71,6 +76,8 @@ let token: string | null = store(TOKEN_KEY) || null;
 /** hồ sơ hiện tại (null = chưa đăng nhập) */
 export const me = signal<MeResponse | null>(null);
 /** chênh lệch giờ server - giờ máy (ms), để đếm AFK/thể lực đúng */
+/** bản chụp Tân thủ mới nhất (Hub dùng để quyết định hiện chip "Quà tân thủ") */
+export const newbieView = signal<NewbieView | null>(null);
 export const clockOffset = signal(0);
 export const hasToken = () => !!token;
 
@@ -80,6 +87,9 @@ function setToken(t: string | null) {
 }
 
 function applyMe(m: MeResponse): MeResponse {
+  // server cũ chưa có cờ Tân thủ: mặc định 0 / false (ẩn nút)
+  if (typeof m.newbieBadge !== 'number') m.newbieBadge = 0;
+  if (typeof m.newbieDone !== 'boolean') m.newbieDone = false;
   clockOffset.value = m.now - Date.now();
   me.value = m;
   preloadHeroModels(m.heroes.map((h) => h.id)); // tải sớm model glTF của tướng đang sở hữu
@@ -162,11 +172,13 @@ export const api = {
   async register(username: string, password: string) {
     const r = await req<AuthRes>(ROUTES.register, 'POST', { username, password }, false);
     setToken(r.token);
+    newbieView.value = null;
     return applyMe(r.me);
   },
   async login(username: string, password: string) {
     const r = await req<AuthRes>(ROUTES.login, 'POST', { username, password }, false);
     setToken(r.token);
+    newbieView.value = null;
     return applyMe(r.me);
   },
   async logout() {
@@ -176,6 +188,7 @@ export const api = {
       /* vẫn đăng xuất cục bộ */
     }
     setToken(null);
+    newbieView.value = null;
     me.value = null;
   },
   async refresh() {
@@ -357,6 +370,29 @@ export const api = {
   guildBoss: (r: GuildBossReq) => mutate<GuildBossRes>(ROUTES.guildBoss, r),
   guildChat: () => req<GuildChatRes>(ROUTES.guildChat),
   guildChatPost: (text: string) => req<GuildChatRes>(ROUTES.guildChat, 'POST', { text } satisfies GuildChatPostReq),
+  /* ---- Tân thủ: GET làm mới chấm đỏ; ba thao tác nhận thưởng đổi hồ sơ (mutate) và trả view mới ---- */
+  async newbie() {
+    const r = await req<NewbieRes>(ROUTES.newbie);
+    newbieView.value = r.view;
+    const cur = me.value;
+    if (cur) me.value = { ...cur, newbieBadge: newbieBadge(r.view), newbieDone: newbieDone(r.view) };
+    return r;
+  },
+  async newbieLoginClaim() {
+    const r = await mutate<NewbieLoginClaimRes>(ROUTES.newbieLoginClaim, {});
+    newbieView.value = r.view;
+    return r;
+  },
+  async newbieMilestoneClaim(id: string) {
+    const r = await mutate<NewbieMilestoneClaimRes>(ROUTES.newbieMilestoneClaim, { id });
+    newbieView.value = r.view;
+    return r;
+  },
+  async newbieStarterSummon(key: string) {
+    const r = await mutate<NewbieStarterSummonRes>(ROUTES.newbieStarterSummon, { key });
+    newbieView.value = r.view;
+    return r;
+  },
   async leaderboard(): Promise<LeaderRow[]> {
     const r = await req<LeaderRow[] | { rows?: LeaderRow[] }>(ROUTES.leaderboard);
     return Array.isArray(r) ? r : (r?.rows ?? []);

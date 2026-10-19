@@ -200,10 +200,11 @@ export function eventsClaimable(m: MeResponse): number {
   return Math.max(0, m.eventsClaimable ?? 0);
 }
 /** chấm đỏ ở Hub: Tháp còn lượt, nhiệm vụ có thể nhận, sự kiện có thể nhận (cửa hàng/bang không có chấm) */
-export function hubBadges(m: MeResponse): { tower: boolean; arena: boolean; quests: number; events: number; total: number } {
+export function hubBadges(m: MeResponse): { tower: boolean; arena: boolean; quests: number; events: number; newbie: number; total: number } {
   const tower = towerPlayable(m);
   const arena = arenaPlayable(m);
   const quests = questClaimable(m);
   const events = eventsClaimable(m);
-  return { tower, arena, quests, events, total: (tower ? 1 : 0) + (arena ? 1 : 0) + quests + events };
+  const newbie = m.newbieDone ? 0 : Math.max(0, m.newbieBadge ?? 0); // server cũ: không có cờ -> ẩn
+  return { tower, arena, quests, events, newbie, total: (tower ? 1 : 0) + (arena ? 1 : 0) + quests + events + newbie };
 }

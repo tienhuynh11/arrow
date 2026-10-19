@@ -1,4 +1,4 @@
-// THẺ TƯỚNG 3D — hằng số dùng chung server + client.
+// LINH GIỚI — hằng số dùng chung server + client.
 // Đổi đường dẫn gốc / tên game ở MỘT chỗ duy nhất này (vite.config + server đều đọc từ đây).
 
 /** đường dẫn gốc của game (luôn bắt đầu và kết thúc bằng '/') */
@@ -6,7 +6,7 @@ export const HEROES_BASE = '/heroes/';
 /** REST nằm dưới đường dẫn gốc */
 export const HEROES_API = `${HEROES_BASE}api/`;
 
-export const GAME_TITLE = 'THẺ TƯỚNG 3D';
+export const GAME_TITLE = 'LINH GIỚI';
 
 /** số ô đội hình: slot 0-1 hàng trước, 2-4 hàng sau */
 export const SQUAD_SIZE = 5;

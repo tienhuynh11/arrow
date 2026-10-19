@@ -1,4 +1,4 @@
-# CI cho server (Thẻ Tướng + Bầy Khỉ) và client game Thẻ Tướng 3D. Không cần secret nào.
+# CI cho server (Thẻ Tướng + Bầy Khỉ) và client game Linh Giới. Không cần secret nào.
 name: CI
 
 on:

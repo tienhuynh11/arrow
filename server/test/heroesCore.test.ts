@@ -21,6 +21,8 @@ import {
   guildCheckinReward, guildXpToNext,
 } from '../../shared/heroes/guild.js';
 import { EVENT_KINDS, SEED_EVENT } from '../../shared/heroes/events.js';
+import { LOGIN7, LOGIN7_GRANT_HERO_DAY, MILESTONES, MILESTONE_BY_ID, STARTER_SUMMON, newbieBadge, newbieDone, type NewbieView } from '../../shared/heroes/newbie.js';
+import { HERO_BY_ID } from '../../shared/heroes/heroes.js';
 
 let fails = 0;
 const ok = (cond: boolean, msg: string) => {
@@ -425,6 +427,32 @@ console.log('— bang hội: boss —');
   ok(Object.values(table).every((row) => Object.values(row).every((d) => d > 0)), 'mọi cấp đều gây được sát thương lên boss');
   ok(table[60][1] >= table[1][1], 'đội cấp cao gây sát thương không thấp hơn đội cấp 1');
   ok(EVENT_KINDS.length === 8 && SEED_EVENT.objectives.every((o) => (EVENT_KINDS as readonly string[]).includes(o.kind)), 'EVENT_KINDS đủ 8 loại, sự kiện mẫu dùng loại hợp lệ');
+}
+
+console.log('— Tân thủ (dữ liệu + hàm thuần) —');
+{
+  ok(LOGIN7.length === 7 && LOGIN7.every((d, i) => d.day === i + 1), 'LOGIN7: đúng 7 ngày, theo thứ tự 1..7');
+  const goodReward = (r: { wallet?: Record<string, number>; shards?: { hero: string; n: number }; gear?: string[] }) =>
+    (!r.shards || (!!HERO_BY_ID[r.shards.hero] && r.shards.n > 0)) && (r.gear ?? []).every((g) => !!GEAR_BY_ID[g]) && Object.values(r.wallet ?? {}).every((v) => Number.isInteger(v) && v > 0);
+  ok(LOGIN7.every((d) => goodReward(d.reward)), 'LOGIN7: tướng/trang bị trong thưởng đều tồn tại, ví là số nguyên dương');
+  ok(LOGIN7_GRANT_HERO_DAY === 7 && LOGIN7[6].reward.shards?.hero === 'hau_vuong' && LOGIN7[6].reward.shards.n === 80 && HERO_BY_ID['hau_vuong'].rarity === 'UR', 'ngày 7 = 80 mảnh Hầu Vương (UR)');
+  ok(new Set(MILESTONES.map((m) => m.id)).size === MILESTONES.length, 'MILESTONES: id không trùng');
+  ok(MILESTONES.every((m) => MILESTONE_BY_ID[m.id] === m && m.target >= 1 && goodReward(m.reward)), 'MILESTONES: target ≥ 1, thưởng hợp lệ, MILESTONE_BY_ID khớp');
+  ok(STARTER_SUMMON.count === 10 && BANNER_BY_ID[STARTER_SUMMON.banner] !== undefined, 'STARTER_SUMMON: 10 lượt, banner tồn tại');
+  const view = (over: Partial<NewbieView> & { login?: Partial<NewbieView['login']> } = {}): NewbieView => ({
+    login: { claimed: 0, canClaim: false, next: 1, ...over.login },
+    milestones: over.milestones ?? MILESTONES.map((m) => ({ id: m.id, progress: 0, claimed: false })),
+    starterUsed: over.starterUsed ?? true,
+  });
+  ok(newbieBadge(view()) === 0 && !newbieDone(view()), 'badge 0 khi không có gì nhận được; chưa done');
+  ok(newbieBadge(view({ starterUsed: false })) === 1, 'badge +1 khi chưa dùng lượt quay khởi đầu');
+  ok(newbieBadge(view({ login: { canClaim: true } })) === 1, 'badge +1 khi điểm danh nhận được');
+  ok(newbieBadge(view({ login: { canClaim: true, next: 8, claimed: 7 } })) === 0, 'đã nhận đủ 7 ngày: canClaim cũng không tính');
+  const ms = MILESTONES.map((m, i) => ({ id: m.id, progress: i < 3 ? m.target : 0, claimed: i === 0 }));
+  ok(newbieBadge(view({ milestones: ms })) === 2, 'badge đếm mốc đủ điều kiện chưa nhận (bỏ mốc đã nhận)');
+  const full = view({ login: { claimed: 7, next: 8 }, milestones: MILESTONES.map((m) => ({ id: m.id, progress: m.target, claimed: true })) });
+  ok(newbieDone(full) && newbieBadge(full) === 0, 'newbieDone khi nhận hết mọi thứ');
+  ok(!newbieDone({ ...full, starterUsed: false }) && !newbieDone({ ...full, login: { ...full.login, next: 7 } }) && !newbieDone({ ...full, milestones: full.milestones.map((m, i) => ({ ...m, claimed: i !== 0 })) }), 'newbieDone sai nếu còn lượt khởi đầu / ngày điểm danh / mốc chưa nhận');
 }
 
 console.log(fails ? `\n${fails} LỖI` : '\nTất cả đạt');

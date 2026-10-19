@@ -624,6 +624,11 @@ const clamp01 = (k: number) => Math.max(0, Math.min(1, k));
 /** dao động tắt dần, k: 0..1 */
 const damp = (k: number, freq: number) => Math.cos(k * freq) * (1 - k) * (1 - k);
 
+/** móc chạy/đi bộ: 0 = đứng, 1 = chạy hết tốc (cảnh gọi mỗi khung; mô hình khác như glTF có thể bỏ qua) */
+export interface MoveHook {
+  setMove(k: number): void;
+}
+
 export function createProceduralModel(look: ProcLook, outlines: boolean): HeroModel {
   const mats = {
     body: toon(look.body),
@@ -641,6 +646,8 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
   let base: 'idle' | 'win' | 'die' = 'idle';
   let act: { kind: 'attack' | 'cast'; t: number } | null = null;
   let hitT = -1;
+  let moveK = 0;
+  let moveTo = 0;
   let dieT = 0;
   let flash = 0;
   let faceCell = -1;
@@ -658,8 +665,11 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
     setFaceCell(r.faceTex, cell);
   }
 
-  const model: HeroModel = {
+  const model: HeroModel & MoveHook = {
     object3d: r.root,
+    setMove(k: number) {
+      moveTo = k;
+    },
     height: 1.55 * look.scale,
     play(a: HeroAnim) {
       if (a === 'die') {
@@ -842,6 +852,18 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
         if (sh >= 1) r.root.visible = false;
       }
 
+      /* --- chạy: nhún bước, vung tay, chân đá luân phiên (chỉ khi không vung/niệm) --- */
+      moveK += (moveTo - moveK) * Math.min(1, dt * 12);
+      let legSw = 0;
+      if (moveK > 0.02 && base !== 'die' && !act) {
+        const w = time * 15;
+        legSw = Math.sin(w) * moveK;
+        y += Math.abs(legSw) * 0.07;
+        aL = lerp(aL, legSw * 1.1, moveK);
+        aR = lerp(aR, -legSw * 1.1, moveK);
+        rotZ += Math.sin(w * 0.5) * 0.05 * moveK;
+      }
+
       rig.position.set(0, y, z);
       rig.scale.set(sx, sy, sx);
       rig.rotation.set(rotX, rotY, rotZ);
@@ -849,8 +871,10 @@ export function createProceduralModel(look: ProcLook, outlines: boolean): HeroMo
       armL.rotation.set(aL, 0, aLz);
       armR.rotation.set(aR, 0, aRz);
       const hop = base === 'win' ? Math.max(0, Math.sin(time * ANIM.winHop)) * 0.04 : 0;
-      legL.position.y = 0.15 + hop;
-      legR.position.y = 0.15 + hop;
+      legL.position.y = 0.15 + hop + Math.max(0, legSw) * 0.09;
+      legR.position.y = 0.15 + hop + Math.max(0, -legSw) * 0.09;
+      legL.position.z = legSw * 0.14;
+      legR.position.z = -legSw * 0.14;
 
       /* --- phụ kiện sống động --- */
       if (extras.cape) extras.cape.rotation.x = 0.12 + Math.sin(time * 2.4 + phase) * 0.06 + (act ? 0.25 : 0) + (base === 'win' ? 0.2 : 0);

@@ -8,7 +8,7 @@ import {
 } from '../../../shared/heroes/config.js';
 import { DUPE_SHARDS, accountXpToNext, levelCapOf, levelUpCost, starUpCost } from '../../../shared/heroes/formulas.js';
 import {
-  BANNER_BY_ID, NEW_PITY, SUMMON10_COST, SUMMON_COST, summon, type RandInt,
+  BANNER_BY_ID, NEW_PITY, SUMMON10_COST, SUMMON_COST, summon, type Pull, type RandInt,
 } from '../../../shared/heroes/gacha.js';
 import {
   GEAR_BY_ID, GEAR_CAP, MAX_GEAR_LEVEL, STARTER_GEAR, enhanceCost, gearDefOf, rollGearDrops, salvageStones, sumGear,
@@ -26,7 +26,9 @@ import {
 import { powerOf } from '../../../shared/heroes/formulas.js';
 import { BOSS_KILL_REWARD } from '../../../shared/heroes/guild.js';
 import type { EventDef, EventKind } from '../../../shared/heroes/events.js';
-import { StoreError, type HState, type LedgerRow } from './db/store.js';
+import { newbieBadge, newbieDone } from '../../../shared/heroes/newbie.js';
+import { newbieView } from './newbie.js';
+import { StoreError, newNewbie, type HState, type LedgerRow } from './db/store.js';
 
 export const STARTER_WALLET: Readonly<Wallet> = { gold: 5000, gems: 3000, tickets: 10, exp: 500, stones: 0 };
 /** trần mỗi loại tiền (cột integer của Postgres) */
@@ -51,7 +53,7 @@ export function newState(accountId: number, nowMs: number): HState {
     activeSquad: 0, pity: {}, heroes, squads, progress: {}, runs: [], gear: [], newGear: [...STARTER_GEAR],
     towerFloor: 0, towerDay: 0, towerTries: 0, day: 0, quests: {}, questBonus: false, shop: {},
     arenaOn: false, arenaRating: ARENA_START_RATING, arenaDay: 0, arenaTries: 0, arenaDefense: 0, arenaWins: 0, arenaLosses: 0,
-    guildLeftAt: 0, guildId: null, events: [],
+    guildLeftAt: 0, guildId: null, events: [], newbie: newNewbie(),
   };
 }
 
@@ -165,6 +167,8 @@ export function buildMe(s: Readonly<HState>, username: string, now: Date): MeRes
     arena: arenaStateOf(s, today),
     guildId: s.guildId,
     eventsClaimable: eventsClaimable(s, ms),
+    newbieBadge: newbieBadge(newbieView(s, ms)),
+    newbieDone: newbieDone(newbieView(s, ms)),
     profile: { id: s.accountId, username, level: s.level, xp: s.xp, stamina: staminaNow(s.stamina, s.staminaAt, ms) },
     wallet: { ...s.wallet },
     heroes: Object.values(s.heroes).map((h) => ({ ...h })),
@@ -227,15 +231,9 @@ function ownedHero(s: HState, id: unknown): OwnedHero {
 
 /* ------------------------------ TRIỆU HỒI ------------------------------ */
 export type SummonPulls = SummonRes['pulls'];
-export function opSummon(s: HState, bannerId: string, count: 1 | 10, pay: 'tickets' | 'gems', rand: RandInt): SummonPulls {
-  const banner = BANNER_BY_ID[bannerId];
-  if (!banner) throw new StoreError('Banner không tồn tại', 404);
-  spend(s, { [pay]: (count === 10 ? SUMMON10_COST : SUMMON_COST)[pay] });
-  const r = summon(s.pity[banner.id] ?? NEW_PITY, banner, count, rand);
-  s.pity[banner.id] = r.state;
-  bumpQuest(s, 'summon', count);
-  bumpEvents(s, 'summon', count);
-  return r.pulls.map((p) => {
+/** áp các lượt quay vào hồ sơ: tướng mới thêm vào, trùng → mảnh (dùng chung cho triệu hồi thường và lượt quay khởi đầu) */
+export function applyPulls(s: HState, pulls: Pull[]): SummonPulls {
+  return pulls.map((p) => {
     const own = s.heroes[p.heroId];
     if (own) {
       const shards = DUPE_SHARDS[p.rarity];
@@ -245,6 +243,17 @@ export function opSummon(s: HState, bannerId: string, count: 1 | 10, pay: 'ticke
     s.heroes[p.heroId] = { id: p.heroId, level: 1, star: 1, shards: 0 };
     return { ...p, isNew: true, shards: 0 };
   });
+}
+export function opSummon(s: HState, bannerId: string, count: 1 | 10, pay: 'tickets' | 'gems', rand: RandInt): SummonPulls {
+  const banner = BANNER_BY_ID[bannerId];
+  if (!banner) throw new StoreError('Banner không tồn tại', 404);
+  spend(s, { [pay]: (count === 10 ? SUMMON10_COST : SUMMON_COST)[pay] });
+  const r = summon(s.pity[banner.id] ?? NEW_PITY, banner, count, rand);
+  s.pity[banner.id] = r.state;
+  s.newbie.pullsTotal += count; // mốc Tân thủ 'pulls'
+  bumpQuest(s, 'summon', count);
+  bumpEvents(s, 'summon', count);
+  return applyPulls(s, r.pulls);
 }
 
 /* ------------------------------ NÂNG CẤP ------------------------------ */

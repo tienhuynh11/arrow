@@ -270,3 +270,154 @@ export function createDetailScene(): DetailScene {
   };
   return ds;
 }
+
+/* ------------------------------ CẢNH CÔNG BỐ TƯỚNG (gacha UR) ------------------------------ */
+export interface RevealScene extends LiveScene {
+  setHero(id: string, rarity: Rarity): void;
+  /** tướng xuất hiện trên bệ cầu vồng: phóng to nảy rồi diễn chiêu 'cast', sau đó giữ dáng 'win' */
+  show(): void;
+}
+
+/** easeOutBack: nảy quá đà nhẹ */
+const backOut = (x: number) => 1 + 2.70158 * Math.pow(x - 1, 3) + 1.70158 * Math.pow(x - 1, 2);
+
+/**
+ * Cảnh nền trong suốt: tướng đứng LỚN trên bệ cầu vồng, các cột sáng, sao lấp lánh bay lên.
+ * Không cấp phát trong update (chỉ ghi lại vào buffer/colour có sẵn).
+ */
+export function createRevealScene(): RevealScene {
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 40);
+  brightLights(scene);
+  const stage = new THREE.Group(); // bệ + cột sáng + tướng, ẩn đến khi show()
+  stage.visible = false;
+  scene.add(stage);
+
+  const add = { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false } as const;
+  const pedGeo = new THREE.CylinderGeometry(1.05, 1.25, 0.16, 36);
+  const pedMat = lambert(0x3a2a6a);
+  const ped = new THREE.Mesh(pedGeo, pedMat);
+  ped.position.y = -0.08;
+  const ringGeo = new THREE.TorusGeometry(1.08, 0.055, 8, 48).rotateX(Math.PI / 2);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.position.y = 0.01;
+  const ring2Geo = new THREE.TorusGeometry(1.4, 0.03, 6, 48).rotateX(Math.PI / 2);
+  const ring2Mat = new THREE.MeshBasicMaterial({ color: 0xffffff, ...add, opacity: 0.8 });
+  const ring2 = new THREE.Mesh(ring2Geo, ring2Mat);
+  ring2.position.y = 0.02;
+  const discGeo = new THREE.CircleGeometry(1.0, 36).rotateX(-Math.PI / 2);
+  const discMat = new THREE.MeshBasicMaterial({ color: 0xffffff, ...add, opacity: 0.5 });
+  const disc = new THREE.Mesh(discGeo, discMat);
+  disc.position.y = 0.025;
+  stage.add(ped, ring, ring2, disc);
+
+  // cột sáng: vài tấm phẳng cắt chéo nhau, xoay chậm, nhấp nháy
+  const BEAMS = 5;
+  const beamGeo = new THREE.PlaneGeometry(0.5, 5.2).translate(0, 2.6, 0);
+  const beamMats: THREE.MeshBasicMaterial[] = [];
+  const beams = new THREE.Group();
+  for (let i = 0; i < BEAMS; i++) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, ...add, opacity: 0.22, side: THREE.DoubleSide });
+    const m = new THREE.Mesh(beamGeo, mat);
+    m.rotation.y = (i / BEAMS) * Math.PI;
+    m.position.x = 0;
+    beams.add(m);
+    beamMats.push(mat);
+  }
+  stage.add(beams);
+
+  // sao bay lên
+  const q = currentPreset();
+  const N = q.level === 'high' ? 44 : 26;
+  const pos = new Float32Array(N * 3);
+  const spd = new Float32Array(N);
+  const rnd = () => Math.random();
+  for (let i = 0; i < N; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = 0.3 + rnd() * 1.5;
+    pos[i * 3] = Math.cos(a) * r;
+    pos[i * 3 + 1] = rnd() * 3.6;
+    pos[i * 3 + 2] = Math.sin(a) * r;
+    spd[i] = 0.5 + rnd() * 1.1;
+  }
+  const starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const starMat = new THREE.PointsMaterial({ color: 0xfff1a8, size: 0.12, ...add, opacity: 0.95 });
+  stage.add(new THREE.Points(starGeo, starMat));
+
+  const heroGroup = new THREE.Group();
+  stage.add(heroGroup);
+  let model: HeroModel | null = null;
+  let aspect = 1;
+  let appear = -1; // <0: chưa hiện
+  let clock = 0;
+  let wonPose = false;
+  const place = () => {
+    const fit = Math.max(1, 0.9 / Math.max(0.35, aspect));
+    camera.position.set(0, 1.2, 6.0 * fit);
+    camera.lookAt(0, 0.95, 0);
+  };
+  place();
+
+  const rs: RevealScene = {
+    scene, camera,
+    setHero(id, rarity) {
+      if (model) {
+        heroGroup.remove(model.object3d);
+        model.dispose();
+      }
+      model = createHeroModel(id, { outlines: currentPreset().outlines });
+      heroGroup.add(model.object3d);
+      void rarity;
+    },
+    show() {
+      appear = 0;
+      clock = 0;
+      wonPose = false;
+      stage.visible = true;
+      model?.play('cast');
+    },
+    resize(w, h) {
+      aspect = w / h;
+      place();
+    },
+    update(dt, t) {
+      if (!stage.visible) return;
+      clock += dt;
+      if (appear >= 0 && appear < 1) appear = Math.min(1, appear + dt / 0.6);
+      const s = Math.max(0.001, backOut(Math.max(0, appear)));
+      stage.scale.set(s, s, s);
+      // sau khi tung chiêu thì giữ dáng chiến thắng
+      if (!wonPose && clock > 1.5 && model) {
+        wonPose = true;
+        model.play('win');
+      }
+      heroGroup.rotation.y = 0.2 + Math.sin(t * 0.8) * 0.28;
+      model?.update(dt);
+      // cầu vồng: đổi sắc theo thời gian (setHSL ghi thẳng vào màu có sẵn)
+      ringMat.color.setHSL((t * 0.35) % 1, 1, 0.62);
+      ring2Mat.color.setHSL((t * 0.35 + 0.5) % 1, 1, 0.65);
+      discMat.color.setHSL((t * 0.2 + 0.25) % 1, 1, 0.6);
+      ring2.rotation.y = t * 0.9;
+      beams.rotation.y = t * 0.35;
+      for (let i = 0; i < BEAMS; i++) {
+        beamMats[i].color.setHSL((t * 0.15 + i / BEAMS) % 1, 0.9, 0.65);
+        beamMats[i].opacity = 0.16 + 0.1 * Math.sin(t * 3 + i * 1.7);
+      }
+      const p = starGeo.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < N; i++) {
+        let y = pos[i * 3 + 1] + spd[i] * dt;
+        if (y > 3.8) y = 0;
+        pos[i * 3 + 1] = y;
+      }
+      p.needsUpdate = true;
+    },
+    dispose() {
+      model?.dispose();
+      for (const g of [pedGeo, ringGeo, ring2Geo, discGeo, beamGeo, starGeo]) g.dispose();
+      for (const m of [pedMat, ringMat, ring2Mat, discMat, starMat, ...beamMats]) m.dispose();
+    },
+  };
+  return rs;
+}

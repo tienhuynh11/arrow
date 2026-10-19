@@ -62,7 +62,7 @@ export const STEPS: Step[] = [
     id: 'welcome',
     plan: () => ({
       target: null,
-      text: 'Chào mừng đến Thẻ Tướng 3D! Mình sẽ chỉ bạn vài bước đầu tiên, rất nhanh thôi. Bạn có thể bấm "Bỏ qua" bất cứ lúc nào.',
+      text: 'Chào mừng đến Linh Giới! Mình sẽ chỉ bạn vài bước đầu tiên, rất nhanh thôi. Bạn có thể bấm "Bỏ qua" bất cứ lúc nào.',
     }),
   },
   {

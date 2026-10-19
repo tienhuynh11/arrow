@@ -23,8 +23,8 @@ export default defineConfig({
       devOptions: { enabled: false },
       includeAssets: ['icons/apple-touch-icon.png', 'icons/icon.svg'],
       manifest: {
-        name: 'Thẻ Tướng 3D',
-        short_name: 'Thẻ Tướng',
+        name: 'Linh Giới',
+        short_name: 'Linh Giới',
         description: 'Sưu tầm tướng, dựng đội hình, vượt ải theo lượt.',
         lang: 'vi',
         start_url: HEROES_BASE,

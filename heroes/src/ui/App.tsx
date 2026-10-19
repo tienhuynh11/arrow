@@ -24,6 +24,7 @@ import { ArenaResult } from './screens/ArenaResult';
 import { Quests } from './screens/Quests';
 import { Shop } from './screens/Shop';
 import { Events } from './screens/Events';
+import { Newbie } from './screens/Newbie';
 import { Guild } from './screens/Guild';
 import { GuildBossResult } from './screens/GuildBossResult';
 import { InstallHint, UpdateToast } from '../pwa';
@@ -42,7 +43,7 @@ const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
 function Nav() {
   const n = screen.value.n;
   // 3 màn Hoạt động (Tháp/Đấu trường/Nhiệm vụ/Cửa hàng) nằm dưới tab Thành
-  const cur = n === 'tower' || n === 'arena' || n === 'quests' || n === 'shop' || n === 'events' || n === 'guild' ? 'hub' : n;
+  const cur = n === 'tower' || n === 'arena' || n === 'quests' || n === 'shop' || n === 'events' || n === 'guild' || n === 'newbie' ? 'hub' : n;
   const tickets = me.value?.wallet.tickets ?? 0;
   const act = me.value ? hubBadges(me.value).total : 0;
   return (
@@ -151,6 +152,7 @@ function Body() {
     case 'quests': return <Quests />;
     case 'shop': return <Shop />;
     case 'events': return <Events />;
+    case 'newbie': return <Newbie />;
     case 'guild': return <Guild tab={s.tab} />;
     case 'guildBossResult': return <GuildBossResult res={s.res} />;
   }

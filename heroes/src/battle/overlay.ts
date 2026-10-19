@@ -22,6 +22,9 @@ interface Bar {
   chipSig: string;
   full: boolean;
   hidden: boolean;
+  /** số nổi gần đây trên đơn vị này (để xếp chồng lên cao, không đè nhau) */
+  stack: number;
+  stackT: number;
 }
 
 const ARROW_UP = '<svg viewBox="0 0 12 14" width="18" height="21"><path d="M6 1 L11 7 H8 V13 H4 V7 H1 Z" fill="#ff5a1a" stroke="#1e2a4a" stroke-width="1.3" stroke-linejoin="round"/></svg>';
@@ -74,9 +77,8 @@ export class BattleOverlay implements SceneHooks {
     this.flashEl = el('hud-flash');
     this.flashEl.style.animation = 'none';
     root.append(this.layer, this.flashEl);
-    // nhật ký trận: mặc định tắt trên điện thoại (không che đơn vị), bật trên máy tính
-    const saved = store(LOG_KEY);
-    this.logOn = saved ? saved === '1' : !matchMedia('(pointer: coarse)').matches;
+    // nhật ký trận: MẶC ĐỊNH TẮT trên mọi thiết bị (che màn hình); người chơi bật bằng nút ☰ và lựa chọn được nhớ lại
+    this.logOn = store(LOG_KEY) === '1';
     this.logBox = el('bt-log');
     for (let i = 0; i < LOG_LINES; i++) this.logBox.append(el('bt-ll'));
     this.logBtn = el('bt-logbtn', 'button') as HTMLButtonElement;
@@ -103,14 +105,14 @@ export class BattleOverlay implements SceneHooks {
     const e = el(`ubar s${side}${boss ? ' boss' : ''}`);
     e.innerHTML =
       '<div class="bt-chips"></div><div class="ub-atb"><i></i></div><div class="ub-hp"><i class="ghost"></i><i class="fill"></i></div>' +
-      (side === 0 ? '<div class="ub-en"><i></i></div>' : '');
+      (side === 0 ? '<div class="ub-en" title="Mana"><i></i><em>MANA</em></div>' : '');
     const hp = e.querySelector('.fill') as HTMLElement;
     const ghost = e.querySelector('.ghost') as HTMLElement;
     const en = e.querySelector('.ub-en i') as HTMLElement | null;
     const atb = e.querySelector('.ub-atb i') as HTMLElement;
     const chips = e.querySelector('.bt-chips') as HTMLElement;
     this.layer.append(e);
-    this.bars.set(uid, { el: e, hp, ghost, en, atb, chips, enV: -1, atbV: -1, chipSig: '', full: false, hidden: false });
+    this.bars.set(uid, { el: e, hp, ghost, en, atb, chips, enV: -1, atbV: -1, chipSig: '', full: false, hidden: false, stack: 0, stackT: 0 });
   }
 
   /** tốc độ chạy cho hoạt ảnh UI: bám timeScale của cảnh nhưng kẹp [0.55, 1.1] để chữ không vụt mất khi x3; 0 khi tạm dừng */
@@ -133,7 +135,7 @@ export class BattleOverlay implements SceneHooks {
   number(uid: number, text: string, kind: 'dmg' | 'crit' | 'heal' | 'text', opt?: { adv?: number; color?: string }) {
     const p = this.scene?.project(uid, 0.1);
     if (!p) return;
-    while (this.dns.length > 30) {
+    while (this.dns.length > 40) {
       const o = this.dns.shift();
       if (o) {
         o.tl.kill();
@@ -143,9 +145,19 @@ export class BattleOverlay implements SceneHooks {
     }
     const e = el(`dn dn-${kind}${opt?.adv ? (opt.adv > 0 ? ' adv-up' : ' adv-dn') : ''}`);
     e.style.animation = 'none';
-    const jx = (Math.random() - 0.5) * 36;
+    // nhiều số cùng rơi lên một đơn vị: lệch ngang ngẫu nhiên + xếp tầng lên cao theo số vừa hiện (≤ 0,5 s trước)
+    const b = this.bars.get(uid);
+    const now = performance.now();
+    let tier = 0;
+    if (b) {
+      if (now - b.stackT > 500) b.stack = 0;
+      tier = b.stack % 4;
+      b.stack++;
+      b.stackT = now;
+    }
+    const jx = (Math.random() - 0.5) * 44;
     e.style.left = `${p.x + jx}px`;
-    e.style.top = `${p.y}px`;
+    e.style.top = `${p.y - tier * 20}px`;
     if (opt?.color) e.style.color = opt.color;
     let sb: HTMLElement | null = null;
     if (kind === 'crit') {
@@ -229,16 +241,13 @@ export class BattleOverlay implements SceneHooks {
     this.pace(tl, () => e.remove());
   }
 
-  /** màn cắt cảnh tuyệt kỹ: tối viền + dải chéo có chân dung, tên chiêu, vệt màu nguyên tố (GSAP, chạy theo giây THẬT) */
+  /** cut-in tuyệt kỹ NHẸ, không chặn trận: dải nhỏ có chân dung + tên chiêu trượt vào từ phía người dùng, ≤ ~0,6 s (giây THẬT) */
   cinematic(c: CineInfo) {
     this.clearCine();
     const wrap = el(`bt-cine s${c.side}${c.boss ? ' boss' : ''}${c.low ? ' low' : ''}`);
     wrap.style.setProperty('--c', c.color);
-    const dim = c.boss ? null : el('bt-dim');
-    if (dim) wrap.append(dim);
     const cut = el('bt-cut');
     const band = el('bt-band');
-    band.append(el('bt-streak'), el('bt-streak b'));
     cut.append(band);
     let port: HTMLElement | null = null;
     if (!c.boss) {
@@ -253,7 +262,7 @@ export class BattleOverlay implements SceneHooks {
     }
     const name = el('bt-name');
     const small = el('bt-who', 'small');
-    small.textContent = c.boss ? 'CHIÊU CUỐI' : `${this.battle?.unit(c.uid)?.init.name ?? ''} · TUYỆT KỸ`;
+    small.textContent = c.boss ? 'CHIÊU CUỐI' : `${this.battle?.unit(c.uid)?.init.name ?? ''}`;
     const big = el('bt-nm', 'b');
     big.textContent = c.name;
     name.append(small, big);
@@ -261,32 +270,15 @@ export class BattleOverlay implements SceneHooks {
     wrap.append(cut);
     this.root.append(wrap);
     this.cine = wrap;
-
-    // tắt animation CSS cũ, GSAP lo toàn bộ
-    cut.style.animation = 'none';
-    if (dim) dim.style.animation = 'none';
-    // xoá transform trong CSS để GSAP tự quản (tránh cộng dồn translateX(%) của CSS với xPercent)
-    cut.style.transform = 'none';
-    big.style.transform = 'none';
-    if (port) port.style.transform = 'none';
-    const T = Math.max(0.5, c.dur * 1.28);
+    const T = Math.max(0.3, c.dur);
     const dir = c.side === 0 ? -1 : 1; // phe ta trượt vào từ trái, địch từ phải
-    const rot = c.side === 0 ? -6 : 6;
-    gsap.set(cut, { xPercent: dir * 120, rotation: rot });
-    if (dim) gsap.set(dim, { opacity: 0 });
-    if (port) gsap.set(port, { rotation: -rot, scaleX: c.side === 0 ? 1 : -1, x: dir * 70, opacity: 0 });
-    gsap.set(small, { x: dir * 50, opacity: 0 });
-    gsap.set(big, { x: dir * 120, opacity: 0, skewX: -8, scale: 1.25 });
+    gsap.set(cut, { xPercent: dir * 110, opacity: 0 });
+    if (port) gsap.set(port, { scale: 0.6 });
     const tl = gsap.timeline({ onComplete: () => this.clearCine() });
-    if (dim) tl.to(dim, { opacity: 1, duration: T * 0.18, ease: 'power2.out' }, 0);
-    tl.to(cut, { xPercent: 0, duration: T * 0.2, ease: 'expo.out' }, 0);
-    if (port) tl.to(port, { x: 0, opacity: 1, duration: T * 0.26, ease: 'back.out(1.5)' }, T * 0.06);
-    tl.to(small, { x: 0, opacity: 1, duration: T * 0.16, ease: 'power3.out' }, T * 0.1)
-      .to(big, { x: 0, opacity: 1, scale: 1, duration: T * 0.22, ease: 'back.out(1.8)' }, T * 0.13)
-      // giữ: trôi nhẹ để không bị "đứng hình"
-      .to(cut, { xPercent: -dir * 3, duration: T * 0.6, ease: 'none' }, T * 0.2)
-      .to(cut, { xPercent: -dir * 125, duration: T * 0.2, ease: 'power3.in' }, T * 0.8);
-    if (dim) tl.to(dim, { opacity: 0, duration: T * 0.2, ease: 'power1.in' }, T * 0.8);
+    tl.to(cut, { xPercent: 0, opacity: 1, duration: T * 0.22, ease: 'expo.out' }, 0);
+    if (port) tl.to(port, { scale: 1.12, duration: T * 0.3, ease: 'back.out(2)' }, 0);
+    tl.to(cut, { xPercent: -dir * 4, duration: T * 0.5, ease: 'none' }, T * 0.22)
+      .to(cut, { xPercent: dir * 110, opacity: 0, duration: T * 0.28, ease: 'power2.in' }, T * 0.72);
     this.cineTl = tl;
   }
 
@@ -404,6 +396,14 @@ export class BattleOverlay implements SceneHooks {
     b.chips.innerHTML = html;
   }
 
+  /** chữ "SKILL!" nảy lên trên thanh mana khi đầy (CSS animation, tự gỡ) */
+  private readyPop(b: Bar) {
+    const t = el('bt-skpop', 'span');
+    t.textContent = 'SKILL!';
+    t.addEventListener('animationend', () => t.remove(), { once: true });
+    b.el.append(t);
+  }
+
   /** gọi sau mỗi khung vẽ: đặt thanh theo vị trí chiếu của camera */
   frame() {
     const sc = this.scene;
@@ -443,6 +443,7 @@ export class BattleOverlay implements SceneHooks {
               b.el.classList.add('pop');
               sfx('ultReady');
               sc.ping(uid);
+              this.readyPop(b);
             }
             b.full = full;
           }

@@ -96,8 +96,12 @@ export function Toasts() {
   return (
     <div class="toasts" aria-live="polite">
       {toasts.value.map((t) => (
-        <div key={t.id} class={`toast ${t.kind}`}>
-          {t.text}
+        <div key={t.id} class={`toast ${t.kind}`} role="status">
+          <span class="toast-ic" aria-hidden="true">
+            <Icon n={t.kind === 'error' ? 'close' : t.kind === 'ok' ? 'check' : 'info'} size={16} />
+          </span>
+          <span class="toast-tx">{t.text}</span>
+          {t.n > 1 && <b class="toast-n">x{t.n}</b>}
         </div>
       ))}
     </div>

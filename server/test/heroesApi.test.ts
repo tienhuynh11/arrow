@@ -36,6 +36,10 @@ import {
 } from '../../shared/heroes/guild.js';
 import { bumpEvents } from '../src/heroes/rules.js';
 import { opEventClaim } from '../src/heroes/events.js';
+import { newbieView, opNewbieLoginClaim, opNewbieMilestoneClaim, opNewbieStarterSummon } from '../src/heroes/newbie.js';
+import { LOGIN7, MILESTONES, MILESTONE_BY_ID, STARTER_SUMMON } from '../../shared/heroes/newbie.js';
+import { mulberry32 } from '../../shared/heroes/rng.js';
+import type { NewbieLoginClaimRes, NewbieMilestoneClaimRes, NewbieRes, NewbieStarterSummonRes } from '../../shared/heroes/api.js';
 import { opGuildBoss, opGuildCheckin, opGuildCreate, opGuildDonate, opGuildJoin, opGuildLeave, opGuildTransfer } from '../src/heroes/guilds.js';
 
 let fails = 0;
@@ -1690,6 +1694,201 @@ console.log('— bang hội: tìm kiếm / thông tin —');
   ok(ib.members.length === 4 && ib.members[0].role === 'leader' && ib.members.slice(1).map((m) => m.username).join() === 'gBeta3,gBeta2,gBeta4', 'GuildInfo.members: bang chủ đầu, rồi cống hiến giảm dần');
   ok(typeof ib.guild.expNext === 'number' && ib.members.every((m) => typeof m.joinedAt === 'number' && m.joinedAt > 0) && Object.keys(ib.boss).sort().join() === 'cycle,hp,hpMax,killed,level,name', 'GuildInfo: kiểu dữ liệu + các trường boss đầy đủ');
 }
+console.log('— Tân thủ: điểm danh 7 ngày —');
+T = Date.UTC(2032, 0, 10, 17, 0, 0) + 3_600_000;
+const NB = {
+  view: async (tok: string) => (await call<NewbieRes>('GET', 'newbie', undefined, tok)).j.view,
+  login: (tok: string) => post<NewbieLoginClaimRes & { error?: string }>('newbie-login-claim', {}, tok),
+  ms: (tok: string, id: unknown) => post<NewbieMilestoneClaimRes & { error?: string }>('newbie-milestone-claim', { id }, tok),
+  starter: (tok: string, key: unknown) => post<NewbieStarterSummonRes & { error?: string }>('newbie-starter-summon', { key }, tok),
+};
+const wdelta = (a: MeResponse, b: MeResponse) => {
+  const d: Record<string, number> = {};
+  for (const k of ['gold', 'gems', 'tickets', 'exp', 'stones'] as const) if (b.wallet[k] !== a.wallet[k]) d[k] = b.wallet[k] - a.wallet[k];
+  return JSON.stringify(Object.entries(d).sort());
+};
+const wj = (w: Record<string, number | undefined>) => JSON.stringify(Object.entries(w).filter(([, v]) => v).sort());
+{
+  ok((await call('GET', 'newbie')).status === 401 && (await post('newbie-login-claim', {})).status === 401 && (await post('newbie-milestone-claim', { id: 'm_pull10' })).status === 401 && (await post('newbie-starter-summon', { key: 'abcdefgh1' })).status === 401, 'Tân thủ: không token → 401 cả 4 route');
+  const L = await newUser('nbLogin');
+  const v0 = await NB.view(L.token);
+  ok(v0.login.canClaim && v0.login.next === 1 && v0.login.claimed === 0 && !v0.starterUsed && v0.milestones.length === MILESTONES.length, 'GET newbie: tài khoản mới nhận được ngày 1, chưa dùng lượt khởi đầu');
+  ok(L.me.newbieBadge === 2 && L.me.newbieDone === false, 'me: newbieBadge = 2 (điểm danh + lượt quay khởi đầu), chưa done');
+  let prev = await getMe(L.token);
+  for (let day = 1; day <= 6; day++) {
+    const r = await NB.login(L.token);
+    const def = LOGIN7[day - 1];
+    const cur = r.j.me;
+    const expectGear = (def.reward.gear ?? []).length;
+    ok(r.status === 200 && r.j.day === day && r.j.view.login.claimed === day && wdelta(prev, cur) === wj(def.reward.wallet ?? {}) && cur.gear.length === prev.gear.length + expectGear, `điểm danh ngày ${day}: đúng thứ tự + ví/trang bị đúng bảng`);
+    if (expectGear) ok(r.j.reward.gear.join() === (def.reward.gear ?? []).join() && cur.gear.filter((g) => g.def === def.reward.gear![0]).length > prev.gear.filter((g) => g.def === def.reward.gear![0]).length, `ngày ${day}: trang bị ${def.reward.gear![0]} vào kho`);
+    if (day === 1) {
+      const again = await NB.login(L.token);
+      ok(again.status === 400 && /ngày mai/.test(again.j.error ?? '') && (await getMe(L.token)).wallet.gold === cur.wallet.gold && !(await NB.view(L.token)).login.canClaim, 'cùng ngày nhận lần 2 → 400, ví không đổi, canClaim=false');
+      T += 3 * DAY; // bỏ lỡ 3 ngày vẫn nhận tiếp ngày 2
+      const vs = await NB.view(L.token);
+      ok(vs.login.canClaim && vs.login.next === 2, 'bỏ lỡ nhiều ngày: tiến trình giữ nguyên, canClaim lại true, next = 2');
+    } else T += DAY;
+    if (day === 3) {
+      const sh = def.reward.shards!;
+      const hero = cur.heroes.find((h) => h.id === sh.hero);
+      ok(!!hero && hero.shards >= sh.n && r.j.reward.shards?.n === sh.n && r.j.reward.shards.hero === sh.hero, 'ngày 3: có mảnh Sát Thủ Bóng Đêm (tướng chưa có → tặng tướng kèm mảnh)');
+    }
+    prev = cur;
+  }
+  ok(!(await getMe(L.token)).heroes.some((h) => h.id === 'hau_vuong') && (await getMe(L.token)).newbieDone === false, 'trước ngày 7 chưa có Hầu Vương');
+  const d7 = await NB.login(L.token);
+  const hv = d7.j.me.heroes.find((h) => h.id === 'hau_vuong');
+  ok(d7.status === 200 && d7.j.day === 7 && d7.j.reward.heroGranted === 'hau_vuong' && !d7.j.reward.shards && !!hv && hv.level === 1 && hv.star === 1 && hv.shards === 0, 'ngày 7 chưa có Hầu Vương: tặng nguyên tướng (cấp 1, 1 sao, 0 mảnh), heroGranted');
+  T += DAY;
+  const after7 = await NB.login(L.token);
+  const vv = await NB.view(L.token);
+  ok(after7.status === 400 && /hết/.test(after7.j.error ?? '') && vv.login.next === 8 && !vv.login.canClaim && vv.login.claimed === 7, 'sau ngày 7 không nhận nữa: 400, next = 8, canClaim=false');
+  ok(mem.ledger.filter((l) => l.accountId === L.id && l.kind === 'newbie').length >= 5, 'ledger kind=newbie ghi các dòng thưởng ví');
+
+  // ngày 7 khi đã có Hầu Vương → +80 mảnh
+  const L2 = await newUser('nbLogin2');
+  ok((await post('admin/grant', { username: 'nbLogin2', hero: 'hau_vuong' }, undefined, { 'x-admin-key': ADMIN_KEY })).status === 200, 'admin tặng Hầu Vương trước');
+  await ed(L2.id, (s) => void ((s.newbie.loginClaimed = 6), (s.newbie.loginDay = 0), (s.newbie.starterUsed = true)));
+  const sh0 = (await getMe(L2.token)).heroes.find((h) => h.id === 'hau_vuong')!.shards;
+  const o7 = await NB.login(L2.token);
+  const sh1 = o7.j.me.heroes.find((h) => h.id === 'hau_vuong')!;
+  ok(o7.status === 200 && o7.j.day === 7 && o7.j.reward.heroGranted === undefined && o7.j.reward.shards?.n === 80 && sh1.shards === sh0 + 80 && o7.j.me.heroes.filter((h) => h.id === 'hau_vuong').length === 1, 'ngày 7 đã có Hầu Vương: +80 mảnh, không tặng tướng');
+  ok(o7.j.me.newbieBadge === o7.j.view.milestones.filter((m) => !m.claimed && m.progress >= MILESTONE_BY_ID[m.id].target).length, 'me.newbieBadge khớp view sau khi nhận hết điểm danh + đã dùng khởi đầu');
+}
+
+console.log('— Tân thủ: Hành trình (mốc) —');
+{
+  const M = await newUser('nbMile');
+  const prog = async () => Object.fromEntries((await NB.view(M.token)).milestones.map((m) => [m.id, m.progress]));
+  const p0 = await prog();
+  ok(p0.m_stage1 === 0 && p0.m_lv10 === 1 && p0.m_heroes6 === STARTER_HEROES.length && p0.m_star2 === 1 && p0.m_gear4 === 0 && p0.m_tower5 === 0 && p0.m_arena1 === 0 && p0.m_guild === 0 && p0.m_pull10 === 0, 'tiến trình ban đầu: ải 0, cấp 1, sao 1, trang bị mặc 0, tháp/đấu trường/bang/quay 0');
+  ok((await NB.ms(M.token, 'm_stage1')).status === 400 && (await NB.ms(M.token, 'm_lv10')).status === 400 && (await NB.ms(M.token, 'khong-co')).status === 400 && (await NB.ms(M.token, 42)).status === 400 && (await NB.ms(M.token, undefined)).status === 400, 'chưa đạt / id lạ / sai kiểu → 400');
+  await ed(M.id, (s) => void (s.progress['1-1'] = { stage: '1-1', stars: 1, clears: 1 }));
+  ok((await prog()).m_stage1 === 1, 'stage: qua ải 1-1 → 1');
+  await ed(M.id, (s) => void ((s.progress['1-5'] = { stage: '1-5', stars: 1, clears: 1 }), (s.progress['1-7'] = { stage: '1-7', stars: 0, clears: 3 })));
+  ok((await prog()).m_stage5 === 5, 'stage: ải cao nhất đã qua 1-5 → 5 (ải 0 sao không tính)');
+  await ed(M.id, (s) => void (s.progress['1-10'] = { stage: '1-10', stars: 3, clears: 1 }));
+  ok((await prog()).m_stage10 === 10, 'stage: 1-10 → 10');
+  await ed(M.id, (s) => {
+    const h = s.heroes[STARTER_HEROES[0]];
+    h.level = 10;
+    h.star = 2;
+    const extra = Object.keys(HERO_BY_ID).filter((id) => !s.heroes[id]).slice(0, 6 - Object.keys(s.heroes).length);
+    for (const id of extra) s.heroes[id] = { id, level: 1, star: 1, shards: 0 };
+    s.towerFloor = 5;
+    s.arenaWins = 1;
+    for (let i = 0; i < 4; i++) s.gear.push({ uid: 900_000 + i, def: 'weapon_forest_SR', level: 0, hero: STARTER_HEROES[i % STARTER_HEROES.length] });
+    s.gear.push({ uid: 900_100, def: 'weapon_forest_SR', level: 0, hero: null });
+  });
+  const p1 = await prog();
+  ok(p1.m_lv10 === 10 && p1.m_lv20 === 10 && p1.m_star2 === 2 && p1.m_heroes6 === 6 && p1.m_gear4 === 4 && p1.m_tower5 === 5 && p1.m_arena1 === 1, 'heroLevel/heroStar/heroCount/gearWorn (chỉ món đang mặc)/tower/arenaWins tính từ hồ sơ');
+  ok((await NB.ms(M.token, 'm_guild')).status === 400 && (await NB.ms(M.token, 'm_lv20')).status === 400, 'm_guild (chưa vào bang) và m_lv20 (cấp 10/20) → 400');
+  await ed(M.id, (s) => void ((s.level = 5), (s.wallet.gold = 100_000)));
+  const gc = await post('guild-create', { name: 'Bang Tân Thủ' }, M.token);
+  ok(gc.status === 200 && (await prog()).m_guild === 1, 'guild: lập bang → 1' + (gc.status === 200 ? '' : ' ' + JSON.stringify(gc.j)));
+  const sm = await post<SummonRes>('summon', { banner: 'standard', count: 1, pay: 'tickets', key: 'nb-' + randomBytes(6).toString('hex') }, M.token);
+  ok(sm.status === 200 && (await prog()).m_pull10 === 1 && (await NB.ms(M.token, 'm_pull10')).status === 400, 'pulls: quay x1 → 1/10, chưa nhận được');
+  const sm10 = await post<SummonRes>('summon', { banner: 'standard', count: 10, pay: 'gems', key: 'nb-' + randomBytes(6).toString('hex') }, M.token);
+  ok(sm10.status === 200 && (await prog()).m_pull10 === 11, 'pulls: quay x10 → +10 (11)');
+  ok((await getMe(M.token)).newbieBadge === 11 + 2, 'newbieBadge: 11 mốc đủ điều kiện (trừ m_lv20) + điểm danh + khởi đầu');
+
+  // nhận từng mốc đang đạt: thưởng khớp bảng, không trả hai lần
+  let cur = await getMe(M.token);
+  const ledgerN0 = mem.ledger.filter((l) => l.accountId === M.id && l.kind === 'newbie').length;
+  await ed(M.id, (s) => void (s.heroes[STARTER_HEROES[0]].level = 20)); // m_lv20 cũng đạt
+  cur = await getMe(M.token);
+  for (const m of MILESTONES) {
+    const r = await NB.ms(M.token, m.id);
+    ok(r.status === 200 && wdelta(cur, r.j.me) === wj(m.reward.wallet ?? {}) && r.j.view.milestones.find((x) => x.id === m.id)!.claimed && walletSum(r.j.me), `mốc ${m.id}: nhận đúng thưởng ${wj(m.reward.wallet ?? {})}`);
+    cur = r.j.me;
+  }
+  const dbl = await NB.ms(M.token, 'm_stage1');
+  ok(dbl.status === 400 && /đã nhận/.test(dbl.j.error ?? '') && wdelta(cur, await getMe(M.token)) === '[]', 'nhận lại mốc đã nhận → 400, ví không đổi');
+  ok(mem.ledger.filter((l) => l.accountId === M.id && l.kind === 'newbie').length - ledgerN0 === MILESTONES.length, 'ledger kind=newbie: mỗi mốc một dòng');
+  ok((await NB.view(M.token)).milestones.every((m) => m.claimed) && (await getMe(M.token)).newbieBadge === 2, 'nhận hết mốc: chỉ còn điểm danh + lượt khởi đầu trong badge');
+}
+
+console.log('— Tân thủ: lượt quay khởi đầu —');
+{
+  const SS = await newUser('nbStarter');
+  await ed(SS.id, (s) => void ((s.wallet.tickets = 0), (s.wallet.gems = 0), (s.wallet.gold = 123), (s.wallet.exp = 7)));
+  const w0 = (await getMe(SS.token)).wallet;
+  ok((await NB.starter(SS.token, 'ngan')).status === 400 && (await NB.starter(SS.token, 'co dau cach!!')).status === 400 && (await NB.starter(SS.token, 'x'.repeat(65))).status === 400 && (await NB.starter(SS.token, 12345678)).status === 400, 'key sai (ngắn / ký tự lạ / quá dài / sai kiểu) → 400');
+  ok(!(await NB.view(SS.token)).starterUsed && (await getMe(SS.token)).newbieBadge === 2, 'trước khi quay: chưa dùng, badge = 2');
+  const k1 = 'starter-' + randomBytes(5).toString('hex');
+  const s1 = await NB.starter(SS.token, k1);
+  ok(s1.status === 200 && s1.j.pulls.length === STARTER_SUMMON.count && JSON.stringify(s1.j.me.wallet) === JSON.stringify(w0), 'quay khởi đầu: đúng 10 lượt, 0 vé/0 kim cương vẫn quay được, ví nguyên');
+  ok(s1.j.pulls.some((p) => p.rarity === 'SSR' || p.rarity === 'UR'), 'có ít nhất 1 SSR trở lên');
+  ok(s1.j.view.starterUsed && s1.j.me.newbieBadge === 1 + 1 + s1.j.view.milestones.filter((m) => m.id !== 'm_pull10' && m.progress >= MILESTONE_BY_ID[m.id].target).length && s1.j.view.milestones.find((m) => m.id === 'm_pull10')!.progress === 10, 'pulls_total +10 → m_pull10 đạt; badge = điểm danh + m_pull10 + các mốc khác đạt nhờ tướng mới (khởi đầu đã trừ)');
+  const pity1 = s1.j.me.pity['standard'];
+  ok(!!pity1 && pity1.sinceSSR < 10 && pity1.sinceUR <= 10, 'pity banner standard được cập nhật');
+  ok(s1.j.pulls.every((p) => s1.j.me.heroes.some((h) => h.id === p.heroId)), 'mọi tướng quay được đều có trong hồ sơ');
+  const heroesAfter = JSON.stringify(s1.j.me.heroes);
+  const rp = await NB.starter(SS.token, k1);
+  ok(rp.status === 200 && JSON.stringify(rp.j.pulls) === JSON.stringify(s1.j.pulls) && JSON.stringify(rp.j.me.heroes) === heroesAfter && JSON.stringify(rp.j.me.wallet) === JSON.stringify(w0) && JSON.stringify(rp.j.me.pity) === JSON.stringify(s1.j.me.pity), 'gửi lại cùng key: cùng kết quả, không quay thêm, không đổi ví/tướng/pity');
+  ok((await NB.view(SS.token)).milestones.find((m) => m.id === 'm_pull10')!.progress === 10, 'replay không cộng pulls_total lần nữa');
+  const again = await NB.starter(SS.token, 'starter-' + randomBytes(5).toString('hex'));
+  ok(again.status === 400 && /Đã dùng lượt quay khởi đầu/.test(again.j.error ?? '') && JSON.stringify((await getMe(SS.token)).heroes) === heroesAfter, 'key khác sau khi đã dùng → 400 "Đã dùng lượt quay khởi đầu"');
+  const mc = await NB.ms(SS.token, 'm_pull10');
+  ok(mc.status === 200 && mc.j.me.wallet.gold === 123 + 2000 && mc.j.me.wallet.tickets === 1, 'm_pull10 hoàn thành nhờ lượt quay khởi đầu và nhận được');
+  const nbo = await newUser('nbStarterOld');
+  const oldS = await post<SummonRes>('summon', { banner: 'standard', count: 10, pay: 'tickets', key: 'nbold-' + randomBytes(6).toString('hex') }, nbo.token);
+  const oldStarter = await NB.starter(nbo.token, 'nbold-' + randomBytes(6).toString('hex'));
+  ok(oldS.status === 200 && oldStarter.status === 200 && (await NB.view(nbo.token)).milestones.find((m) => m.id === 'm_pull10')!.progress === 20, 'tài khoản đã quay (vé cạn) vẫn dùng được lượt khởi đầu; pulls_total cộng dồn 20');
+}
+
+console.log('— Tân thủ: quay khởi đầu (200 hạt giống cố định) —');
+{
+  let forced = 0;
+  let allGood = true;
+  let dupeOk = true;
+  for (let seed = 1; seed <= 200; seed++) {
+    const rng = mulberry32(seed);
+    const rand = (n: number) => rng.int(n);
+    const st = newState(1, 0);
+    const before = JSON.stringify(st.wallet);
+    const pulls = opNewbieStarterSummon(st, rand);
+    const hasHigh = pulls.some((p) => p.rarity === 'SSR' || p.rarity === 'UR');
+    if (pulls.slice(0, 9).every((p) => p.rarity !== 'SSR' && p.rarity !== 'UR') && pulls[9].rarity === 'SSR') forced++;
+    const pity = st.pity['standard'];
+    let sinceSSR = 0;
+    let sinceUR = 0;
+    for (const p of pulls) {
+      sinceSSR = p.rarity === 'SSR' || p.rarity === 'UR' ? 0 : sinceSSR + 1;
+      sinceUR = p.rarity === 'UR' ? 0 : sinceUR + 1;
+    }
+    if (!(pulls.length === 10 && hasHigh && pulls.every((p) => !!HERO_BY_ID[p.heroId] && HERO_BY_ID[p.heroId].rarity === p.rarity && HERO_BY_ID[p.heroId].summonable) && pity.sinceSSR === sinceSSR && pity.sinceUR === sinceUR && st.newbie.pullsTotal === 10 && st.newbie.starterUsed && JSON.stringify(st.wallet) === before)) allGood = false;
+    if (pulls.some((p) => !p.isNew && p.shards !== DUPE_SHARDS[p.rarity])) dupeOk = false;
+    let thrown = false;
+    try {
+      opNewbieStarterSummon(st, rand);
+    } catch (e) {
+      thrown = e instanceof StoreError && e.status === 400;
+    }
+    if (!thrown) allGood = false;
+  }
+  ok(allGood, '200 hạt giống: luôn 10 lượt, ≥1 SSR+, tướng hợp lệ & quay được, pity khớp từng lượt (SSR đặt lại sinceSSR), pulls_total=10, ví nguyên, dùng lần 2 → 400');
+  ok(forced > 20, `nhánh bảo đảm (thay lượt cuối bằng SSR) được kích hoạt ${forced}/200 lần`);
+  ok(dupeOk, 'lượt trùng → mảnh theo DUPE_SHARDS');
+}
+
+console.log('— Tân thủ: me — chuyển trạng thái badge/done —');
+{
+  const D = await newUser('nbDone');
+  ok(D.me.newbieBadge === 2 && !D.me.newbieDone, 'khởi đầu: badge 2, chưa done');
+  await ed(D.id, (s) => void (s.newbie.starterUsed = true));
+  ok((await getMe(D.token)).newbieBadge === 1, 'dùng khởi đầu: badge 1');
+  await NB.login(D.token);
+  ok((await getMe(D.token)).newbieBadge === 0, 'nhận điểm danh: badge 0');
+  T += DAY;
+  ok((await getMe(D.token)).newbieBadge === 1, 'sang ngày mới: điểm danh nhận lại được → badge 1');
+  await ed(D.id, (s) => void ((s.newbie.loginClaimed = 7), (s.newbie.milestones = MILESTONES.map((m) => m.id))));
+  const f = await getMe(D.token);
+  ok(f.newbieBadge === 0 && f.newbieDone === true, 'nhận hết tất cả: badge 0, newbieDone = true');
+  ok((await NB.view(D.token)).login.next === 8, 'GET newbie: next = 8 khi đã hết');
+}
+
 _setHeroesClock(null);
 
 ok(mem.ledger.every((l) => Object.values(l.delta).every((v) => Number.isInteger(v))), 'ledger toàn số nguyên');
@@ -1986,6 +2185,72 @@ if (process.env.DATABASE_URL) {
       await hs.mutateGuild(g3, dNext, 'guild', null, (s, g) => opGuildLeave(s, g, dNext.getTime()));
       const left = (await q(`SELECT (SELECT count(*)::int FROM $Sh_guild WHERE id=$1) AS g, (SELECT count(*)::int FROM $Sh_guild_member WHERE guild_id=$1) AS m, (SELECT count(*)::int FROM $Sh_guild_chat WHERE guild_id=$1) AS c`, [gid])).rows[0];
       ok(left.g === 0 && left.m === 0 && left.c === 0, 'PG: bang chủ cuối cùng rời → bang + thành viên + chat bị xoá (CASCADE)');
+    }
+    {
+      // Tân thủ (migration v6): hàng tạo lười, lưu bền, idempotency, rollback
+      const nid = (await pgs.createAccount('pgnewbie', 'x'))!;
+      const d1 = new Date(Date.UTC(2033, 0, 10, 18, 0, 0));
+      const d2 = new Date(d1.getTime() + 86_400_000);
+      const row = async () => (await q(`SELECT * FROM $Sh_newbie WHERE account_id=$1`, [nid])).rows[0];
+      const v0 = await hs.view(nid, d1, (s) => ({ n: s.newbie, v: newbieView(s, d1.getTime()) }));
+      ok(!(await row()) && v0.n.loginClaimed === 0 && !v0.n.starterUsed && v0.n.pullsTotal === 0 && v0.v.login.canClaim && v0.v.login.next === 1, 'PG v6: chưa có hàng h_newbie (lười), mặc định đọc được, nhận được ngày 1');
+      ok((await q(`SELECT max(version)::int AS v FROM $Sh_schema_version`)).rows[0].v >= 6, 'PG: schema_version ≥ 6');
+      const c1 = await hs.mutate(nid, d1, 'newbie', (s) => opNewbieLoginClaim(s, d1.getTime()));
+      const r1 = await row();
+      ok(c1.day === 1 && r1.login_claimed === 1 && r1.login_day === dayKey(d1.getTime()) && r1.starter_used === false && r1.pulls_total === 0, 'PG: nhận điểm danh ngày 1 → hàng h_newbie được tạo & lưu');
+      let dup = false;
+      try {
+        await hs.mutate(nid, d1, 'newbie', (s) => opNewbieLoginClaim(s, d1.getTime()));
+      } catch (err) {
+        dup = err instanceof StoreError && err.status === 400;
+      }
+      ok(dup && (await row()).login_claimed === 1, 'PG: nhận lần 2 cùng ngày bị từ chối, hàng không đổi');
+      // rollback: nhận ngày 2 (hôm sau) rồi ném lỗi → không ghi gì
+      let rolled = false;
+      const gold0 = await hs.view(nid, d2, (s) => s.wallet.gold);
+      try {
+        await hs.mutate(nid, d2, 'newbie', (s) => {
+          opNewbieLoginClaim(s, d2.getTime());
+          throw new StoreError('huỷ', 400);
+        });
+      } catch (err) {
+        rolled = err instanceof StoreError && err.message === 'huỷ';
+      }
+      ok(rolled && (await row()).login_claimed === 1 && (await hs.view(nid, d2, (s) => s.wallet.gold)) === gold0, 'PG: lỗi giữa chừng → rollback cả h_newbie lẫn ví');
+      const c2 = await hs.mutate(nid, d2, 'newbie', (s) => opNewbieLoginClaim(s, d2.getTime()));
+      ok(c2.day === 2 && (await row()).login_claimed === 2 && (await row()).login_day === dayKey(d2.getTime()), 'PG: hôm sau nhận được ngày 2');
+      // tổng lượt quay + mốc
+      await hs.mutate(nid, d2, 'summon', (s) => opSummon(s, 'standard', 10, 'tickets', (n) => Math.floor(Math.random() * n)), { idem: { key: 'pgnb-summon-1', tag: 't' } });
+      ok((await row()).pulls_total === 10, 'PG: opSummon x10 → pulls_total = 10');
+      const m1 = await hs.mutate(nid, d2, 'newbie', (s) => opNewbieMilestoneClaim(s, 'm_pull10'));
+      ok(m1.reward.wallet.gold === 2000 && (await row()).milestones.join() === 'm_pull10', 'PG: nhận mốc m_pull10 → milestones[] lưu');
+      let dblm = false;
+      try {
+        await hs.mutate(nid, d2, 'newbie', (s) => opNewbieMilestoneClaim(s, 'm_pull10'));
+      } catch (err) {
+        dblm = err instanceof StoreError && err.status === 400;
+      }
+      ok(dblm && (await row()).milestones.length === 1, 'PG: nhận mốc hai lần bị từ chối');
+      // quay khởi đầu: idempotent
+      const idemS = { key: 'pgnb-starter-1', tag: 'newbie-starter' };
+      const st1 = await hs.mutate(nid, d2, 'newbie', (s) => opNewbieStarterSummon(s, (n) => Math.floor(Math.random() * n)), { idem: idemS });
+      const tk = await hs.view(nid, d2, (s) => s.wallet.tickets);
+      const st2 = await hs.mutate(nid, d2, 'newbie', (s) => opNewbieStarterSummon(s, (n) => Math.floor(Math.random() * n)), { idem: idemS });
+      const r3 = await row();
+      const sig = (a: typeof st1) => a.map((p) => `${p.heroId}:${p.rarity}:${p.isNew}:${p.shards}`).join(); // jsonb xếp lại thứ tự khoá → so theo giá trị
+      ok(sig(st1) === sig(st2) && st1.length === 10 && st1.some((p) => p.rarity === 'SSR' || p.rarity === 'UR') && r3.starter_used === true && r3.pulls_total === 20, 'PG: quay khởi đầu 10 lượt có SSR+, replay cùng key trả y nguyên, pulls_total = 20');
+      ok((await hs.view(nid, d2, (s) => s.wallet.tickets)) === tk, 'PG: quay khởi đầu không đổi vé');
+      let used = false;
+      try {
+        await hs.mutate(nid, d2, 'newbie', (s) => opNewbieStarterSummon(s, (n) => Math.floor(Math.random() * n)), { idem: { key: 'pgnb-starter-2', tag: 'newbie-starter' } });
+      } catch (err) {
+        used = err instanceof StoreError && /Đã dùng/.test(err.message);
+      }
+      ok(used && (await row()).pulls_total === 20, 'PG: key khác sau khi đã dùng → 400, pulls_total giữ 20');
+      const nl = (await q(`SELECT count(*)::int AS n FROM $Sh_ledger WHERE account_id=$1 AND kind='newbie'`, [nid])).rows[0].n;
+      ok(nl === 3, 'PG: ledger kind=newbie 3 dòng (ngày 1, ngày 2, m_pull10); khởi đầu không có ví');
+      const back = await hs.view(nid, d2, (s) => s.newbie);
+      ok(back.loginClaimed === 2 && back.starterUsed && back.pullsTotal === 20 && back.milestones.join() === 'm_pull10', 'PG: đọc lại khớp ghi (loginClaimed/starterUsed/pullsTotal/milestones)');
     }
   } catch (e) {
     ok(false, 'PG: lỗi ' + (e instanceof Error ? e.message.replace(/postgres(?:ql)?:\/\/\S+/gi, '<url>') : String(e)));

@@ -20,6 +20,7 @@ export type Screen =
   | { n: 'quests' }
   | { n: 'shop' }
   | { n: 'events' }
+  | { n: 'newbie' }
   | { n: 'guild'; tab?: 'members' | 'boss' | 'acts' | 'chat' }
   | { n: 'guildBossResult'; res: GuildBossRes };
 
@@ -35,15 +36,20 @@ export interface Toast {
   id: number;
   text: string;
   kind: 'info' | 'error' | 'ok';
+  /** số lần lặp liền nhau của cùng một nội dung (hiện "x2", "x3"...) */
+  n: number;
 }
 export const toasts = signal<Toast[]>([]);
 let toastId = 1;
 export function toast(text: string, kind: Toast['kind'] = 'info') {
-  const t: Toast = { id: toastId++, text, kind };
-  toasts.value = [...toasts.value.slice(-3), t];
+  const cur = toasts.value;
+  const last = cur[cur.length - 1];
+  // cùng nội dung liền nhau: gộp thành một viên thuốc có đếm "xN" và chạy lại hoạt ảnh (đổi id)
+  const t: Toast = { id: toastId++, text, kind, n: last && last.text === text && last.kind === kind ? last.n + 1 : 1 };
+  toasts.value = [...(t.n > 1 ? cur.slice(0, -1) : cur).slice(-2), t];
   setTimeout(() => {
     toasts.value = toasts.value.filter((x) => x.id !== t.id);
-  }, 3200);
+  }, 2600);
 }
 export function errToast(e: unknown) {
   if (e instanceof ApiError) toast(e.message, 'error');

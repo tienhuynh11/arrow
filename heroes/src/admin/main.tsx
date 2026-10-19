@@ -563,7 +563,7 @@ function Admin() {
     <div class="wrap">
       <header class="top">
         <h1>Quản trị sự kiện</h1>
-        <span class="muted">Thẻ Tướng 3D</span>
+        <span class="muted">Linh Giới</span>
       </header>
 
       <form
