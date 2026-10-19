@@ -8,10 +8,14 @@ export const HEROES_API = `${HEROES_BASE}api/`;
 
 export const GAME_TITLE = 'LINH GIỚI';
 
-/** số ô đội hình: slot 0-1 hàng trước, 2-4 hàng sau */
-export const SQUAD_SIZE = 5;
+/** số ô đội hình TỐI ĐA: slot 0-1 Hàng Trước, 2-3 Hàng Giữa, 4-5 Hàng Sau. Số ô đang MỞ phụ thuộc cấp tài khoản (progression.ts) */
+export const SQUAD_SIZE = 6;
+/** engine chọn mục tiêu theo "hàng trước" (slot < FRONT_SLOTS) rồi tới các ô còn lại */
 export const FRONT_SLOTS = 2;
 export const SQUAD_COUNT = 3;
+/** hàng của một ô: 0 = Trước, 1 = Giữa, 2 = Sau */
+export const rowOfSlot = (slot: number): 0 | 1 | 2 => (slot < 2 ? 0 : slot < 4 ? 1 : 2);
+export const ROW_NAME = ['Hàng Trước', 'Hàng Giữa', 'Hàng Sau'] as const;
 
 /** trận đánh chạy 20Hz */
 export const BATTLE_HZ = 20;

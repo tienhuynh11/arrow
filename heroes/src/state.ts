@@ -21,6 +21,7 @@ export type Screen =
   | { n: 'shop' }
   | { n: 'events' }
   | { n: 'newbie' }
+  | { n: 'profile'; tab?: 'info' | 'level' | 'ach' | 'collect' }
   | { n: 'guild'; tab?: 'members' | 'boss' | 'acts' | 'chat' }
   | { n: 'guildBossResult'; res: GuildBossRes };
 

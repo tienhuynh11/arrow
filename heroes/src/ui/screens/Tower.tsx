@@ -2,14 +2,14 @@
 // đội hình sửa ngay tại chỗ, nút THÁCH ĐẤU. Trận đánh dùng lại màn Battle với stage 'tower'.
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { powerOf } from '@shared/heroes/formulas';
-import { MONSTERS, stageSetup } from '@shared/heroes/stages';
+import { stageSetup } from '@shared/heroes/stages';
 import { isTowerBoss, TOWER_MAX_FLOOR, TOWER_TRIES, towerReward, towerStage } from '@shared/heroes/tower';
 import { api, me } from '../../api';
-import { powerOfOwned, squadPower, towerOf } from '../../game';
+import { powerOfOwned, slotsOpenOf, squadPower, towerOf } from '../../game';
 import { fmt, fmtDur, go, returnTo, toast, useBusy } from '../../state';
-import { Btn, ElemChip, Modal, Portrait, useDesktopLand } from '../common';
+import { Btn, ElemChip, Modal, useDesktopLand } from '../common';
 import { Icon } from '../icons';
-import { pad, Roster, SquadBoard, useSquadOps } from '../squadkit';
+import { EnemyLineup, fitSquad, Roster, SquadBoard, useSquadOps } from '../squadkit';
 import { ActHead, ResetChip, useDayReset, WalletChips } from './activity';
 
 /** cột tháp: hiển thị vài tầng quanh tầng hiện tại, tự cuộn tới tầng hiện tại */
@@ -49,9 +49,9 @@ export function Tower() {
   const left = useDayReset();
   const [busy, run] = useBusy();
   const side = useDesktopLand(); // PC ngang: lực chiến + thưởng chuyển sang bảng bên phải cùng đội hình và nút THÁCH ĐẤU
-  const base = pad(m.squads[m.activeSquad]);
+  const base = fitSquad(m, m.squads[m.activeSquad]);
   const [slots, setSlots] = useState<string[]>(base);
-  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true });
+  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true, open: slotsOpenOf(m) });
 
   const t = towerOf(m);
   const cap = t.floor >= TOWER_MAX_FLOOR;
@@ -74,7 +74,6 @@ export function Tower() {
     // eslint-disable-next-line
     [m.heroes],
   );
-  const mName = (k: string) => MONSTERS.find((x) => x.id === k)?.name ?? k;
 
   const blocked = cap ? 'Bạn đã chinh phục toàn bộ tháp!' : t.tries <= 0 ? `Hết lượt hôm nay. Làm mới sau ${fmtDur(left)}` : count === 0 ? 'Hãy xếp ít nhất 1 tướng' : '';
 
@@ -127,20 +126,7 @@ export function Tower() {
             <ElemChip el={stage.element} />
             <span class="lvtag">Lv {stage.level}</span>
           </div>
-          <div class="waves">
-            {stage.waves.map((w, i) => (
-              <div class="wave-row" key={i}>
-                <small>Đợt {i + 1}</small>
-                <div class="mons">
-                  {w.map((k, j) => (
-                    <div class="mon tw-mon" key={j} title={mName(k)}>
-                      <Portrait id={k} rarity="R" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <EnemyLineup ids={stage.waves[0] ?? []} boss={boss} />
           {!side && powerEl}
           {!side && rewEl}
         </section>

@@ -39,19 +39,16 @@ export const isTowerBoss = (floor: number) => floor % 10 === 0;
 export function towerStage(floor: number): StageDef {
   const f = Math.max(1, Math.min(TOWER_MAX_FLOOR, Math.floor(floor)));
   const boss = isTowerBoss(f);
-  const wavesN = boss ? 3 : 2;
-  const waves: string[][] = [];
-  for (let w = 0; w < wavesN; w++) {
-    const count = Math.min(5, 2 + Math.floor(f / 20) + w);
-    const row: string[] = [];
-    for (let s = 0; s < count; s++) {
-      const pool = s < 2 ? FRONT : BACK;
-      const kinds = Math.min(pool.length, 1 + Math.floor(f / 25));
-      row.push(pool[(f + w + s) % kinds]);
-    }
-    waves.push(row);
+  // MỘT đợt mỗi tầng, tối đa 6 quái; tầng boss (bội 10): boss ở ô đầu
+  const count = Math.min(6, 3 + Math.floor(f / 25));
+  const row: string[] = [];
+  for (let s = 0; s < count; s++) {
+    const pool = s < 2 ? FRONT : BACK;
+    const kinds = Math.min(pool.length, 1 + Math.floor(f / 25));
+    row.push(pool[(f + s) % kinds]);
   }
-  if (boss) waves[wavesN - 1][0] = 'mk_chua';
+  if (boss) row[0] = 'mk_chua';
+  const waves: string[][] = [row];
   const r = towerReward(f);
   return {
     id: `t-${f}`,

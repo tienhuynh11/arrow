@@ -9,6 +9,7 @@ import { runLive } from '../../render/live';
 import { createHubScene } from '../../render/scenes';
 import { fmt, fmtDur, go, useBusy, useTicker, toast } from '../../state';
 import { Btn, Canvas3D, Modal } from '../common';
+import { AvatarFace, avatarRarity } from '../avatar';
 import { GearBag } from '../gear';
 import { Icon, type IconName } from '../icons';
 import { tutRunning } from '../../tutorial-state';
@@ -86,6 +87,7 @@ export function Hub() {
 
   // các mục phụ (7, thêm Tân thủ khi còn quà): dùng chung cho dock bên phải (ngang/PC) và bảng Hoạt động (điện thoại dọc)
   const items: { k: string; ic: IconName; label: string; sub?: string; badge?: number | boolean; aria: string; run: () => void }[] = [
+    { k: 'profile', ic: 'user' as IconName, label: 'Hồ sơ', badge: bd.profile, aria: `Hồ sơ${bd.profile ? `, ${bd.profile} có thể nhận` : ''}`, run: () => go({ n: 'profile' }) },
     ...(m.newbieDone ? [] : [{ k: 'newbie', ic: 'gift' as IconName, label: 'Tân thủ', badge: bd.newbie, aria: `Tân thủ${bd.newbie ? `, ${bd.newbie} có thể nhận` : ''}`, run: () => go({ n: 'newbie' }) }]),
     { k: 'tower', ic: 'tower', label: 'Tháp', badge: bd.tower, aria: 'Tháp', run: () => go({ n: 'tower' }) },
     { k: 'arena', ic: 'arena', label: 'Đấu trường', badge: bd.arena, aria: 'Đấu trường', run: () => go({ n: 'arena' }) },
@@ -104,6 +106,14 @@ export function Hub() {
       <Canvas3D key={ids.join(',')} start={start} class="hub-canvas" />
       <div class="hub-ui">
         <TutorialChip />
+        <button type="button" class={`pf-hubchip r-${avatarRarity(m) ?? 'R'}`} onClick={() => go({ n: 'profile' })} aria-label={`Hồ sơ người chơi ${m.profile.username}, cấp ${m.profile.level}`}>
+          <span class="pf-hubchip-av"><AvatarFace m={m} /></span>
+          <span class="pf-hubchip-tx">
+            <b>{m.profile.username}</b>
+            <small>Cấp {m.profile.level}</small>
+          </span>
+          {bd.profile > 0 && <i class="hb-badge hb-badge-dot" />}
+        </button>
         {leader && (
           <div class="hb-plate">
             <b>{leader.name}</b>
@@ -112,7 +122,7 @@ export function Hub() {
         )}
 
         {/* dock kính bên phải (ngang / PC) */}
-        <div class="hb-dock" aria-label="Hoạt động" data-tut="hub-dock">
+        <div class={`hb-dock${items.length > 8 ? ' pf-many' : ''}`} aria-label="Hoạt động" data-tut="hub-dock">
           {items.map((it) => (
             <button type="button" key={it.k} class="hb-dock-b" onClick={it.run} aria-label={it.aria}>
               <span class="hb-ic"><Icon n={it.ic} size={28} />{badgeOf(it.badge)}</span>
@@ -129,7 +139,7 @@ export function Hub() {
         {acts && (
           <>
             <div class="hb-back" onClick={() => setActs(false)} />
-            <div class="hb-sheet" role="menu" aria-label="Hoạt động">
+            <div class={`hb-sheet${items.length > 8 ? ' pf-many' : ''}`} role="menu" aria-label="Hoạt động">
               {items.map((it) => (
                 <button type="button" key={it.k} class="hb-sheet-b" role="menuitem" aria-label={it.aria} onClick={() => { setActs(false); it.run(); }}>
                   <span class="hb-ic"><Icon n={it.ic} size={32} />{badgeOf(it.badge)}</span>

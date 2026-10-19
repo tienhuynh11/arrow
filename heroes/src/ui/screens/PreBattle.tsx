@@ -1,4 +1,4 @@
-// Bảng chuẩn bị trận (mở ngay trên màn Chiến dịch): thông tin ải, xem trước địch, đội hình hiện tại 5 ô
+// Bảng chuẩn bị trận (mở ngay trên màn Chiến dịch): thông tin ải, xem trước địch, đội hình hiện tại 6 ô (mở theo cấp)
 // (chạm ô để chọn tướng ngay tại chỗ / kéo thả), so sánh lực chiến, nút BẮT ĐẦU. Không phải chuyển màn.
 import { useMemo, useState } from 'preact/hooks';
 import { STAMINA_MAX, SWEEP_COST } from '@shared/heroes/config';
@@ -6,23 +6,23 @@ import { powerOf } from '@shared/heroes/formulas';
 import { gearDropOdds } from '@shared/heroes/gear';
 import type { SweepRes } from '@shared/heroes/api';
 import { RARITIES } from '@shared/heroes/types';
-import { MONSTERS, stageSetup, type StageDef } from '@shared/heroes/stages';
+import { stageSetup, type StageDef } from '@shared/heroes/stages';
 import { api, me } from '../../api';
-import { powerOfOwned, squadPower, starsOfStage } from '../../game';
+import { powerOfOwned, slotsOpenOf, squadPower, starsOfStage } from '../../game';
 import { fmt, go, returnTo, toast, useBusy } from '../../state';
-import { Btn, ElemChip, Modal, Portrait } from '../common';
+import { Btn, ElemChip, Modal } from '../common';
 import { GearDrops } from '../gear';
 import { Icon } from '../icons';
-import { pad, Roster, SquadBoard, useSquadOps } from '../squadkit';
+import { EnemyLineup, fitSquad, Roster, SquadBoard, useSquadOps } from '../squadkit';
 
 export function PreBattle({ stage, onClose, inline }: { stage: StageDef; onClose: () => void; /** PC ngang: hiện thành bảng cố định bên phải bản đồ thay vì hộp thoại */ inline?: boolean }) {
   const m = me.value!;
   const [busy, run] = useBusy();
-  const base = pad(m.squads[m.activeSquad]);
+  const base = fitSquad(m, m.squads[m.activeSquad]);
   const [slots, setSlots] = useState<string[]>(base);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [swept, setSwept] = useState<{ times: number; r: SweepRes } | null>(null);
-  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true });
+  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true, open: slotsOpenOf(m) });
 
   const stars = starsOfStage(m, stage.id);
   const count = slots.filter(Boolean).length;
@@ -42,7 +42,6 @@ export function PreBattle({ stage, onClose, inline }: { stage: StageDef; onClose
     [m.heroes],
   );
   const odds = gearDropOdds(stage.chapter);
-  const mName = (k: string) => MONSTERS.find((x) => x.id === k)?.name ?? k;
 
   const begin = () =>
     run(async () => {
@@ -77,20 +76,7 @@ export function PreBattle({ stage, onClose, inline }: { stage: StageDef; onClose
       </div>
       <div class="pb-cols">
         <div class="pb-left">
-          <div class="waves">
-            {stage.waves.map((w, i) => (
-              <div class="wave-row" key={i}>
-                <small>Đợt {i + 1}</small>
-                <div class="mons">
-                  {w.map((k, j) => (
-                    <div class="mon" key={j} title={mName(k)}>
-                      <Portrait id={k} rarity="R" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <EnemyLineup ids={stage.waves[0] ?? []} boss={stage.boss} />
           <div class="pb-rewards">
             <span class="reward"><Icon n="gold" size={18} /><b>{fmt(stage.reward.gold)}</b></span>
             <span class="reward"><Icon n="exp" size={18} /><b>{fmt(stage.reward.exp)}</b></span>

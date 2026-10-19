@@ -62,28 +62,32 @@ export const STAGES_PER_CHAPTER = 10;
 const FRONT_POOL = ['mk_con', 'mk_da', 'mk_dot'];
 const BACK_POOL = ['mk_nem', 'mk_phap'];
 
+/** ải boss trong mỗi chương: ải 5 (boss nhẹ) và ải 10 (boss mạnh) */
+export const BOSS_STAGE_NS: readonly number[] = [5, 10];
+export const isBossStageN = (n: number) => BOSS_STAGE_NS.includes(n);
+/** hệ số độ khó (%) cho boss: ải 5 nhẹ hơn ải 10 */
+const BOSS_DIFF = { 5: 78, 10: 100 } as Record<number, number>;
+
 function buildStage(chapter: number, n: number): StageDef {
   const index = (chapter - 1) * STAGES_PER_CHAPTER + (n - 1);
-  const boss = n === STAGES_PER_CHAPTER;
-  const counts = [2 + (n >= 3 ? 1 : 0), 3 + (n >= 6 ? 1 : 0), 3 + (n >= 8 ? 1 : 0) + (chapter > 1 ? 1 : 0)].map((c) => Math.min(5, c));
-  const waves = counts.map((count, w) => {
-    const row: string[] = [];
-    for (let s = 0; s < count; s++) {
-      const pool = s < FRONT_SLOTS ? FRONT_POOL : BACK_POOL;
-      // công thức cố định (deterministic): càng về sau càng nhiều loại quái
-      const kinds = Math.min(pool.length, 1 + Math.floor(index / 6));
-      row.push(pool[(index + w + s) % kinds]);
-    }
-    return row;
-  });
-  if (boss) waves[waves.length - 1][0] = 'mk_chua';
+  const boss = isBossStageN(n);
+  // MỘT đợt duy nhất, tối đa 6 quái (bằng số ô tướng tối đa): 3 quái ở đầu chương, tăng dần tới 6
+  const count = Math.min(6, 3 + Math.floor(index / 5));
+  const row: string[] = [];
+  for (let s = 0; s < count; s++) {
+    const pool = s < FRONT_SLOTS ? FRONT_POOL : BACK_POOL;
+    // công thức cố định (deterministic): càng về sau càng nhiều loại quái
+    const kinds = Math.min(pool.length, 1 + Math.floor(index / 6));
+    row.push(pool[(index + s) % kinds]);
+  }
+  if (boss) row[0] = 'mk_chua';
   return {
     id: `${chapter}-${n}`, chapter, n, index,
     name: `Ải ${chapter}-${n}`,
     element: CHAPTERS[chapter - 1].element,
     level: 1 + Math.floor(index * 1.8),
-    diff: Math.min(100, 40 + index * 8),
-    waves, boss,
+    diff: Math.floor(Math.min(100, 40 + index * 8) * (boss ? (BOSS_DIFF[n] ?? 100) / 100 : 1)),
+    waves: [row], boss,
     reward: { gold: 100 + 40 * index, exp: 15 + 8 * index, xp: 20 + 6 * index, gems: boss ? 100 : 30 },
     star3Ticks: 70 * BATTLE_HZ,
   };

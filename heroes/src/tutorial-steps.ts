@@ -72,7 +72,7 @@ export const STEPS: Step[] = [
         ? { target: 'nav-squad', act: true, text: 'Trước hết hãy xem Đội hình. Chạm tab "Đội hình" nhé.' }
         : {
             target: 'squad-board',
-            text: 'Đội hình có 5 ô: 2 ô hàng trước chịu đòn, 3 ô hàng sau ít bị đánh. Chạm một ô rồi chọn tướng, hoặc kéo thả để đổi chỗ. Đội đầu tiên đã xếp sẵn cho bạn.',
+            text: 'Đội hình có tối đa 6 ô chia 3 hàng (Trước, Giữa, Sau); ban đầu mở 3 ô, lên cấp 5, 10, 18 mở thêm ô. Hàng trước chịu đòn, hàng sau ít bị đánh. Chạm một ô rồi chọn tướng, hoặc kéo thả để đổi chỗ. Đội đầu tiên đã xếp sẵn cho bạn.',
           },
   },
   {

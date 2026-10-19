@@ -28,6 +28,9 @@ import { BOSS_KILL_REWARD } from '../../../shared/heroes/guild.js';
 import type { EventDef, EventKind } from '../../../shared/heroes/events.js';
 import { newbieBadge, newbieDone } from '../../../shared/heroes/newbie.js';
 import { newbieView } from './newbie.js';
+import { slotsOpen, squadsOpen } from '../../../shared/heroes/progression.js';
+import { achBadge } from '../../../shared/heroes/achievements.js';
+import { achList } from './progress.js';
 import { StoreError, newNewbie, type HState, type LedgerRow } from './db/store.js';
 
 export const STARTER_WALLET: Readonly<Wallet> = { gold: 5000, gems: 3000, tickets: 10, exp: 500, stones: 0 };
@@ -47,13 +50,14 @@ export function newState(accountId: number, nowMs: number): HState {
   const heroes: Record<string, OwnedHero> = {};
   for (const id of STARTER_HEROES) heroes[id] = { id, level: 1, star: 1, shards: 0 };
   const squads: string[][] = Array.from({ length: SQUAD_COUNT }, () => Array<string>(SQUAD_SIZE).fill(''));
-  STARTER_HEROES.slice(0, SQUAD_SIZE).forEach((id, i) => (squads[0][i] = id));
+  // cấp 1 chỉ mở 3 ô: tướng khởi đầu đứng ô 0..2 (SLOT_LEVEL[2] = 1), còn lại để trống
+  STARTER_HEROES.slice(0, slotsOpen(1, 0)).forEach((id, i) => (squads[0][i] = id));
   return {
     accountId, wallet: { ...STARTER_WALLET }, level: 1, xp: 0, stamina: STAMINA_MAX, staminaAt: nowMs, afkSince: nowMs,
     activeSquad: 0, pity: {}, heroes, squads, progress: {}, runs: [], gear: [], newGear: [...STARTER_GEAR],
     towerFloor: 0, towerDay: 0, towerTries: 0, day: 0, quests: {}, questBonus: false, shop: {},
     arenaOn: false, arenaRating: ARENA_START_RATING, arenaDay: 0, arenaTries: 0, arenaDefense: 0, arenaWins: 0, arenaLosses: 0,
-    guildLeftAt: 0, guildId: null, events: [], newbie: newNewbie(),
+    guildLeftAt: 0, guildId: null, events: [], newbie: newNewbie(), levelClaimed: 1, slotsBought: 0, ach: {},
   };
 }
 
@@ -146,6 +150,25 @@ export function arenaStateOf(s: Readonly<HState>, today: number): ArenaState {
   };
 }
 
+/** số cấp có thưởng lên cấp nhận được ngay (claimedUpTo+1 .. level), không âm */
+export function levelClaimable(s: Readonly<Pick<HState, 'level' | 'levelClaimed'>>): number {
+  return Math.max(0, Math.min(s.level, MAX_ACCOUNT_LEVEL) - s.levelClaimed);
+}
+/** đệm '' cho đội ngắn hơn SQUAD_SIZE (dữ liệu cũ 5 ô) — bản sao, không sửa gốc */
+export function padSquad(q: readonly string[] | undefined): string[] {
+  const out = [...(q ?? [])];
+  while (out.length < SQUAD_SIZE) out.push('');
+  return out;
+}
+/**
+ * Đội `squadIdx` chỉ giữ các ô ĐANG MỞ (slot < slotsOpen(level, đã mua)); ô đóng → ''. LUÔN dùng hàm này khi biến đội thành đơn vị/lực chiến
+ * (ải, Tháp, đấu trường tấn công + phòng thủ, boss bang, hồ sơ công khai). Dữ liệu lưu giữ nguyên, kể cả tướng đứng ô đóng (tài khoản cũ).
+ */
+export function openSlotIds(s: Readonly<HState>, squadIdx: number): string[] {
+  const open = slotsOpen(s.level, s.slotsBought);
+  return padSquad(s.squads[squadIdx]).map((id, slot) => (slot < open ? id : ''));
+}
+
 export function buildMe(s: Readonly<HState>, username: string, now: Date): MeResponse {
   const ms = now.getTime();
   const today = dayKey(ms);
@@ -169,11 +192,14 @@ export function buildMe(s: Readonly<HState>, username: string, now: Date): MeRes
     eventsClaimable: eventsClaimable(s, ms),
     newbieBadge: newbieBadge(newbieView(s, ms)),
     newbieDone: newbieDone(newbieView(s, ms)),
+    levels: { level: s.level, claimedUpTo: s.levelClaimed, slotsBought: s.slotsBought },
+    levelBadge: levelClaimable(s),
+    achBadge: achBadge(achList(s)),
     profile: { id: s.accountId, username, level: s.level, xp: s.xp, stamina: staminaNow(s.stamina, s.staminaAt, ms) },
     wallet: { ...s.wallet },
     heroes: Object.values(s.heroes).map((h) => ({ ...h })),
     gear: [...s.gear].sort((a, b) => a.uid - b.uid).map((g) => ({ ...g })),
-    squads: s.squads.map((q) => [...q]),
+    squads: s.squads.map((q) => padSquad(q)),
     activeSquad: s.activeSquad,
     pity: structuredClone(s.pity),
     progress: Object.values(s.progress).map((p) => ({ ...p })),
@@ -286,7 +312,10 @@ export function opStarUp(s: HState, heroId: unknown) {
 /* ------------------------------ ĐỘI HÌNH ------------------------------ */
 export function opSetSquad(s: HState, idx: number, slots: string[], active: boolean) {
   if (!Number.isInteger(idx) || idx < 0 || idx >= SQUAD_COUNT) throw new StoreError('Đội không hợp lệ', 400);
+  if (idx >= squadsOpen(s.level)) throw new StoreError('Đội hình chưa mở', 400);
   if (slots.length !== SQUAD_SIZE) throw new StoreError(`Đội hình gồm ${SQUAD_SIZE} ô`, 400);
+  const open = slotsOpen(s.level, s.slotsBought);
+  for (let i = open; i < SQUAD_SIZE; i++) if (slots[i]) throw new StoreError('Ô đội hình chưa mở', 400);
   const seen = new Set<string>();
   for (const id of slots) {
     if (!id) continue;
@@ -333,10 +362,11 @@ function liveUnits(s: Readonly<HState>, squad: readonly string[]): UnitInit[] {
   });
   return out;
 }
+/** đơn vị từ danh sách id ô ĐÃ lọc ô mở (openSlotIds) — dùng cho hồ sơ công khai */
+export const squadUnitsOf = (s: Readonly<HState>, ids: readonly string[]): UnitInit[] => liveUnits(s, ids);
 export function squadUnits(s: Readonly<HState>, squadIdx: number): UnitInit[] {
-  const squad = s.squads[squadIdx];
-  if (!squad) throw new StoreError('Đội không hợp lệ', 400);
-  const player = liveUnits(s, squad);
+  if (!s.squads[squadIdx]) throw new StoreError('Đội không hợp lệ', 400);
+  const player = liveUnits(s, openSlotIds(s, squadIdx));
   if (player.length === 0) throw new StoreError('Đội hình đang trống', 400);
   return player;
 }
@@ -436,7 +466,7 @@ export interface ArenaTarget {
   opp: ArenaOpponent;
   units: UnitInit[];
 }
-const powerOfUnits = (units: readonly UnitInit[]) => units.reduce((a, u) => a + powerOf(u.stats), 0);
+export const powerOfUnits = (units: readonly UnitInit[]) => units.reduce((a, u) => a + powerOf(u.stats), 0);
 /** hiển thị theo ô (SQUAD_SIZE phần tử, '' = trống) */
 function slotView(units: readonly UnitInit[], level: (key: string) => { level: number; star: number }): ArenaOpponent['heroes'] {
   const out: ArenaOpponent['heroes'] = Array.from({ length: SQUAD_SIZE }, () => ({ id: '', level: 0, star: 0 }));
@@ -458,7 +488,7 @@ export function botTarget(n: number, myRating: number): ArenaTarget {
 /** đội phòng thủ SỐNG của một tài khoản (cấp/sao/trang bị hiện tại); null nếu chưa có hàng đấu trường hoặc đội rỗng */
 export function defenseTarget(s: Readonly<HState>, username: string): ArenaTarget | null {
   if (!s.arenaOn) return null;
-  const units = liveUnits(s, s.squads[s.arenaDefense] ?? []);
+  const units = liveUnits(s, openSlotIds(s, s.arenaDefense)); // ô ĐANG MỞ của CHÍNH người phòng thủ
   if (units.length === 0) return null;
   return {
     opp: {
@@ -470,7 +500,7 @@ export function defenseTarget(s: Readonly<HState>, username: string): ArenaTarge
 }
 export function opArenaDefense(s: HState, squadIdx: unknown) {
   if (typeof squadIdx !== 'number' || !Number.isInteger(squadIdx) || squadIdx < 0 || squadIdx >= SQUAD_COUNT) throw new StoreError('Đội không hợp lệ', 400);
-  if (liveUnits(s, s.squads[squadIdx]).length === 0) throw new StoreError('Đội phòng thủ phải có ít nhất một tướng', 400);
+  if (liveUnits(s, openSlotIds(s, squadIdx)).length === 0) throw new StoreError('Đội phòng thủ phải có ít nhất một tướng', 400);
   s.arenaOn = true;
   s.arenaDefense = squadIdx;
 }

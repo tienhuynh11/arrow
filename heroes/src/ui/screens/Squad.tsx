@@ -1,30 +1,33 @@
-// Đội hình: kéo thả hoặc chạm ô rồi chạm tướng; 3 đội lưu sẵn; hàng trước 2 ô, hàng sau 3 ô; tự xếp mạnh nhất.
+// Đội hình: kéo thả hoặc chạm ô rồi chạm tướng; 3 đội lưu (đội 2/3 khoá theo cấp); 6 ô / 3 hàng, ô mở theo cấp; tự xếp mạnh nhất.
 // Nếu đến từ bảng chuẩn bị trận (returnTo) thì có nút lớn "Chiến tiếp" quay lại đúng ải.
 import { useMemo, useState } from 'preact/hooks';
-import { SQUAD_COUNT } from '@shared/heroes/config';
+import { SQUAD_COUNT, SQUAD_SIZE } from '@shared/heroes/config';
+import { SLOT_LEVEL, SQUAD_LEVEL } from '@shared/heroes/progression';
 import { stageOf } from '@shared/heroes/stages';
 import { api, me } from '../../api';
-import { defOf, squadPower } from '../../game';
+import { defOf, slotsOpenOf, squadPower, squadsOpenOf } from '../../game';
 import { fmt, go, returnTo, toast, useBusy } from '../../state';
 import { Btn } from '../common';
 import { applyFilter, EMPTY_FILTER, FilterBar, type HeroFilter } from '../filters';
 import { Icon } from '../icons';
-import { autoSquad, pad, Roster, SquadBoard, useSquadOps } from '../squadkit';
+import { autoSquad, fitSquad, Roster, SquadBoard, useSquadOps } from '../squadkit';
 
 export function Squad() {
   const m = me.value!;
-  const [tab, setTab] = useState(m.activeSquad);
-  const [drafts, setDrafts] = useState<string[][]>(() => Array.from({ length: SQUAD_COUNT }, (_, i) => pad(m.squads[i])));
+  const open = slotsOpenOf(m);
+  const squadsOpen = squadsOpenOf(m);
+  const [tab, setTab] = useState(Math.min(m.activeSquad, squadsOpen - 1));
+  const [drafts, setDrafts] = useState<string[][]>(() => Array.from({ length: SQUAD_COUNT }, (_, i) => fitSquad(m, m.squads[i])));
   const [f, setF] = useState<HeroFilter>({ ...EMPTY_FILTER, sort: 'power' });
   const [busy, run] = useBusy();
 
   const slots = drafts[tab];
-  const saved = pad(m.squads[tab]).join('|');
+  const saved = fitSquad(m, m.squads[tab]).join('|');
   const dirty = slots.join('|') !== saved;
   const count = slots.filter(Boolean).length;
   const isActive = m.activeSquad === tab;
   const setSlots = (s: string[]) => setDrafts((d) => d.map((x, i) => (i === tab ? s : x)));
-  const ops = useSquadOps(slots, setSlots, { initialSel: null });
+  const ops = useSquadOps(slots, setSlots, { initialSel: null, open });
 
   const back = returnTo.value === 'tower' ? { id: 'tower', name: 'Tháp thử thách' } : returnTo.value === 'arena' ? { id: 'arena', name: 'Đấu trường' } : returnTo.value === 'guild' ? { id: 'guild', name: 'Boss bang' } : returnTo.value ? stageOf(returnTo.value) : undefined;
 
@@ -61,15 +64,23 @@ export function Squad() {
         )}
         <div class="seg wide sq-tabs" role="tablist">
           {Array.from({ length: SQUAD_COUNT }, (_, i) => (
-            <button type="button" role="tab" key={i} class={tab === i ? 'on' : ''} aria-selected={tab === i} onClick={() => { setTab(i); ops.setSel(null); }}>
-              Đội {i + 1}
-              {m.activeSquad === i && <Icon n="star" size={14} />}
-            </button>
+            i < squadsOpen ? (
+              <button type="button" role="tab" key={i} class={tab === i ? 'on' : ''} aria-selected={tab === i} onClick={() => { setTab(i); ops.setSel(null); }}>
+                Đội {i + 1}
+                {m.activeSquad === i && <Icon n="star" size={14} />}
+              </button>
+            ) : (
+              <button type="button" role="tab" key={i} class="sq6-tablock" aria-disabled="true" aria-selected="false" onClick={() => toast(`Đội ${i + 1} mở ở cấp ${SQUAD_LEVEL[i]}`, 'info')}>
+                <Icon n="lock" size={14} /> Đội {i + 1}
+                <small>Mở ở cấp {SQUAD_LEVEL[i]}</small>
+              </button>
+            )
           ))}
         </div>
         <SquadBoard m={m} slots={slots} sel={ops.sel} onTapSlot={ops.tapSlot} onDrop={ops.drop} />
         <div class="sq-foot">
           <span class="power"><Icon n="sparkle" size={18} /> Lực chiến <b>{fmt(squadPower(m, slots))}</b></span>
+          <small class="sq6-info">{open}/{SQUAD_SIZE} ô mở · Cấp {SLOT_LEVEL.slice(3).join(', ')} mở thêm ô</small>
           <Btn kind="ghost" small onClick={() => { setSlots(autoSquad(m)); ops.setSel(null); }}>Tự xếp mạnh nhất</Btn>
           {ops.sel !== null && slots[ops.sel] && (
             <Btn kind="ghost" small onClick={() => { const s = slots.slice(); s[ops.sel!] = ''; setSlots(s); }}>Gỡ ô {ops.sel + 1}</Btn>
@@ -85,7 +96,7 @@ export function Squad() {
           {entries.length}/{m.heroes.length}
         </FilterBar>
         <small class="hint">
-          {ops.sel !== null ? `Chạm tướng để xếp vào ô ${ops.sel + 1}` : 'Kéo tướng vào ô (hoặc chạm ô rồi chạm tướng). Kéo ô về đây để gỡ.'}
+          {ops.sel !== null ? `Chạm tướng để xếp vào ô ${ops.sel + 1}` : `Kéo tướng vào ô (hoặc chạm ô rồi chạm tướng). Kéo ô về đây để gỡ. Đang mở ${open}/${SQUAD_SIZE} ô.`}
         </small>
         <Roster heroes={heroes} slots={slots} onTap={ops.tapHero} onDrop={ops.drop} />
       </section>

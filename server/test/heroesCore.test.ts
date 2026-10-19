@@ -23,6 +23,11 @@ import {
 import { EVENT_KINDS, SEED_EVENT } from '../../shared/heroes/events.js';
 import { LOGIN7, LOGIN7_GRANT_HERO_DAY, MILESTONES, MILESTONE_BY_ID, STARTER_SUMMON, newbieBadge, newbieDone, type NewbieView } from '../../shared/heroes/newbie.js';
 import { HERO_BY_ID } from '../../shared/heroes/heroes.js';
+import { MAX_ACCOUNT_LEVEL, SQUAD_COUNT, SQUAD_SIZE } from '../../shared/heroes/config.js';
+import { LEVEL_UNLOCKS, SLOT_GEMS, SLOT_LEVEL, SQUAD_LEVEL, levelReward, slotsByLevel, slotsOpen, squadsOpen, unlocksBetween } from '../../shared/heroes/progression.js';
+import { ACHIEVEMENTS, ACH_BY_ID, achBadge, achClaimable, type AchState } from '../../shared/heroes/achievements.js';
+import { newState, openSlotIds, padSquad, levelClaimable } from '../src/heroes/rules.js';
+import { achProgress, achList, claimableLevels } from '../src/heroes/progress.js';
 
 let fails = 0;
 const ok = (cond: boolean, msg: string) => {
@@ -37,7 +42,9 @@ console.log('— dữ liệu —');
 ok(HEROES.length === 12, '12 tướng');
 ok(HEROES.every((h) => h.skills.every((s) => !!skillOf(s))), 'mọi tướng trỏ tới kỹ năng có thật');
 ok(STAGES.length === 30 && STAGES[29].boss, '30 ải, ải cuối là boss');
-ok(STAGES.every((s) => s.waves.length === 3 && s.waves.every((w) => w.length >= 2 && w.length <= 5)), 'mỗi ải 3 đợt, 2–5 quái');
+ok(STAGES.every((s) => s.waves.length === 1 && s.waves[0].length >= 3 && s.waves[0].length <= 6), 'mỗi ải đúng 1 đợt, 3–6 quái');
+ok(STAGES.every((s) => s.boss === (s.n === 5 || s.n === 10) && (!s.boss || s.waves[0][0] === 'mk_chua')), 'boss ở ải 5 và 10 mỗi chương (mk_chua ở ô đầu)');
+ok(STAGES.find((s) => s.id === '1-5')!.diff < STAGES.find((s) => s.id === '1-10')!.diff * 0 + 100 && STAGES.find((s) => s.id === '3-5')!.diff < STAGES.find((s) => s.id === '3-10')!.diff, 'boss ải 5 nhẹ hơn boss ải 10 cùng chương (3)');
 ok(SKILL_LIST.every((s) => s.kind !== 'active' || s.cd > 0), 'kỹ năng chủ động đều có hồi chiêu');
 ok(advantage('forest', 'earth') === 1 && advantage('earth', 'forest') === -1 && advantage('forest', 'forest') === 0, 'hệ khắc Rừng>Đất');
 
@@ -283,19 +290,19 @@ console.log('— Tháp / mốc ngày —');
   let prevGold = -1, mono = true;
   for (let f = 1; f <= TOWER_MAX_FLOOR; f++) {
     const st = towerStage(f);
-    if (st.n !== f || st.index !== f - 1 || st.waves.length !== (f % 10 === 0 ? 3 : 2) || st.chapter < 1 || st.chapter > 3 || st.level < 1 || st.level > 60 || st.diff <= 0) valid = false;
+    if (st.n !== f || st.index !== f - 1 || st.waves.length !== 1 || st.chapter < 1 || st.chapter > 3 || st.level < 1 || st.level > 60 || st.diff <= 0) valid = false;
     for (const w of st.waves) {
-      if (w.length < 2 || w.length > 5) sizes = false;
+      if (w.length < 3 || w.length > 6) sizes = false;
       for (const m of w) if (!MONSTERS.some((x) => x.id === m)) mon = false;
     }
-    if (st.boss !== (f % 10 === 0) || (st.boss && st.waves[st.waves.length - 1][0] !== 'mk_chua')) bossOk = false;
+    if (st.boss !== (f % 10 === 0) || (st.boss && st.waves[0][0] !== 'mk_chua')) bossOk = false;
     const r = towerReward(f);
     if (r.gold <= prevGold) mono = false;
     prevGold = r.gold;
   }
   ok(valid, '100 tầng đều dựng StageDef hợp lệ (đợt, chương, cấp, độ khó)');
-  ok(sizes && mon, 'mọi đợt 2..5 quái, quái đều có trong MONSTERS');
-  ok(bossOk, 'tầng bội 10 là boss (3 đợt, đợt cuối có mk_chua)');
+  ok(sizes && mon, 'mỗi tầng 1 đợt 3..6 quái, quái đều có trong MONSTERS');
+  ok(bossOk, 'tầng bội 10 là boss (mk_chua ở ô đầu)');
   ok(mono, 'vàng thưởng tăng dần theo tầng');
   ok(towerReward(5).gearRolls === 1 && towerReward(10).gearRolls === 2 && towerReward(7).gearRolls === 0 && towerReward(10).stones === 10 && towerReward(5).gems === 50 && towerReward(10).gems === 100, 'thưởng mốc tầng 5/10');
   const d17 = Date.UTC(2030, 0, 15, 17, 0, 0);
@@ -453,6 +460,94 @@ console.log('— Tân thủ (dữ liệu + hàm thuần) —');
   const full = view({ login: { claimed: 7, next: 8 }, milestones: MILESTONES.map((m) => ({ id: m.id, progress: m.target, claimed: true })) });
   ok(newbieDone(full) && newbieBadge(full) === 0, 'newbieDone khi nhận hết mọi thứ');
   ok(!newbieDone({ ...full, starterUsed: false }) && !newbieDone({ ...full, login: { ...full.login, next: 7 } }) && !newbieDone({ ...full, milestones: full.milestones.map((m, i) => ({ ...m, claimed: i !== 0 })) }), 'newbieDone sai nếu còn lượt khởi đầu / ngày điểm danh / mốc chưa nhận');
+}
+
+console.log('— Cấp tài khoản / ô đội hình / thành tựu (hàm thuần) —');
+{
+  ok(SQUAD_SIZE === 6 && SQUAD_COUNT === 3 && SLOT_LEVEL.length === SQUAD_SIZE && SLOT_GEMS.length === SQUAD_SIZE, 'hằng số: 6 ô, 3 đội, bảng cấp/giá đủ 6 ô');
+  ok(SLOT_LEVEL.every((v, i) => i === 0 || v >= SLOT_LEVEL[i - 1]), 'SLOT_LEVEL không giảm (mở đúng thứ tự)');
+  const exp: [number, number][] = [[1, 3], [4, 3], [5, 4], [9, 4], [10, 5], [17, 5], [18, 6], [60, 6]];
+  ok(exp.every(([l, n]) => slotsByLevel(l) === n && slotsOpen(l, 0) === n), 'slotsByLevel/slotsOpen theo cấp: 1→3, 5→4, 10→5, 18→6 (biên ±1)');
+  ok(slotsOpen(1, 4) === 4 && slotsOpen(1, 6) === 6 && slotsOpen(5, 3) === 4 && slotsOpen(10, 4) === 5 && slotsOpen(1, 99) === 6 && slotsOpen(0, 0) === 3, 'slotsOpen = max(theo cấp, đã mua), trần 6, tối thiểu 3');
+  ok(squadsOpen(1) === 1 && squadsOpen(7) === 1 && squadsOpen(8) === 2 && squadsOpen(14) === 2 && squadsOpen(15) === 3 && squadsOpen(60) === 3 && SQUAD_LEVEL[0] === 1, 'squadsOpen: đội 2 từ cấp 8, đội 3 từ cấp 15');
+  let mono = true;
+  for (let l = 3; l <= MAX_ACCOUNT_LEVEL; l++) if ((levelReward(l).gold ?? 0) <= (levelReward(l - 1).gold ?? 0)) mono = false;
+  ok(mono, 'levelReward: vàng tăng dần theo cấp');
+  ok(levelReward(5).gems! > 0 && levelReward(5).tickets === 1 && levelReward(10).tickets === 3 && levelReward(10).stones === 20 && !levelReward(6).gems, 'levelReward: mốc 5 có kim cương + vé, mốc 10 lớn hơn, cấp thường không có kim cương');
+  ok(Object.values(levelReward(MAX_ACCOUNT_LEVEL)).every((v) => Number.isInteger(v) && v > 0), 'levelReward: số nguyên dương');
+  ok(unlocksBetween(1, 1).length === 0 && unlocksBetween(1, 5).map((u) => u.level).join() === '5' && unlocksBetween(4, 10).map((u) => u.level).join() === '5,8,10' && unlocksBetween(5, 5).length === 0, 'unlocksBetween: (from, to]');
+  ok(LEVEL_UNLOCKS.every((u, i) => i === 0 || u.level > LEVEL_UNLOCKS[i - 1].level), 'LEVEL_UNLOCKS tăng dần theo cấp');
+
+  // ---- thành tựu: dữ liệu ----
+  ok(new Set(ACHIEVEMENTS.map((a) => a.id)).size === ACHIEVEMENTS.length && ACHIEVEMENTS.every((a) => ACH_BY_ID[a.id] === a), 'ACHIEVEMENTS: id duy nhất, ACH_BY_ID khớp');
+  ok(ACHIEVEMENTS.every((a) => a.tiers.length >= 1 && a.tiers.every((t, i) => t.target >= 1 && (i === 0 || t.target > a.tiers[i - 1].target))), 'mọi thành tựu: bậc có target tăng NGHIÊM NGẶT');
+  const okReward = ACHIEVEMENTS.every((a) => a.tiers.every((t) => {
+    const w = Object.values(t.reward.wallet ?? {});
+    return w.every((v) => Number.isInteger(v) && (v as number) > 0) &&
+      (!t.reward.shards || (!!HERO_BY_ID[t.reward.shards.hero] && t.reward.shards.n > 0)) &&
+      (t.reward.gear ?? []).every((g) => !!GEAR_BY_ID[g]) && (w.length > 0 || !!t.reward.shards || !!t.reward.gear?.length);
+  }));
+  ok(okReward, 'thưởng mọi bậc hợp lệ (ví nguyên dương, tướng/trang bị có thật, không rỗng)');
+
+  // ---- achClaimable / achBadge ----
+  const d = ACH_BY_ID.a_tower; // 10/30/60/100
+  const st = (progress: number, claimed: number): AchState => ({ id: d.id, progress, claimed });
+  ok(achClaimable(d, st(9, 0)) === -1 && achClaimable(d, st(10, 0)) === 0 && achClaimable(d, st(500, 0)) === 0 && achClaimable(d, st(500, 1)) === 1, 'achClaimable: chỉ bậc KẾ TIẾP, đủ tiến trình');
+  ok(achClaimable(d, st(500, 4)) === -1 && achClaimable(d, st(29, 1)) === -1, 'achClaimable: đã nhận hết / chưa đủ bậc kế → -1');
+  const list: AchState[] = [st(10, 0), { id: 'a_guild', progress: 1, claimed: 1 }, { id: 'a_level', progress: 3, claimed: 0 }, { id: 'khong-co', progress: 9999, claimed: 0 }, { id: 'a_stage', progress: 30, claimed: 1 }];
+  ok(achBadge(list) === 2 && achBadge([]) === 0, 'achBadge đếm thành tựu có bậc nhận ngay (bỏ id lạ / đã nhận hết / chưa đạt)');
+
+  // ---- openSlotIds / padSquad / levelClaimable ----
+  const s = newState(1, 0);
+  ok(JSON.stringify(s.squads[0]) === JSON.stringify([...STARTER_HEROES.slice(0, 3), '', '', '']) && s.squads[1].length === 6 && s.levelClaimed === 1 && s.slotsBought === 0 && Object.keys(s.ach).length === 0, 'newState: 3 tướng đầu ở ô 0..2, đội 6 ô, levelClaimed 1, chưa mua ô, chưa có thành tựu');
+  s.squads[0] = ['a', 'b', 'c', 'd', 'e', 'f'];
+  ok(openSlotIds(s, 0).join() === 'a,b,c,,,' && padSquad(['x']).length === 6 && padSquad(undefined).length === 6, 'openSlotIds: cấp 1 chỉ giữ ô 0..2; padSquad đệm đủ 6');
+  s.level = 5;
+  ok(openSlotIds(s, 0).join() === 'a,b,c,d,,', 'openSlotIds: cấp 5 mở ô 3');
+  s.level = 1;
+  s.slotsBought = 5;
+  ok(openSlotIds(s, 0).join() === 'a,b,c,d,e,', 'openSlotIds: đã mua 5 ô');
+  s.squads[0] = ['a', 'b'];
+  ok(openSlotIds(s, 0).length === 6 && openSlotIds(s, 0).join() === 'a,b,,,,', 'openSlotIds chịu được đội cũ ngắn hơn 6');
+  ok(levelClaimable({ level: 1, levelClaimed: 1 }) === 0 && levelClaimable({ level: 12, levelClaimed: 1 }) === 11 && levelClaimable({ level: 3, levelClaimed: 9 }) === 0 && levelClaimable({ level: 99, levelClaimed: 1 }) === MAX_ACCOUNT_LEVEL - 1, 'levelClaimable không âm, chặn ở cấp tối đa');
+  ok(claimableLevels({ level: 4, levelClaimed: 1 }).join() === '2,3,4' && claimableLevels({ level: 1, levelClaimed: 1 }).length === 0, 'claimableLevels: claimedUpTo+1..level');
+
+  // ---- achProgress: mọi loại ----
+  const g = newState(2, 0);
+  const cnt = (ids: readonly string[], rarity: string) => ids.filter((id) => HERO_BY_ID[id]?.rarity === rarity).length;
+  const urIds = HEROES.filter((h) => h.rarity === 'UR').map((h) => h.id);
+  const ssrIds = HEROES.filter((h) => h.rarity === 'SSR').map((h) => h.id);
+  ok(urIds.length >= 1 && ssrIds.length >= 2, 'có ≥1 tướng UR và ≥2 SSR để thử');
+  const base: Record<string, number> = {};
+  for (const a of ACHIEVEMENTS) base[a.kind] = achProgress(g, a.kind);
+  ok(base.stage === 0 && base.stars === 0 && base.bossClear === 0 && base.heroCount === STARTER_HEROES.length && base.level === 1 && base.gearCount === 0 && base.pulls === 0 && base.tower === 0 && base.arenaWins === 0 && base.guild === 0 && base.loginDays === 0, 'tiến trình ban đầu của tài khoản mới');
+  g.progress['1-1'] = { stage: '1-1', stars: 3, clears: 1 };
+  g.progress['1-5'] = { stage: '1-5', stars: 2, clears: 1 };
+  g.progress['1-10'] = { stage: '1-10', stars: 1, clears: 1 };
+  g.progress['2-5'] = { stage: '2-5', stars: 0, clears: 2 }; // 0 sao: không tính
+  g.progress['2-3'] = { stage: '2-3', stars: 1, clears: 1 };
+  ok(achProgress(g, 'stage') === 13 && achProgress(g, 'stars') === 7 && achProgress(g, 'bossClear') === 2, 'stage = index cao nhất đã qua + 1 (2-3 → 13), stars = Σ sao, bossClear chỉ đếm ải 5/10 đã qua (2-5 0 sao bỏ)');
+  g.heroes[urIds[0]] = { id: urIds[0], level: 33, star: 4, shards: 0 };
+  g.heroes[ssrIds[1]] = { id: ssrIds[1], level: 5, star: 1, shards: 0 };
+  g.heroes[ssrIds[0]] = { id: ssrIds[0], level: 2, star: 5, shards: 0 };
+  const own = Object.keys(g.heroes);
+  ok(achProgress(g, 'heroCount') === own.length && achProgress(g, 'urCount') === cnt(own, 'UR') && achProgress(g, 'ssrCount') === cnt(own, 'UR') + cnt(own, 'SSR') && achProgress(g, 'urCount') >= 1 && achProgress(g, 'ssrCount') >= 3 && achProgress(g, 'heroLevel') === 33 && achProgress(g, 'heroStar') === 5, 'heroCount / urCount / ssrCount (SSR hoặc UR) / heroLevel / heroStar = max');
+  g.level = 27;
+  g.gear = [
+    { uid: 1, def: 'weapon_earth_UR', level: 7, hero: null }, { uid: 2, def: 'armor_forest_R', level: 2, hero: null }, { uid: 3, def: 'helmet_water_UR', level: 10, hero: 'x' },
+  ];
+  ok(achProgress(g, 'level') === 27 && achProgress(g, 'gearCount') === 3 && achProgress(g, 'gearUR') === 2 && achProgress(g, 'gearMax') === 10, 'level / gearCount / gearUR (phẩm UR) / gearMax = cấp cao nhất');
+  g.newbie.pullsTotal = 42;
+  g.towerFloor = 17;
+  g.arenaWins = 6;
+  g.arenaRating = 1234;
+  g.guildId = 3;
+  g.newbie.loginClaimed = 5;
+  ok(achProgress(g, 'pulls') === 42 && achProgress(g, 'tower') === 17 && achProgress(g, 'arenaWins') === 6 && achProgress(g, 'arenaRating') === 1234 && achProgress(g, 'guild') === 1 && achProgress(g, 'loginDays') === 5 && achProgress(g, 'bossDamage') === 0, 'pulls / tower / arenaWins / arenaRating(hiện tại) / guild / loginDays / bossDamage(=0)');
+  const al = achList(g);
+  ok(al.length === ACHIEVEMENTS.length && al.every((a) => a.claimed === 0) && al.find((a) => a.id === 'a_tower')!.progress === 17, 'achList: đủ mọi thành tựu, claimed 0');
+  g.ach.a_tower = 99;
+  ok(achList(g).find((a) => a.id === 'a_tower')!.claimed === ACH_BY_ID.a_tower.tiers.length, 'achList chặn claimed ở số bậc');
 }
 
 console.log(fails ? `\n${fails} LỖI` : '\nTất cả đạt');

@@ -40,6 +40,14 @@ import { newbieView, opNewbieLoginClaim, opNewbieMilestoneClaim, opNewbieStarter
 import { LOGIN7, MILESTONES, MILESTONE_BY_ID, STARTER_SUMMON } from '../../shared/heroes/newbie.js';
 import { mulberry32 } from '../../shared/heroes/rng.js';
 import type { NewbieLoginClaimRes, NewbieMilestoneClaimRes, NewbieRes, NewbieStarterSummonRes } from '../../shared/heroes/api.js';
+import { ACHIEVEMENTS, ACH_BY_ID } from '../../shared/heroes/achievements.js';
+import { MAX_ACCOUNT_LEVEL } from '../../shared/heroes/config.js';
+import { SLOT_GEMS, levelReward } from '../../shared/heroes/progression.js';
+import { powerOf } from '../../shared/heroes/formulas.js';
+import type { AchievementClaimRes, AchievementsRes, PublicProfileRes } from '../../shared/heroes/api.js';
+import { MONEY_CAP, defenseTarget, opArenaBattle, opArenaDefense, squadUnits } from '../src/heroes/rules.js';
+import { HERO_MIGRATIONS } from '../src/heroes/db/migrations.js';
+import { opAchClaim, opLevelClaim, opSlotUnlock, publicProfile } from '../src/heroes/progress.js';
 import { opGuildBoss, opGuildCheckin, opGuildCreate, opGuildDonate, opGuildJoin, opGuildLeave, opGuildTransfer } from '../src/heroes/guilds.js';
 
 let fails = 0;
@@ -105,7 +113,7 @@ const A = await newUser('nguoiA');
 ok(A.status === 200 && A.token.length > 20, 'đăng ký (dùng chung tài khoản Bầy Khỉ) trả token');
 ok(A.me.wallet.gold === 5000 && A.me.wallet.gems === 3000 && A.me.wallet.tickets === 10 && A.me.wallet.exp === 500 && A.me.wallet.stones === 0, 'ví khởi đầu 5000/3000/10/500/0');
 ok(A.me.heroes.length === STARTER_HEROES.length && A.me.heroes.every((h) => h.level === 1 && h.star === 1 && h.shards === 0), 'tướng khởi đầu cấp 1, 1 sao');
-ok(JSON.stringify(A.me.squads[0].filter(Boolean)) === JSON.stringify(STARTER_HEROES) && A.me.squads[0].length === SQUAD_SIZE && A.me.squads.length === 3, 'đội 0 = tướng khởi đầu theo thứ tự ô');
+ok(JSON.stringify(A.me.squads[0]) === JSON.stringify([...STARTER_HEROES.slice(0, 3), '', '', '']) && A.me.squads[0].length === SQUAD_SIZE && A.me.squads.length === 3, 'đội 0 = 3 tướng khởi đầu ở ô 0..2 (cấp 1 chỉ mở 3 ô), còn lại trống');
 ok(A.me.profile.stamina === STAMINA_MAX && A.me.profile.level === 1 && A.me.activeSquad === 0, 'thể lực đầy, cấp 1, đội 0');
 const me2 = await getMe(A.token);
 ok(me2.heroes.length === A.me.heroes.length && me2.wallet.gold === 5000, 'gọi me lần nữa không cấp thêm');
@@ -246,14 +254,15 @@ ok(hMax.star <= 5, 'sao không vượt 5');
 console.log('— đội hình —');
 const SQ = (token: string, body: any) => post<{ me: MeResponse }>('set-squad', body, token);
 const [h0, h1] = STARTER_HEROES;
-let q = await SQ(Z.token, { squad: 1, slots: [h1, '', h0, '', ''], active: true });
+await edit(Z.id, (s) => void (s.level = 15)); // đội 2/3 chỉ mở từ cấp 8/15 (kiểm tra riêng ở phần "Cấp tài khoản")
+let q = await SQ(Z.token, { squad: 1, slots: [h1, '', h0, '', '', ''], active: true });
 ok(q.status === 200 && q.j.me.squads[1][0] === h1 && q.j.me.squads[1][2] === h0 && q.j.me.activeSquad === 1, 'đặt đội 1 và đặt làm đội đang dùng');
-ok((await SQ(Z.token, { squad: 1, slots: [missing, '', '', '', ''] })).status === 400, 'tướng chưa sở hữu → từ chối');
-ok((await SQ(Z.token, { squad: 1, slots: [h0, h0, '', '', ''] })).status === 400, 'trùng tướng → từ chối');
+ok((await SQ(Z.token, { squad: 1, slots: [missing, '', '', '', '', ''] })).status === 400, 'tướng chưa sở hữu → từ chối');
+ok((await SQ(Z.token, { squad: 1, slots: [h0, h0, '', '', '', ''] })).status === 400, 'trùng tướng → từ chối');
 ok((await SQ(Z.token, { squad: 1, slots: [h0, '', ''] })).status === 400, 'sai số ô → từ chối');
-ok((await SQ(Z.token, { squad: 3, slots: ['', '', '', '', ''] })).status === 400, 'đội ngoài phạm vi → từ chối');
-ok((await SQ(Z.token, { squad: 1, slots: ['', '', '', '', ''], active: true })).status === 400, 'đội đang dùng không được rỗng');
-ok((await SQ(Z.token, { squad: 2, slots: ['', '', '', '', ''] })).status === 200, 'đội dự phòng được để trống');
+ok((await SQ(Z.token, { squad: 3, slots: ['', '', '', '', '', ''] })).status === 400, 'đội ngoài phạm vi → từ chối');
+ok((await SQ(Z.token, { squad: 1, slots: ['', '', '', '', '', ''], active: true })).status === 400, 'đội đang dùng không được rỗng');
+ok((await SQ(Z.token, { squad: 2, slots: ['', '', '', '', '', ''] })).status === 200, 'đội dự phòng được để trống');
 const mB = await getMe(Z.token);
 ok(mB.squads[1][0] === h1 && mB.activeSquad === 1, 'lỗi không làm thay đổi đội cũ');
 
@@ -336,7 +345,7 @@ await edit(G.id, (s) => {
 // đội yếu thua ải cao: mở khoá giả lập rồi cho đội chỉ 1 tướng đánh ải 3-10
 await edit(G.id, (s) => {
   for (let i = 0; i < 29; i++) s.progress[`${Math.floor(i / 10) + 1}-${(i % 10) + 1}`] = { stage: `${Math.floor(i / 10) + 1}-${(i % 10) + 1}`, stars: 1, clears: 1 };
-  s.squads[1] = [STARTER_HEROES[0], '', '', '', ''];
+  s.squads[1] = [STARTER_HEROES[0], '', '', '', '', ''];
 });
 const gw = (await getMe(G.token)).wallet;
 const lose = await fight(G.token, '3-10', 1);
@@ -569,7 +578,7 @@ console.log('— trang bị —');
   const M = await newUser('nguoiM');
   await edit(M.id, (s) => {
     for (let i = 0; i < 29; i++) s.progress[`${Math.floor(i / 10) + 1}-${(i % 10) + 1}`] = { stage: `${Math.floor(i / 10) + 1}-${(i % 10) + 1}`, stars: 1, clears: 1 };
-    s.squads[1] = [STARTER_HEROES[0], '', '', '', ''];
+    s.squads[1] = [STARTER_HEROES[0], '', '', '', '', ''];
   });
   const lo = await fight(M.token, '3-10', 1);
   ok(lo.r.status === 200 && !lo.r.j.win && lo.r.j.drops.length === 0 && lo.r.j.me.gear.length === STARTER_GEAR.length, 'thua: drops rỗng, kho không đổi');
@@ -638,7 +647,7 @@ console.log('— nhiệm vụ hằng ngày —');
   const QL = await newUser('nguoiQL');
   await ed(QL.id, (s) => {
     for (let i = 0; i < 29; i++) s.progress[`${Math.floor(i / 10) + 1}-${(i % 10) + 1}`] = { stage: `${Math.floor(i / 10) + 1}-${(i % 10) + 1}`, stars: 1, clears: 1 };
-    s.squads[1] = [STARTER_HEROES[0], '', '', '', ''];
+    s.squads[1] = [STARTER_HEROES[0], '', '', '', '', ''];
   });
   const lost = await fight(QL.token, '3-10', 1);
   ok(lost.r.status === 200 && !lost.r.j.win && qp(lost.r.j.me, 'q_win').progress === 0, 'thua trận → không tính win');
@@ -896,12 +905,12 @@ console.log('— Đấu trường —');
   const dfn = (tok: string, squad: unknown) => post<{ me: MeResponse }>('arena-defense', { squad }, tok);
   ok((await dfn(AR.token, 1)).status === 400, 'phòng thủ: đội rỗng → 400');
   ok((await dfn(AR.token, 3)).status === 400 && (await dfn(AR.token, -1)).status === 400 && (await dfn(AR.token, 'x')).status === 400 && (await dfn(AR.token, 0.5)).status === 400, 'phòng thủ: chỉ số đội sai → 400');
-  await ed(AR.id, (s) => (s.squads[2] = ['khong-co-tuong', '', '', '', '']));
+  await ed(AR.id, (s) => (s.squads[2] = ['khong-co-tuong', '', '', '', '', '']));
   ok((await dfn(AR.token, 2)).status === 400, 'phòng thủ: đội chỉ có tướng chưa sở hữu → 400');
   ok((await post('arena-defense', { squad: 0 })).status === 401, 'phòng thủ: không token → 401');
   const d0 = await dfn(AR.token, 0);
   ok(d0.status === 200 && d0.j.me.arena.defense === 0, 'đặt đội 0 làm phòng thủ');
-  await ed(AR.id, (s) => (s.squads[1] = [STARTER_HEROES[1], '', '', '', '']));
+  await ed(AR.id, (s) => (s.squads[1] = [STARTER_HEROES[1], '', '', '', '', '']));
   ok((await dfn(AR.token, 1)).j.me.arena.defense === 1 && (await dfn(AR.token, 0)).j.me.arena.defense === 0, 'đổi đội phòng thủ qua lại');
 
   // ---- danh sách đối thủ ----
@@ -912,7 +921,7 @@ console.log('— Đấu trường —');
   await dfn(D1.token, 0);
   await dfn(D2.token, 0);
   await touch(NX.id);
-  await ed(NX.id, (s) => (s.squads[0] = ['', '', '', '', ''])); // có hàng nhưng đội phòng thủ rỗng
+  await ed(NX.id, (s) => (s.squads[0] = ['', '', '', '', '', ''])); // có hàng nhưng đội phòng thủ rỗng
   const ls = await arena(AR.token);
   const ids = ls.j.opponents.map((o) => o.id);
   ok(ids.includes(String(D1.id)) && ids.includes(String(D2.id)), 'danh sách có hai người thật có đội phòng thủ');
@@ -920,7 +929,7 @@ console.log('— Đấu trường —');
   ok(ls.j.opponents.length === ARENA_OPPONENTS && new Set(ids).size === ARENA_OPPONENTS, 'đủ 5 đối thủ, không trùng');
   ok(ls.j.opponents.filter((o) => o.bot).map((o) => o.id).join() === 'bot:0,bot:1,bot:2' && ls.j.opponents.filter((o) => !o.bot).every((o) => o.name.startsWith('arenaD')), '3 bot lấp chỗ trống (bot:0..2), người thật có tên tài khoản');
   const realD1 = ls.j.opponents.find((o) => o.id === String(D1.id))!;
-  ok(realD1.rating === 1000 && realD1.heroes.filter((h) => h.id).length === STARTER_HEROES.length && realD1.power > 0, 'đối thủ thật: điểm, tướng theo ô, lực chiến');
+  ok(realD1.rating === 1000 && realD1.heroes.filter((h) => h.id).length === 3 && realD1.power > 0, 'đối thủ thật: điểm, tướng theo ô, lực chiến');
 
   // ---- lỗi đầu vào của arena-battle ----
   const t0 = (await getMe(AR.token)).arena.tries;
@@ -985,7 +994,7 @@ console.log('— Đấu trường —');
   const W = await newUser('arenaWeak');
   await dfn(W.token, 0);
   // đội CHẮC CHẮN thua: 1 tướng thầy thuốc cấp 1 (bot điểm khởi đầu có 4 tướng R) — không để kết quả phụ thuộc seed ngẫu nhiên
-  await ed(W.id, (s) => void (s.squads[0] = ['thay_thuoc', '', '', '', '']));
+  await ed(W.id, (s) => void (s.squads[0] = ['thay_thuoc', '', '', '', '', '']));
   const wmem = (await getMe(W.token)).wallet;
   const fw = await afight(W.token, 'bot:0', { win: true, rating: 9999, delta: 500, reward: { gold: 1e9, gems: 1e9 }, ticks: 1 });
   ok(fw.r.status === 200 && !fw.r.j.win, 'đội yếu thua bot dù body gửi win:true');
@@ -1008,10 +1017,10 @@ console.log('— Đấu trường —');
   ok(x2.r.status === 200 && !x2.r.j.win, 'cùng đối thủ sau khi nâng cấp → kết quả đổi (thua)');
   const dst = await AROW(D1.id);
   ok(dst.arenaRating === 1000 && dst.arenaWins === 0 && dst.arenaLosses === 0 && dst.arenaTries === ARENA_TRIES, 'điểm / thắng thua / lượt của người phòng thủ không đổi');
-  await ed(D1.id, (s) => (s.squads[0] = [STARTER_HEROES[0], '', '', '', '']));
+  await ed(D1.id, (s) => (s.squads[0] = [STARTER_HEROES[0], '', '', '', '', '']));
   const pw3 = (await arena(ATK.token)).j.opponents.find((o) => o.id === String(D1.id))!;
   ok(pw3.heroes.filter((h) => h.id).length === 1 && pw3.power < pw2.power, 'đổi đội hình phòng thủ: danh sách phản ánh ngay');
-  await ed(D1.id, (s) => (s.squads[0] = [...STARTER_HEROES.slice(0, SQUAD_SIZE)]));
+  await ed(D1.id, (s) => (s.squads[0] = [...STARTER_HEROES.slice(0, 3), '', '', '']));
 
   // điểm sàn: người tấn công yếu ở 3 điểm đánh đội mạnh
   await ed(W.id, (s) => (s.arenaRating = 3));
@@ -1889,6 +1898,349 @@ console.log('— Tân thủ: me — chuyển trạng thái badge/done —');
   ok((await NB.view(D.token)).login.next === 8, 'GET newbie: next = 8 khi đã hết');
 }
 
+/* ------------------------------------------------------------------ */
+console.log('— Cấp tài khoản: ô đội hình, đội 2/3, mở ô bằng kim cương —');
+const SU = (tok: string | undefined, slot: unknown, key: unknown = 'su-' + randomBytes(6).toString('hex')) => post<{ me: MeResponse; error?: string }>('slot-unlock', { slot, key }, tok);
+const SQ6 = (token: string, squad: number, ids: string[], active = false) => post<{ me: MeResponse; error?: string }>('set-squad', { squad, slots: [...ids, '', '', '', '', '', ''].slice(0, 6), active }, token);
+const [sA, sB, sC, sD] = STARTER_HEROES;
+const ssrList = Object.values(HERO_BY_ID).filter((h) => h.rarity === 'SSR').map((h) => h.id);
+const urList = Object.values(HERO_BY_ID).filter((h) => h.rarity === 'UR').map((h) => h.id);
+const addHero = (s: import('../src/heroes/db/store.js').HState, id: string, level = 1, star = 1) => void (s.heroes[id] = { id, level, star, shards: 0 });
+{
+  const U = await newUser('lvUser');
+  ok(U.me.levels.level === 1 && U.me.levels.claimedUpTo === 1 && U.me.levels.slotsBought === 0 && U.me.levelBadge === 0 && U.me.achBadge === 0, 'tài khoản mới: levels {1, claimedUpTo 1, slotsBought 0}, badge 0/0');
+  ok(U.me.squads.every((q) => q.length === SQUAD_SIZE), 'mọi đội có đúng SQUAD_SIZE (6) ô');
+  // ---- ô theo cấp ----
+  ok((await SQ6(U.token, 0, [sA, sB, sC])).status === 200, 'cấp 1: đặt 3 ô đầu → 200');
+  const closed = await SQ6(U.token, 0, [sA, sB, sC, sD]);
+  ok(closed.status === 400 && closed.j.error === 'Ô đội hình chưa mở', 'cấp 1: tướng ở ô 3 (chưa mở) → 400 "Ô đội hình chưa mở"');
+  ok((await post('set-squad', { squad: 0, slots: [sA, sB, sC, '', '', 'x'] }, U.token)).status === 400, 'cấp 1: ô 5 có chữ (dù id lạ) → 400');
+  ok((await post('set-squad', { squad: 0, slots: [sA, sB, sC, '', ''] }, U.token)).status === 400, 'đội 5 ô (cũ) → 400 sai số ô');
+  ok((await post('set-squad', { squad: 0, slots: [sA, sB, sC, '', '', '', ''] }, U.token)).status === 400, 'đội 7 ô → 400');
+  const s2 = await SQ6(U.token, 1, [sA]);
+  ok(s2.status === 400 && s2.j.error === 'Đội hình chưa mở', 'cấp 1: đội 2 → 400 "Đội hình chưa mở"');
+  ok((await SQ6(U.token, 2, [])).status === 400, 'cấp 1: đội 3 → 400');
+  await ed(U.id, (s) => void (s.level = 7));
+  ok((await SQ6(U.token, 1, [sA])).status === 400, 'cấp 7: đội 2 vẫn khoá');
+  await ed(U.id, (s) => void (s.level = 8));
+  ok((await SQ6(U.token, 1, [sA, sB])).status === 200 && (await SQ6(U.token, 2, [sA])).status === 400, 'cấp 8: đội 2 mở, đội 3 còn khoá');
+  await ed(U.id, (s) => void (s.level = 15));
+  ok((await SQ6(U.token, 2, [sA, sB, sC], true)).status === 200 && (await getMe(U.token)).activeSquad === 2, 'cấp 15: đội 3 mở (đặt làm đội đang dùng được)');
+  await ed(U.id, (s) => void ((s.level = 5), addHero(s, ssrList[0]), addHero(s, ssrList[1])));
+  ok((await SQ6(U.token, 0, [sA, sB, sC, sD])).status === 200, 'cấp 5: ô 3 mở');
+  ok((await SQ6(U.token, 0, [sA, sB, sC, sD, ssrList[0]])).status === 400, 'cấp 5: ô 4 còn khoá');
+  await ed(U.id, (s) => void (s.level = 10));
+  ok((await SQ6(U.token, 0, [sA, sB, sC, sD, ssrList[0]])).status === 200 && (await SQ6(U.token, 0, [sA, sB, sC, sD, ssrList[0], ssrList[1]])).status === 400, 'cấp 10: ô 4 mở, ô 5 khoá');
+  await ed(U.id, (s) => void (s.level = 18));
+  ok((await SQ6(U.token, 0, [sA, sB, sC, sD, ssrList[0], ssrList[1]])).status === 200, 'cấp 18: đủ 6 ô');
+  ok((await SQ6(U.token, 0, [sA, sB, sC, sD, ssrList[0], ssrList[1]])).j.me.squads[0].join() === [sA, sB, sC, sD, ssrList[0], ssrList[1]].join(), 'me.squads trả đủ 6 ô theo thứ tự');
+
+  // ---- đội cũ 5 ô (hoặc ngắn hơn) được đệm khi hiển thị, vẫn đánh được ----
+  const O = await newUser('lvOld');
+  await ed(O.id, (s) => void (s.squads[0] = [sA, sB, sC]));
+  const mo = await getMe(O.token);
+  ok(mo.squads[0].length === 6 && mo.squads[0].join() === [sA, sB, sC, '', '', ''].join(), 'đội cũ ngắn hơn 6: me đệm đủ 6 ô bằng ""');
+  ok((await fight(O.token, '1-1')).r.status === 200, 'đội cũ ngắn vẫn ra trận được');
+}
+
+console.log('— Chỉ ô ĐANG MỞ mới thành đơn vị / lực chiến —');
+{
+  // tài khoản cấp 1 có 5-6 tướng lưu sẵn trong đội (dữ liệu cũ): chỉ 3 ô đầu được dùng ở MỌI nơi
+  const full = (level: number, bought = 0) => {
+    const s = newState(900, 0);
+    for (const id of [...ssrList, ...urList]) addHero(s, id, 5, 2);
+    s.level = level;
+    s.slotsBought = bought;
+    s.squads[0] = [sA, sB, sC, sD, ssrList[0], ssrList[1]];
+    return s;
+  };
+  const s5 = full(1);
+  ok(squadUnits(s5, 0).length === 3 && squadUnits(s5, 0).every((u) => u.slot < 3), 'squadUnits cấp 1: chỉ 3 đơn vị ở ô 0..2');
+  ok(squadUnits(full(5), 0).length === 4 && squadUnits(full(10), 0).length === 5 && squadUnits(full(18), 0).length === 6 && squadUnits(full(1, 5), 0).length === 5, 'squadUnits theo cấp 5/10/18 và theo số ô đã mua');
+  const s3 = full(1);
+  s3.squads[0] = [sA, sB, sC, '', '', ''];
+  const o5 = opBattle(s5, '1-1', 0, 777, [], true);
+  const o3 = opBattle(s3, '1-1', 0, 777, [], true);
+  ok(o5.win === o3.win && o5.stars === o3.stars && s5.runs[0].ticks === s3.runs[0].ticks, 'trận cấp 1 với 6 tướng lưu = trận chỉ với 3 tướng đầu (cùng seed, cùng tick)');
+  // tháp
+  const t5 = full(1);
+  const t3 = full(1);
+  t3.squads[0] = [sA, sB, sC, '', '', ''];
+  t5.towerTries = t3.towerTries = 3;
+  const tw5 = opTowerBattle(t5, 0, 321, [], true);
+  const tw3 = opTowerBattle(t3, 0, 321, [], true);
+  ok(tw5.win === tw3.win && t5.runs[0].ticks === t3.runs[0].ticks, 'Tháp: chỉ ô mở');
+  // đấu trường phòng thủ: dùng ô mở CỦA NGƯỜI PHÒNG THỦ
+  const d1 = full(1);
+  d1.arenaOn = true;
+  const dt = defenseTarget(d1, 'Phòng Thủ')!;
+  ok(dt.units.length === 3 && dt.opp.heroes.length === 6 && dt.opp.heroes.filter((h) => h.id).length === 3 && !dt.opp.heroes[3].id, 'defenseTarget: người phòng thủ cấp 1 chỉ lộ 3 ô');
+  const d18 = full(18);
+  d18.arenaOn = true;
+  const dt18 = defenseTarget(d18, 'Phòng Thủ')!;
+  ok(dt18.units.length === 6 && dt18.opp.power > dt.opp.power, 'phòng thủ cấp 18: đủ 6 ô, lực chiến cao hơn');
+  // tấn công đấu trường (người tấn công cấp 1 chỉ dùng 3 ô)
+  const a5 = full(1);
+  const a3 = full(1);
+  a3.squads[0] = [sA, sB, sC, '', '', ''];
+  a5.arenaTries = a3.arenaTries = 5;
+  const ar5 = opArenaBattle(a5, 0, 55, [], true, () => botTarget(0, 1000));
+  const ar3 = opArenaBattle(a3, 0, 55, [], true, () => botTarget(0, 1000));
+  ok(ar5.win === ar3.win && a5.runs[0].ticks === a3.runs[0].ticks, 'Đấu trường (tấn công): chỉ ô mở');
+  // boss bang
+  const g5 = full(1);
+  const g3 = full(1);
+  g3.squads[0] = [sA, sB, sC, '', '', ''];
+  const dmg = (st: ReturnType<typeof full>) => bossDamage(simulate(bossSetup(1, 0, 9, squadUnits(st, 0)), [], true).events);
+  ok(dmg(g5) === dmg(g3) && dmg(g3) > 0 && dmg(full(18)) > dmg(g3), 'Boss bang: sát thương cấp 1 với 6 tướng lưu = chỉ 3 tướng đầu; đủ 6 ô thì cao hơn');
+  // opArenaDefense đếm tướng trong ô mở
+  const d0 = newState(901, 0);
+  d0.squads[1] = ['', '', '', sD, '', ''];
+  let rej = false;
+  try {
+    opArenaDefense(d0, 1);
+  } catch {
+    rej = true;
+  }
+  ok(rej, 'đặt phòng thủ bằng đội chỉ có tướng ở ô đóng → từ chối (đội rỗng)');
+}
+
+console.log('— Mua mở sớm ô đội hình (kim cương) —');
+{
+  const B = await newUser('slotBuyer');
+  const g0 = B.me.wallet.gems;
+  ok((await SU(undefined, 3)).status === 401, 'slot-unlock không token → 401');
+  ok((await SU(B.token, 4)).status === 400 && (await SU(B.token, 4)).j.error === 'Phải mở ô theo thứ tự', 'mua ô 4 khi mới có 3 ô → 400 "Phải mở ô theo thứ tự"');
+  ok((await SU(B.token, 6)).status === 400 && (await SU(B.token, -1)).status === 400 && (await SU(B.token, '3')).status === 400 && (await SU(B.token, 3.5)).status === 400 && (await SU(B.token, 3, 'ab')).status === 400 && (await SU(B.token, 3, 'a b c d e f g')).status === 400, 'slot ngoài 0..5 / sai kiểu / key xấu → 400');
+  ok((await SU(B.token, 1)).status === 400 && (await SU(B.token, 2)).status === 400, 'ô 0-2 đã mở → 400');
+  ok((await getMe(B.token)).wallet.gems === g0, 'các lần lỗi không trừ kim cương');
+  const k1 = 'slot-key-' + randomBytes(5).toString('hex');
+  const b1 = await SU(B.token, 3, k1);
+  ok(b1.status === 200 && b1.j.me.wallet.gems === g0 - SLOT_GEMS[3] && b1.j.me.levels.slotsBought === 4 && b1.j.me.levels.level === 1, `mua ô 3: -${SLOT_GEMS[3]} kim cương, slotsBought 4`);
+  ok(mem.ledger.some((l) => l.accountId === B.id && l.kind === 'slot' && l.delta.gems === -SLOT_GEMS[3]), 'ledger kind "slot" ghi delta kim cương');
+  const b1r = await SU(B.token, 3, k1);
+  ok(b1r.status === 200 && b1r.j.me.wallet.gems === g0 - SLOT_GEMS[3] && (await getMe(B.token)).levels.slotsBought === 4, 'gửi lại cùng key: trả như cũ, KHÔNG trừ lần hai');
+  ok((await SU(B.token, 4, k1)).status === 409, 'cùng key khác ô → 409');
+  const kp = 'slot-par-' + randomBytes(5).toString('hex');
+  await ed(B.id, (s) => void (s.wallet.gems = 5000));
+  const par = await Promise.all([SU(B.token, 4, kp), SU(B.token, 4, kp)]);
+  ok(par.every((x) => x.status === 200) && (await getMe(B.token)).wallet.gems === 5000 - SLOT_GEMS[4] && (await getMe(B.token)).levels.slotsBought === 5, 'hai yêu cầu song song cùng key chỉ trừ một lần');
+  ok((await SU(B.token, 3)).status === 400 && (await SU(B.token, 4)).status === 400, 'ô đã mở (đã mua) mua lại → 400, không trừ');
+  ok((await SQ6(B.token, 0, [sA, sB, sC, sD, ssrList[0]])).status === 400, 'sau khi mua: đội dùng được 5 ô (ô 4 cần có tướng thứ 5 — chưa sở hữu) → 400 vì chưa có tướng');
+  await ed(B.id, (s) => void (addHero(s, ssrList[0]), addHero(s, ssrList[1])));
+  ok((await SQ6(B.token, 0, [sA, sB, sC, sD, ssrList[0]])).status === 200, 'sau khi mua: đặt tướng vào ô 3 và ô 4 được');
+  ok((await SQ6(B.token, 0, [sA, sB, sC, sD, ssrList[0], ssrList[1]])).status === 400, 'ô 5 vẫn khoá (chưa mua, chưa đủ cấp)');
+  await ed(B.id, (s) => void (s.wallet.gems = SLOT_GEMS[5] - 1));
+  const gShort = (await getMe(B.token)).wallet.gems;
+  ok((await SU(B.token, 5)).status === 400 && (await getMe(B.token)).wallet.gems === gShort && (await getMe(B.token)).levels.slotsBought === 5, 'thiếu kim cương → 400, ví không đổi/âm, slotsBought giữ');
+  await ed(B.id, (s) => void (s.wallet.gems = SLOT_GEMS[5]));
+  const last = await SU(B.token, 5);
+  ok(last.status === 200 && last.j.me.wallet.gems === 0 && last.j.me.levels.slotsBought === 6, 'mua ô cuối đúng đủ tiền → kim cương 0, 6 ô');
+  ok((await SU(B.token, 5)).status === 400, 'đủ 6 ô: mua tiếp → 400');
+  // đủ cấp thì không cần mua
+  const L = await newUser('slotLevel');
+  await ed(L.id, (s) => void (s.level = 5));
+  const lr = await SU(L.token, 3);
+  ok(lr.status === 400 && lr.j.error === 'Đã đủ cấp, ô tự mở' && (await getMe(L.token)).wallet.gems === 3000, 'cấp 5 đã mở ô 3 → 400 "Đã đủ cấp, ô tự mở", không trừ');
+  ok((await SU(L.token, 4)).status === 200 && (await getMe(L.token)).wallet.gems === 3000 - SLOT_GEMS[4], 'cấp 5: mua ô 4 sớm (ô kế tiếp) được');
+  // mua rồi lên cấp: slotsOpen = max
+  await ed(L.id, (s) => void (s.level = 10));
+  ok((await getMe(L.token)).levels.slotsBought === 5 && (await SU(L.token, 4)).status === 400, 'lên cấp đủ sau khi mua: slotsBought giữ, ô 4 không mua lại');
+}
+
+console.log('— Thưởng lên cấp —');
+{
+  const LC = (tok?: string) => post<{ me: MeResponse; levels: number[]; reward: Record<string, number>; error?: string }>('level-claim', {}, tok);
+  const sumOf = (from: number, to: number) => {
+    const t: Record<string, number> = {};
+    for (let l = from; l <= to; l++) for (const [k, v] of Object.entries(levelReward(l))) t[k] = (t[k] ?? 0) + (v as number);
+    return t;
+  };
+  const U = await newUser('lvClaim');
+  ok((await LC()).status === 401, 'level-claim không token → 401');
+  const none = await LC(U.token);
+  ok(none.status === 400 && (await getMe(U.token)).levels.claimedUpTo === 1, 'cấp 1: không có gì nhận → 400');
+  await ed(U.id, (s) => void (s.level = 12));
+  const m12 = await getMe(U.token);
+  ok(m12.levelBadge === 11 && m12.levels.claimedUpTo === 1 && m12.levels.level === 12, 'cấp 12, đã nhận tới 1: levelBadge = 11');
+  const exp12 = sumOf(2, 12);
+  const r12 = await LC(U.token);
+  const w = r12.j.me?.wallet;
+  const okSum = Object.entries(exp12).every(([k, v]) => r12.j.reward[k] === v && (w as any)[k] === (m12.wallet as any)[k] + v);
+  ok(r12.status === 200 && okSum && r12.j.levels.join() === [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].join(), 'nhận 11 cấp (2..12): thưởng cộng dồn ĐÚNG Σ levelReward, levels trả danh sách cấp');
+  ok(r12.j.me.levels.claimedUpTo === 12 && r12.j.me.levelBadge === 0, 'claimedUpTo = 12, badge 0');
+  ok(mem.ledger.some((l) => l.accountId === U.id && l.kind === 'level' && l.delta.gold === exp12.gold), 'ledger kind "level" ghi tổng vàng');
+  const again = await LC(U.token);
+  ok(again.status === 400 && (await getMe(U.token)).wallet.gold === r12.j.me.wallet.gold, 'nhận lần hai → 400, không cộng');
+  await ed(U.id, (s) => void (s.level = 13));
+  ok((await getMe(U.token)).levelBadge === 1, 'lên cấp 13: badge 1');
+  const par = await Promise.all([LC(U.token), LC(U.token)]);
+  const exp13 = levelReward(13);
+  ok(par.filter((x) => x.status === 200).length === 1 && par.filter((x) => x.status === 400).length === 1 && (await getMe(U.token)).wallet.gold === r12.j.me.wallet.gold + (exp13.gold ?? 0), 'hai yêu cầu song song: chỉ một lần được trả (cấp 13)');
+  // trần ví
+  const C = await newUser('lvCap');
+  await ed(C.id, (s) => void ((s.level = MAX_ACCOUNT_LEVEL), (s.wallet.gold = MONEY_CAP - 10), (s.wallet.gems = MONEY_CAP)));
+  const rc = await LC(C.token);
+  ok(rc.status === 200 && rc.j.levels.length === MAX_ACCOUNT_LEVEL - 1 && rc.j.me.wallet.gold === MONEY_CAP && rc.j.me.wallet.gems === MONEY_CAP && rc.j.reward.gold === 10 && !rc.j.reward.gems, 'trần ví MONEY_CAP: chỉ cộng phần còn chỗ; reward báo phần thực nhận');
+  // tài khoản cũ (claimedUpTo mặc định 1): nhận hồi tố cấp hiện tại
+  const Old = await newUser('lvRetro');
+  await ed(Old.id, (s) => void ((s.level = 6), (s.levelClaimed = 1)));
+  ok((await LC(Old.token)).j.levels.join() === '2,3,4,5,6', 'tài khoản đã có cấp từ trước: nhận hồi tố các cấp 2..level');
+  // claimedUpTo vượt level (dữ liệu lạ) → badge không âm, 400
+  await ed(Old.id, (s) => void ((s.level = 3), (s.levelClaimed = 9)));
+  ok((await getMe(Old.token)).levelBadge === 0 && (await LC(Old.token)).status === 400, 'claimedUpTo > level: badge 0 (không âm), nhận → 400');
+}
+
+console.log('— Thành tựu —');
+{
+  const AL = (tok?: string) => call<AchievementsRes>('GET', 'achievements', undefined, tok);
+  const AC = (tok: string | undefined, id: unknown) => post<AchievementClaimRes & { error?: string }>('achievement-claim', { id }, tok);
+  const U = await newUser('achUser');
+  ok((await AL()).status === 401 && (await AC(undefined, 'a_tower')).status === 401, 'achievements / achievement-claim không token → 401');
+  const l0 = await AL(U.token);
+  ok(l0.status === 200 && l0.j.list.length === ACHIEVEMENTS.length && ACHIEVEMENTS.every((a, i) => l0.j.list[i].id === a.id && l0.j.list[i].claimed === 0), 'GET achievements: đủ mọi thành tựu, claimed 0');
+  const pr = (id: string, l = l0.j.list) => l.find((x) => x.id === id)!.progress;
+  ok(pr('a_stage') === 0 && pr('a_heroes') === STARTER_HEROES.length && pr('a_level') === 1 && pr('a_rating') === 1000 && pr('a_guild') === 0, 'tiến trình ban đầu (ải 0, 4 tướng, cấp 1, điểm 1000, chưa bang)');
+  ok(U.me.achBadge === 0, 'me.achBadge = 0 ban đầu');
+
+  // ---- dựng trạng thái cho từng loại ----
+  await ed(U.id, (s) => {
+    s.progress['1-1'] = { stage: '1-1', stars: 3, clears: 1 };
+    s.progress['1-5'] = { stage: '1-5', stars: 2, clears: 1 };
+    s.progress['1-10'] = { stage: '1-10', stars: 1, clears: 1 };
+    s.progress['2-3'] = { stage: '2-3', stars: 1, clears: 1 };
+    addHero(s, urList[0], 33, 4);
+    addHero(s, ssrList[0], 2, 5);
+    s.level = 27;
+    s.gear = [{ uid: 1, def: 'weapon_earth_UR', level: 7, hero: null }, { uid: 2, def: 'armor_forest_R', level: 2, hero: null }, { uid: 3, def: 'helmet_water_UR', level: 10, hero: null }];
+    s.newbie.pullsTotal = 42;
+    s.towerFloor = 35;
+    s.arenaWins = 6;
+    s.arenaRating = 1234;
+    s.newbie.loginClaimed = 3;
+  });
+  const l1 = (await AL(U.token)).j.list;
+  ok(pr('a_stage', l1) === 13 && pr('a_stars', l1) === 7 && pr('a_boss', l1) === 2, 'API: stage / stars / bossClear từ tiến trình ải');
+  ok(pr('a_heroes', l1) === STARTER_HEROES.length + 2 && pr('a_ssr', l1) === 2 && pr('a_ur', l1) === 1 && pr('a_herolv', l1) === 33 && pr('a_herostar', l1) === 5, 'API: heroCount / ssrCount (gồm UR) / urCount / heroLevel / heroStar');
+  ok(pr('a_level', l1) === 27 && pr('a_gear', l1) === 3 && pr('a_gearur', l1) === 2 && pr('a_gearmax', l1) === 10, 'API: level / gearCount / gearUR / gearMax');
+  ok(pr('a_pulls', l1) === 42 && pr('a_tower', l1) === 35 && pr('a_arena', l1) === 6 && pr('a_rating', l1) === 1234 && pr('a_login', l1) === 3 && pr('a_guild', l1) === 0, 'API: pulls / tower / arenaWins / arenaRating / loginDays / guild');
+  const meB = await getMe(U.token);
+  const expBadge = ACHIEVEMENTS.filter((a) => l1.find((x) => x.id === a.id)!.progress >= a.tiers[0].target).length;
+  ok(meB.achBadge === expBadge && expBadge > 3, `me.achBadge = số thành tựu có bậc nhận ngay (${expBadge})`);
+
+  // ---- nhận từng bậc ----
+  const g0 = meB.wallet;
+  const t1 = await AC(U.token, 'a_tower');
+  const tower = ACH_BY_ID.a_tower;
+  ok(t1.status === 200 && t1.j.tier === 0 && t1.j.reward.wallet.gems === tower.tiers[0].reward.wallet!.gems && t1.j.me.wallet.gems === g0.gems + tower.tiers[0].reward.wallet!.gems! && t1.j.list.find((x) => x.id === 'a_tower')!.claimed === 1, 'nhận bậc 0 a_tower: +100 kim cương, tier 0, list.claimed 1');
+  ok(t1.j.me.achBadge === expBadge, 'achBadge không đổi (bậc 1 của a_tower đã đạt 30 ≤ 35)');
+  const t2 = await AC(U.token, 'a_tower');
+  const w2 = tower.tiers[1].reward.wallet!;
+  ok(t2.status === 200 && t2.j.tier === 1 && t2.j.me.wallet.gems === t1.j.me.wallet.gems + w2.gems! && t2.j.me.wallet.stones === t1.j.me.wallet.stones + w2.stones!, 'nhận bậc 1: +250 kim cương + 15 đá, tier 1');
+  const t3 = await AC(U.token, 'a_tower');
+  ok(t3.status === 400 && (await getMe(U.token)).wallet.gems === t2.j.me.wallet.gems, 'bậc 2 (60 tầng) chưa đạt (35) → 400, không trả');
+  ok((await AL(U.token)).j.list.find((x) => x.id === 'a_tower')!.claimed === 2 && t2.j.me.achBadge === expBadge - 1, 'claimed = 2, badge giảm 1 khi hết bậc nhận được');
+  await ed(U.id, (s) => void (s.towerFloor = 100));
+  for (let i = 2; i < 4; i++) {
+    const r = await AC(U.token, 'a_tower');
+    ok(r.status === 200 && r.j.tier === i, `tháp 100: nhận tiếp bậc ${i}`);
+  }
+  const done = await AC(U.token, 'a_tower');
+  ok(done.status === 400 && /hết/.test(done.j.error ?? ''), 'đã nhận hết bậc → 400');
+  ok(mem.ledger.filter((l) => l.accountId === U.id && l.kind === 'ach').length === 4, 'ledger kind "ach" 4 dòng (4 bậc)');
+
+  // ---- đầu vào xấu / không double-pay ----
+  const gNow = (await getMe(U.token)).wallet.gems;
+  ok((await AC(U.token, 'khong-co')).status === 400 && (await AC(U.token, undefined)).status === 400 && (await AC(U.token, 42)).status === 400 && (await AC(U.token, '__proto__')).status === 400 && (await AC(U.token, 'constructor')).status === 400 && (await AC(U.token, '')).status === 400, 'id lạ / sai kiểu / __proto__ / rỗng → 400');
+  ok((await getMe(U.token)).wallet.gems === gNow, 'các lần lỗi không đổi ví');
+  const P = await newUser('achPar');
+  await ed(P.id, (s) => void (s.level = 10));
+  const pgm = (await getMe(P.token)).wallet.gems;
+  const pp = await Promise.all([AC(P.token, 'a_level'), AC(P.token, 'a_level')]);
+  ok(pp.filter((x) => x.status === 200).length === 1 && (await getMe(P.token)).wallet.gems === pgm + ACH_BY_ID.a_level.tiers[0].reward.wallet!.gems!, 'hai yêu cầu song song cùng thành tựu 1 bậc: chỉ trả MỘT lần');
+  // thành tựu chưa đạt
+  ok((await AC(P.token, 'a_ur')).status === 400, 'chưa có UR → a_ur 400');
+  // thưởng bị chặn bởi trần ví
+  await ed(P.id, (s) => void ((s.wallet.gems = MONEY_CAP - 5), (s.towerFloor = 10)));
+  const capR = await AC(P.token, 'a_tower');
+  ok(capR.status === 200 && capR.j.me.wallet.gems === MONEY_CAP && capR.j.reward.wallet.gems === 5, 'thưởng thành tựu tôn trọng trần ví MONEY_CAP');
+  // thưởng gồm tướng/mảnh/trang bị đi qua payReward chung (bậc có shard/gear tạm thời gắn vào định nghĩa)
+  const orig = tower.tiers[2].reward;
+  (ACH_BY_ID.a_tower.tiers[2] as { reward: unknown }).reward = { wallet: { gold: 7 }, shards: { hero: urList[0], n: 33 }, gear: ['weapon_earth_UR'] };
+  await ed(P.id, (s) => void (s.towerFloor = 100));
+  await AC(P.token, 'a_tower'); // bậc 1
+  const gr = await AC(P.token, 'a_tower'); // bậc 2 (đã gắn thưởng thử)
+  const mP = gr.j.me;
+  ok(gr.status === 200 && gr.j.reward.shards?.hero === urList[0] && gr.j.reward.shards.n === 33 && mP.heroes.find((h) => h.id === urList[0])!.shards === 33 && gr.j.reward.gear.length === 1 && mP.gear.some((g) => g.def === 'weapon_earth_UR'), 'thưởng có mảnh (tướng chưa có → tặng tướng) + trang bị đi qua payReward chung');
+  (ACH_BY_ID.a_tower.tiers[2] as { reward: unknown }).reward = orig;
+
+  // ---- bang: thành tựu guild + hồ sơ ----
+  const G = await newUser('achGuild');
+  await ed(G.id, (s) => void (s.level = 5));
+  ok((await AC(G.token, 'a_guild')).status === 400, 'chưa vào bang → a_guild 400');
+  ok((await post('guild-create', { name: 'Bang Thành Tựu' }, G.token)).status === 200, 'lập bang');
+  const gc = await AC(G.token, 'a_guild');
+  ok(gc.status === 200 && gc.j.tier === 0 && gc.j.me.wallet.tickets >= 1, 'vào bang → nhận a_guild');
+}
+
+console.log('— Hồ sơ công khai —');
+{
+  const PF = (tok: string | undefined, name?: string) => call<PublicProfileRes & { error?: string }>('GET', 'profile' + (name === undefined ? '' : '?name=' + encodeURIComponent(name)), undefined, tok);
+  const V = await newUser('profViewer');
+  const P = await newUser('profTarget');
+  ok((await PF(undefined, 'profTarget')).status === 401, 'profile không token → 401 (không cho cào)');
+  ok((await PF(V.token)).status === 400 && (await PF(V.token, '')).status === 400 && (await PF(V.token, 'x'.repeat(70))).status === 400, 'thiếu / rỗng / quá dài tên → 400');
+  ok((await PF(V.token, 'khongCoAi')).status === 404, 'tên lạ → 404');
+  const p0 = await PF(V.token, 'profTarget');
+  ok(p0.status === 200 && p0.j.profile.username === 'profTarget' && p0.j.profile.level === 1 && p0.j.profile.stage === 0 && p0.j.profile.tower === 0 && p0.j.profile.arenaRating === 1000 && p0.j.profile.arenaWins === 0 && p0.j.profile.guild === null && p0.j.profile.heroCount === STARTER_HEROES.length && p0.j.profile.achDone === 0, 'hồ sơ mới: cấp 1, ải 0, tháp 0, điểm 1000, chưa bang, 4 tướng, 0 thành tựu xong');
+  const stats = (id: string, level: number, star: number, slot: number, gear: { def: string; level: number }[]) => heroUnit({ id, level, star, shards: 0 }, slot, sumGear(gear));
+  const expectPower = (units: ReturnType<typeof stats>[]) => units.reduce((a, u) => a + powerOf(u.stats), 0);
+  ok(p0.j.profile.squad.length === SQUAD_SIZE && p0.j.profile.squad.slice(0, 3).every((h, i) => h.id === STARTER_HEROES[i] && h.level === 1 && h.star === 1) && p0.j.profile.squad.slice(3).every((h) => h.id === '' && h.level === 0) && p0.j.profile.power === expectPower([0, 1, 2].map((i) => stats(STARTER_HEROES[i], 1, 1, i, []))), 'squad theo ô (6 phần tử, ô trống id ""), power = Σ powerOf(đơn vị 3 ô)');
+  // dữ liệu cũ: đội cấp 1 lưu 5-6 tướng → chỉ 3 ô mở được tính
+  await ed(P.id, (s) => {
+    addHero(s, urList[0], 20, 3);
+    addHero(s, ssrList[0], 10, 2);
+    s.squads[0] = [urList[0], ssrList[0], STARTER_HEROES[0], STARTER_HEROES[1], STARTER_HEROES[2], STARTER_HEROES[3]];
+    s.gear = [{ uid: 1, def: 'weapon_earth_UR', level: 4, hero: urList[0] }, { uid: 2, def: 'armor_forest_R', level: 0, hero: urList[0] }, { uid: 3, def: 'helmet_water_UR', level: 9, hero: STARTER_HEROES[3] }];
+  });
+  const p1 = (await PF(V.token, 'profTarget')).j.profile;
+  const gUr = [{ def: 'weapon_earth_UR', level: 4 }, { def: 'armor_forest_R', level: 0 }];
+  const exp3 = expectPower([stats(urList[0], 20, 3, 0, gUr), stats(ssrList[0], 10, 2, 1, []), stats(STARTER_HEROES[0], 1, 1, 2, [])]);
+  ok(p1.power === exp3 && p1.squad.filter((h) => h.id).length === 3 && p1.squad[0].id === urList[0] && p1.squad[0].level === 20 && p1.squad[0].star === 3, 'cấp 1 lưu 6 tướng: hồ sơ chỉ tính 3 ô mở, power gồm cả trang bị đang mặc');
+  await ed(P.id, (s) => void (s.level = 18));
+  const p2 = (await PF(V.token, 'profTarget')).j.profile;
+  const exp6 = expectPower([stats(urList[0], 20, 3, 0, gUr), stats(ssrList[0], 10, 2, 1, []), stats(STARTER_HEROES[0], 1, 1, 2, []), stats(STARTER_HEROES[1], 1, 1, 3, []), stats(STARTER_HEROES[2], 1, 1, 4, []), stats(STARTER_HEROES[3], 1, 1, 5, [{ def: 'helmet_water_UR', level: 9 }])]);
+  ok(p2.level === 18 && p2.power === exp6 && p2.squad.every((h) => h.id), 'cấp 18: đủ 6 ô, power đủ 6 tướng + trang bị');
+  // đội đang dùng là đội 2
+  await ed(P.id, (s) => void ((s.level = 18), (s.squads[1] = [STARTER_HEROES[1], '', '', '', '', '']), (s.activeSquad = 1)));
+  const p3 = (await PF(V.token, 'profTarget')).j.profile;
+  ok(p3.squad[0].id === STARTER_HEROES[1] && p3.squad.filter((h) => h.id).length === 1, 'hồ sơ theo ĐỘI ĐANG DÙNG');
+  // thống kê + thành tựu + bang
+  await ed(P.id, (s) => {
+    s.progress['2-3'] = { stage: '2-3', stars: 1, clears: 1 };
+    s.towerFloor = 21;
+    s.arenaRating = 1300;
+    s.arenaWins = 9;
+    s.ach.a_guild = 1; // trọn 1/1 bậc
+    s.ach.a_login = 2; // trọn 2/2
+    s.ach.a_tower = 2; // 2/4
+    s.wallet.gold = 5000;
+    s.level = Math.max(s.level, 5);
+  });
+  ok((await post('guild-create', { name: 'Hồ Sơ Bang' }, P.token)).status === 200, 'P lập bang');
+  const p4 = (await PF(V.token, 'profTarget')).j.profile;
+  ok(p4.stage === 13 && p4.tower === 21 && p4.arenaRating === 1300 && p4.arenaWins === 9 && p4.guild === 'Hồ Sơ Bang' && p4.achDone === 2, 'stage / tower / arena / tên bang / achDone (chỉ thành tựu nhận hết bậc)');
+  // không rò rỉ
+  const raw = await fetch(BASE + 'profile?name=profTarget', { headers: { authorization: `Bearer ${V.token}` } }).then((r) => r.text());
+  const keys = Object.keys(JSON.parse(raw).profile).sort().join();
+  ok(keys === 'achDone,arenaRating,arenaWins,guild,heroCount,level,power,squad,stage,tower,username', 'chỉ đúng các trường công khai');
+  ok(!/wallet|gold|gems|tickets|stones|gear|shards|pity|stamina|password|token/i.test(raw), 'không lộ ví / kho đồ / mảnh / pity / thể lực');
+  ok(JSON.stringify(Object.keys(JSON.parse(raw).profile.squad[0]).sort()) === '["id","level","star"]', 'mỗi ô chỉ {id, level, star}');
+  // tự xem hồ sơ chính mình được; tên có dấu cách/hoa thường: không phân biệt (giống đăng nhập?) — chỉ kiểm tra đúng tên
+  ok((await PF(P.token, 'profTarget')).status === 200, 'xem hồ sơ chính mình được');
+  ok((await PF(V.token, 'profTarget%00')).status === 404, 'tên chứa ký tự lạ → 404, không lỗi máy chủ');
+}
+
 _setHeroesClock(null);
 
 ok(mem.ledger.every((l) => Object.values(l.delta).every((v) => Number.isInteger(v))), 'ledger toàn số nguyên');
@@ -1936,7 +2288,7 @@ if (process.env.DATABASE_URL) {
       s.progress['1-1'] = { stage: '1-1', stars: 3, clears: 2 };
       s.progress['1-3'] = { stage: '1-3', stars: 1, clears: 1 };
       s.runs.push({ stage: '1-3', win: true, stars: 1, ticks: 500 });
-      s.squads[1] = [STARTER_HEROES[1], '', '', '', ''];
+      s.squads[1] = [STARTER_HEROES[1], '', '', '', '', ''];
       s.activeSquad = 1;
     });
     const re = await hs.view(id, nowD, (s) => s);
@@ -2035,7 +2387,7 @@ if (process.env.DATABASE_URL) {
       const id3 = (await pgs.createAccount('pgtest3', 'x'))!;
       await hs.mutate(id, d, 'arena-init', (s) => void (s.arenaOn = true));
       await hs.mutate(id2, d, 'arena-init', (s) => void ((s.arenaOn = true), (s.arenaRating = 1100), (s.arenaWins = 2)));
-      await hs.mutate(id3, d, 'arena-init', (s) => void ((s.arenaOn = true), (s.arenaRating = 1100), (s.arenaWins = 2), (s.squads[0] = ['', '', '', '', ''])));
+      await hs.mutate(id3, d, 'arena-init', (s) => void ((s.arenaOn = true), (s.arenaRating = 1100), (s.arenaWins = 2), (s.squads[0] = ['', '', '', '', '', ''])));
       const a1 = await hs.view(id, d, (s) => s);
       ok(a1.arenaOn && a1.arenaRating === 1000 && a1.arenaTries === ARENA_TRIES && a1.arenaDay === dayKey(d.getTime()) && a1.arenaDefense === 0, 'PG: hàng h_arena tạo lười, lượt = 5 theo ngày');
       await hs.mutate(id, d, 'arena', (s) => void ((s.arenaTries -= 1), (s.arenaRating = 1234), (s.arenaWins = 1), (s.arenaLosses = 2), (s.arenaDefense = 1)));
@@ -2251,6 +2603,109 @@ if (process.env.DATABASE_URL) {
       ok(nl === 3, 'PG: ledger kind=newbie 3 dòng (ngày 1, ngày 2, m_pull10); khởi đầu không có ví');
       const back = await hs.view(nid, d2, (s) => s.newbie);
       ok(back.loginClaimed === 2 && back.starterUsed && back.pullsTotal === 20 && back.milestones.join() === 'm_pull10', 'PG: đọc lại khớp ghi (loginClaimed/starterUsed/pullsTotal/milestones)');
+    }
+
+    // ---- migration v7 + cấp / ô đội hình / thành tựu trên PG ----
+    {
+      ok((await q(`SELECT max(version)::int AS v FROM $Sh_schema_version`)).rows[0].v >= 7, 'PG: schema_version ≥ 7');
+      const vid = (await pgs.createAccount('pgv7', 'x'))!;
+      const vd = new Date();
+      const v0 = await hs.view(vid, vd, (s) => s);
+      ok(v0.levelClaimed === 1 && v0.slotsBought === 0 && Object.keys(v0.ach).length === 0 && v0.squads.every((sq) => sq.length === SQUAD_SIZE) && v0.squads[0].join() === [...STARTER_HEROES.slice(0, 3), '', '', ''].join(), 'PG: hồ sơ mới — levelClaimed 1, slotsBought 0, chưa có thành tựu, đội 6 ô (3 tướng đầu ở ô 0..2)');
+      const lens = (await q(`SELECT jsonb_array_length(slots)::int AS n FROM $Sh_squads WHERE account_id=$1 ORDER BY idx`, [vid])).rows.map((r) => r.n);
+      ok(lens.join() === '6,6,6', 'PG: h_squads ghi đủ 6 ô cho cả 3 đội');
+      ok((await q(`SELECT count(*)::int AS n FROM $Sh_ach WHERE account_id=$1`, [vid])).rows[0].n === 0, 'PG: h_ach tạo lười — chưa nhận thì chưa có hàng');
+      // đội cũ 5 ô trong DB: nạp tự đệm, ghi lại thành 6
+      await q(`UPDATE $Sh_squads SET slots = '["khien_da","linh_rung","","",""]'::jsonb WHERE account_id=$1 AND idx=0`, [vid]);
+      const padded = await hs.view(vid, vd, (s) => s.squads[0]);
+      ok(padded.length === 6 && padded.join() === 'khien_da,linh_rung,,,,', 'PG: đội 5 ô cũ nạp lên được đệm đủ 6');
+      await hs.mutate(vid, vd, 'test', (s) => void (s.towerFloor = 35));
+      ok((await q(`SELECT jsonb_array_length(slots)::int AS n FROM $Sh_squads WHERE account_id=$1 AND idx=0`, [vid])).rows[0].n === 6, 'PG: ghi lại sau khi nạp → đội thành 6 ô');
+      // mua ô (idempotent) + ledger
+      const slotIdem = { key: 'pgslot-12345', tag: 'slot|3' };
+      await hs.mutate(vid, vd, 'slot', (s) => (opSlotUnlock(s, 3), {}), { idem: slotIdem });
+      await hs.mutate(vid, vd, 'slot', (s) => (opSlotUnlock(s, 3), {}), { idem: slotIdem });
+      const afterSlot = await hs.view(vid, vd, (s) => ({ b: s.slotsBought, gems: s.wallet.gems }));
+      ok(afterSlot.b === 4 && afterSlot.gems === 3000 - SLOT_GEMS[3], 'PG: mua ô — slotsBought 4, trừ kim cương đúng một lần khi gửi lại key');
+      ok((await q(`SELECT slots_bought AS b FROM $Sh_profile WHERE account_id=$1`, [vid])).rows[0].b === 4 && (await q(`SELECT count(*)::int AS n FROM $Sh_ledger WHERE account_id=$1 AND kind='slot'`, [vid])).rows[0].n === 1, 'PG: slots_bought lưu ở h_profile, ledger "slot" một dòng');
+      // thưởng lên cấp
+      await hs.mutate(vid, vd, 'test', (s) => void (s.level = 11));
+      const lc = await hs.mutate(vid, vd, 'level', (s) => opLevelClaim(s));
+      ok(lc.levels.length === 10 && (await q(`SELECT level_claimed AS l FROM $Sh_profile WHERE account_id=$1`, [vid])).rows[0].l === 11, 'PG: level-claim lưu level_claimed = 11');
+      let twice = false;
+      try {
+        await hs.mutate(vid, vd, 'level', (s) => opLevelClaim(s));
+      } catch (err) {
+        twice = err instanceof StoreError;
+      }
+      ok(twice, 'PG: nhận lần hai → lỗi');
+      // thành tựu: tạo hàng khi nhận, lưu, nạp lại, rollback
+      await hs.mutate(vid, vd, 'ach', (s) => void opAchClaim(s, 'a_tower'));
+      await hs.mutate(vid, vd, 'ach', (s) => void opAchClaim(s, 'a_tower'));
+      const achRows = (await q(`SELECT ach_id, claimed FROM $Sh_ach WHERE account_id=$1`, [vid])).rows;
+      ok(achRows.length === 1 && achRows[0].ach_id === 'a_tower' && achRows[0].claimed === 2, 'PG: h_ach có đúng một hàng a_tower claimed=2 (hàng tạo lười)');
+      ok((await hs.view(vid, vd, (s) => s.ach.a_tower)) === 2, 'PG: nạp lại khớp ghi');
+      const gemsBefore = await hs.view(vid, vd, (s) => s.wallet.gems);
+      let rolled = false;
+      try {
+        await hs.mutate(vid, vd, 'ach', (s) => {
+          opAchClaim(s, 'a_level');
+          throw new StoreError('huỷ giữa chừng', 400);
+        });
+      } catch (err) {
+        rolled = err instanceof StoreError;
+      }
+      ok(rolled && (await q(`SELECT count(*)::int AS n FROM $Sh_ach WHERE account_id=$1`, [vid])).rows[0].n === 1 && (await hs.view(vid, vd, (s) => s.wallet.gems)) === gemsBefore, 'PG: lỗi giữa chừng → rollback cả h_ach lẫn ví');
+      ok((await q(`SELECT count(*)::int AS n FROM $Sh_ledger WHERE account_id=$1 AND kind='ach'`, [vid])).rows[0].n === 2, 'PG: ledger "ach" 2 dòng (2 bậc)');
+      // hồ sơ công khai qua peek (nạp nhẹ vẫn có tiến trình ải + thành tựu)
+      await hs.mutate(vid, vd, 'test', (s) => void (s.progress['1-3'] = { stage: '1-3', stars: 2, clears: 1 }));
+      const pp = await hs.peek(vid, (s) => publicProfile(s, 'pgv7', null));
+      ok(!!pp && pp.stage === 3 && pp.level === 11 && pp.tower === 35 && pp.squad.length === 6, 'PG: peek → publicProfile (ải đã qua, cấp, tháp, 6 ô)');
+
+      // migration v7 trên schema ĐANG Ở v6 có dữ liệu cũ
+      const schema2 = 'test_h_' + randomBytes(5).toString('hex');
+      await admin.query(`CREATE SCHEMA "${schema2}"`);
+      const pgs2 = new PgStore({ connectionString: process.env.DATABASE_URL, schema: schema2, max: 2 });
+      try {
+        await pgs2.init();
+        const S2 = (pgs2 as unknown as { S: string }).S;
+        const c2 = await pgs2.pool.connect();
+        try {
+          await c2.query(`CREATE TABLE ${S2}h_schema_version (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
+          for (let v = 1; v <= 6; v++) {
+            await c2.query(HERO_MIGRATIONS[v - 1](S2));
+            await c2.query(`INSERT INTO ${S2}h_schema_version (version) VALUES ($1)`, [v]);
+          }
+        } finally {
+          c2.release();
+        }
+        const q2 = (sql: string, p: unknown[] = []) => pgs2.pool.query(sql.replaceAll('$S', S2), p);
+        const oid = (await pgs2.createAccount('oldacc', 'x'))!;
+        await q2(`INSERT INTO $Sh_profile (account_id, gold, gems, tickets, exp, stones, stamina, stamina_at, afk_since) VALUES ($1,5000,3000,10,500,0,120, now(), now())`, [oid]);
+        await q2(`INSERT INTO $Sh_squads (account_id, idx, slots) VALUES ($1,0,'["a","b","c","d","e"]'::jsonb), ($1,1,'["","","","",""]'::jsonb), ($1,2,'["x","","","",""]'::jsonb)`, [oid]);
+        ok((await q2(`SELECT max(version)::int AS v FROM $Sh_schema_version`)).rows[0].v === 6, 'PG(v6): dựng schema cũ ở phiên bản 6');
+        const hs2 = new HeroPgStore(pgs2.pool, S2);
+        await hs2.init();
+        await hs2.init(); // chạy lại an toàn
+        ok((await q2(`SELECT max(version)::int AS v FROM $Sh_schema_version`)).rows[0].v === 7, 'PG(v7): migration lên 7, chạy lại không đổi');
+        const rows = (await q2(`SELECT idx, slots FROM $Sh_squads WHERE account_id=$1 ORDER BY idx`, [oid])).rows;
+        ok(rows.length === 3 && rows.every((r) => (r.slots as string[]).length === 6) && (rows[0].slots as string[]).join() === 'a,b,c,d,e,' && (rows[2].slots as string[]).join() === 'x,,,,,', 'PG(v7): đội 5 ô được đệm "" lên 6, giữ nguyên thứ tự');
+        const pr = (await q2(`SELECT level_claimed, slots_bought FROM $Sh_profile WHERE account_id=$1`, [oid])).rows[0];
+        ok(pr.level_claimed === 1 && pr.slots_bought === 0, 'PG(v7): cột mới mặc định level_claimed 1, slots_bought 0');
+        ok((await q2(`SELECT count(*)::int AS n FROM $Sh_ach`)).rows[0].n === 0, 'PG(v7): h_ach rỗng (hàng tạo lười)');
+        const old = await hs2.view(oid, new Date(), (s) => s);
+        ok(old.squads[0].join() === 'a,b,c,d,e,' && old.levelClaimed === 1 && old.slotsBought === 0, 'PG(v7): tài khoản cũ nạp bình thường');
+        let bad = false;
+        try {
+          await q2(`UPDATE $Sh_profile SET slots_bought = 7 WHERE account_id=$1`, [oid]);
+        } catch {
+          bad = true;
+        }
+        ok(bad, 'PG(v7): CHECK slots_bought 0..6');
+      } finally {
+        await pgs2.close().catch(() => {});
+        await admin.query(`DROP SCHEMA "${schema2}" CASCADE`).catch(() => {});
+      }
     }
   } catch (e) {
     ok(false, 'PG: lỗi ' + (e instanceof Error ? e.message.replace(/postgres(?:ql)?:\/\/\S+/gi, '<url>') : String(e)));

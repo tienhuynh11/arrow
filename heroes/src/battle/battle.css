@@ -32,9 +32,9 @@
 }
 
 /* ---------- số sát thương ---------- */
-.battle .dn { isolation: isolate; align-items: center; }
+.battle .dn { isolation: isolate; align-items: center; font-size: 19px; }
 .battle .dn .bt-t { position: relative; }
-.battle .dn-crit { font-size: 38px; color: #fff3a0; animation-name: bt-crit; }
+.battle .dn-crit { font-size: 30px; color: #fff3a0; animation-name: bt-crit; }
 .bt-sb { position: absolute; left: 50%; top: 50%; width: 130px; height: 130px; z-index: -1; transform: translate(-50%, -50%); pointer-events: none;
   background: radial-gradient(circle, #fff9c4 0%, #ffd23f 45%, #ff6a1a 100%);
   clip-path: polygon(50.0% 0.0%,57.8% 21.0%,75.0% 6.7%,71.2% 28.8%,93.3% 25.0%,79.0% 42.2%,100.0% 50.0%,79.0% 57.8%,93.3% 75.0%,71.2% 71.2%,75.0% 93.3%,57.8% 79.0%,50.0% 100.0%,42.2% 79.0%,25.0% 93.3%,28.8% 71.2%,6.7% 75.0%,21.0% 57.8%,0.0% 50.0%,21.0% 42.2%,6.7% 25.0%,28.8% 28.8%,25.0% 6.7%,42.2% 21.0%); }
@@ -46,17 +46,17 @@
   30% { transform: translate(-50%, -85%) scale(1.2); }
   100% { transform: translate(-50%, -220%) scale(1.05); opacity: 0; }
 }
-.battle .dn.adv-up { color: #ffb347; font-size: 28px; }
+.battle .dn.adv-up { color: #ffb347; font-size: 23px; }
 .battle .dn.adv-up.dn-crit { color: #fff3a0; }
-.battle .dn.adv-dn { color: #b4c0e0; font-size: 18px; }
+.battle .dn.adv-dn { color: #b4c0e0; font-size: 16px; }
 .bt-adv { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); font: 800 10px/1 var(--f-title); letter-spacing: 1px; padding: 1px 4px; border: 2px solid var(--ink); border-radius: 6px; white-space: nowrap; }
 .adv-up .bt-adv { background: #ff5a1a; color: #fff; }
 .adv-dn .bt-adv { background: #6d7fae; color: #e6ecff; }
-.battle .dn.dn-heal { font-size: 26px; color: #7dffa8; }
+.battle .dn.dn-heal { font-size: 24px; color: #7dffa8; }
 
 /* ---------- cut-in tuyệt kỹ NHẸ (không chặn trận): dải nhỏ phía người dùng ---------- */
 .bt-cine { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
-.bt-cut { position: absolute; top: 22%; left: 0; width: clamp(190px, 50vw, 320px); height: clamp(44px, 9vh, 62px); will-change: transform, opacity; }
+.bt-cut { position: absolute; top: 33%; left: 0; width: clamp(190px, 50vw, 320px); height: clamp(44px, 8vh, 56px); will-change: transform, opacity; }
 .bt-cine.s1 .bt-cut { left: auto; right: 0; }
 .bt-band { position: absolute; inset: 0; overflow: hidden; border: 3px solid #fff; border-left: 0; border-radius: 0 30px 30px 0; box-shadow: 0 0 0 2px #1a2140, 0 3px 0 2px rgba(26, 33, 64, 0.5);
   background: linear-gradient(100deg, #141a3d 0%, #141a3d 30%, rgba(20, 26, 61, 0) 90%), var(--c, #ffd23f); }
@@ -78,22 +78,10 @@
 .bt-end.lose { color: #aebbe0; }
 @keyframes bt-endin { 0% { transform: scale(2.6) rotate(-8deg); opacity: 0; } 100% { transform: scale(1) rotate(-2deg); opacity: 1; } }
 
-/* ---------- nút tuyệt kỹ đầy ---------- */
-.battle .b-ults .ult.ready { animation: bt-ready 0.9s ease-in-out infinite; }
-@keyframes bt-ready {
-  0%, 100% { transform: scale(1.06) rotate(0deg); }
-  20% { transform: scale(1.12) rotate(-3deg); }
-  40% { transform: scale(1.08) rotate(3deg); }
-  60% { transform: scale(1.12) rotate(-2deg); }
-  80% { transform: scale(1.08) rotate(2deg); }
-}
-.bt-full { position: absolute; left: 50%; top: -13px; transform: translateX(-50%); z-index: 2; padding: 0 6px; border: 2px solid var(--ink); border-radius: 8px; background: linear-gradient(#fff27a, #ff9a1f); color: #5a2200; font: 900 11px/16px var(--f-title); letter-spacing: 1px; pointer-events: none; animation: bt-tag 0.9s ease-in-out infinite; }
-@keyframes bt-tag { 50% { transform: translateX(-50%) translateY(-2px) scale(1.1); } }
-
 /* ---------- nhật ký trận ---------- */
-.bt-logbtn { position: absolute; z-index: 5; left: max(8px, env(safe-area-inset-left)); top: calc(max(8px, env(safe-area-inset-top)) + 54px); width: 36px; height: 36px; padding: 0; border: 3px solid var(--ink); border-radius: 50%; background: rgba(255, 255, 255, 0.85); font-size: 16px; line-height: 1; cursor: pointer; pointer-events: auto; }
+.bt-logbtn { position: absolute; z-index: 5; left: max(8px, env(safe-area-inset-left)); bottom: calc(var(--bt-cards) + max(6px, env(safe-area-inset-bottom)) + 30px + 46px); width: 36px; height: 36px; padding: 0; border: 3px solid var(--ink); border-radius: 50%; background: rgba(255, 255, 255, 0.85); font-size: 16px; line-height: 1; cursor: pointer; pointer-events: auto; }
 .bt-logbtn.on { background: #ffe27a; }
-.bt-log { position: absolute; z-index: 4; display: none; flex-direction: column; gap: 2px; pointer-events: none; left: calc(max(8px, env(safe-area-inset-left)) + 42px); top: calc(max(8px, env(safe-area-inset-top)) + 54px); max-width: min(60vw, 300px); }
+.bt-log { position: absolute; z-index: 4; display: none; flex-direction: column; gap: 2px; pointer-events: none; left: calc(max(8px, env(safe-area-inset-left)) + 44px); bottom: calc(var(--bt-cards) + max(6px, env(safe-area-inset-bottom)) + 30px + 46px); max-width: min(60vw, 300px); }
 .bt-log.on { display: flex; }
 .bt-ll { padding: 2px 8px; border-radius: 8px; border-left: 4px solid #5ee08a; background: rgba(20, 26, 64, 0.66); color: #fff; font: 600 12px/1.3 system-ui, sans-serif; }
 .bt-ll.s1 { border-left-color: #ff7a7a; }
@@ -103,9 +91,135 @@
 .bt-ll:nth-child(3) { opacity: 0.75; }
 .bt-ll:nth-child(4) { opacity: 0.9; }
 @media (max-height: 520px) {
-  .bt-logbtn, .bt-log { top: calc(max(8px, env(safe-area-inset-top)) + 50px); }
   .bt-ll { font-size: 11px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  
+
+/* =====================================================================================
+   HUD kiểu "Thời Đại Anh Hùng": thanh trên (2 chỉ huy), bảng sát thương, thanh boss, thẻ tướng + hồi chiêu
+   Tiền tố `bh-` (HUD trong overlay.ts), `bt-card`/`bc-`/`bt-rail` (Battle.tsx). Chỉ transform/opacity, không blur.
+   ===================================================================================== */
+.battle {
+  --bt-safe-t: max(6px, env(safe-area-inset-top));
+  --bt-bar: 54px;
+  --bt-row: 22px;
+  --bt-cw: min(82px, calc((100vw - 37px) / 6));
+  --bt-cards: calc(var(--bt-cw) + 30px);
+  /* vị trí thanh boss: ngay dưới 6 hàng bảng sát thương */
+  --bt-boss-top: calc(var(--bt-safe-t) + var(--bt-bar) + 14px + 6 * (var(--bt-row) + 2px));
+}
+.bh { position: absolute; inset: 0; pointer-events: none; z-index: 2; font-family: var(--f-title); }
+
+/* thanh trên: trái = ta (xanh), phải = địch (đỏ), giữa = hai kiếm bắt chéo */
+.bh-top { position: absolute; left: max(6px, env(safe-area-inset-left)); right: max(6px, env(safe-area-inset-right)); top: var(--bt-safe-t); height: var(--bt-bar); display: flex; align-items: stretch; overflow: hidden; border: 2px solid #1a2140; border-radius: 14px; background: linear-gradient(90deg, #2459b3 0, #1b3f86 50%, #8f2234 50%, #b32c42 100%); box-shadow: 0 3px 0 rgba(10, 14, 30, 0.6); }
+.bh-side { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 3px 6px; }
+.bh-side.foe { flex-direction: row-reverse; text-align: right; }
+.bh-vs { flex: none; width: 34px; display: grid; place-items: center; background: rgba(10, 14, 34, 0.5); }
+.bh-ava { flex: none; width: 42px; height: 42px; border-radius: 50%; border: 3px solid #ffd23f; overflow: hidden; background: #142046; box-shadow: 0 0 0 2px #1a2140; }
+.bh-side.foe .bh-ava { border-color: #ff9a8a; }
+.bh-ava img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bh-inf { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bh-side.foe .bh-inf { align-items: flex-end; }
+.bh-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 13px/1.1 var(--f-title); color: #fff; text-shadow: 0 1px 0 #1a2140; }
+.bh-pw { display: inline-flex; align-items: center; gap: 3px; font: 800 12px/1 var(--f-title); color: #ffe27a; text-shadow: 0 1px 0 #1a2140; }
+.bh-side.foe .bh-pw { flex-direction: row-reverse; }
+.bh-pw em, .bh-tb em { font-style: normal; }
+.bh-tb { width: 100%; display: flex; align-items: center; gap: 3px; }
+.bh-side.foe .bh-tb { flex-direction: row-reverse; }
+.bh-ppl { display: grid; place-items: center; flex: none; }
+.bh-tbar { position: relative; flex: 1 1 0; min-width: 24px; height: 9px; overflow: hidden; border: 2px solid #1a2140; border-radius: 6px; background: rgba(10, 14, 34, 0.7); }
+.bh-tbar i { position: absolute; inset: 0; transform-origin: left center; background: linear-gradient(#8be85c, #35b84a); transition: transform 0.2s ease-out; }
+.bh-side.foe .bh-tbar i { transform-origin: right center; background: linear-gradient(#ff9a7a, #e8394f); }
+.bh-tb em { flex: none; min-width: 30px; font: 800 10px/1 var(--f-title); color: #fff; text-shadow: 0 1px 0 #1a2140; }
+.bh-timer { position: absolute; left: 50%; top: calc(var(--bt-safe-t) + var(--bt-bar) + 3px); transform: translateX(-50%); min-width: 52px; padding: 1px 8px; border: 2px solid #1a2140; border-radius: 10px; background: rgba(16, 22, 48, 0.85); text-align: center; font: 800 13px/1.25 var(--f-title); color: #fff; }
+.bh-timer.warn { color: #ff6a6a; }
+
+/* bảng sát thương theo tướng: ta bên trái, địch bên phải (đối xứng) */
+.bh-meter { position: absolute; top: calc(var(--bt-safe-t) + var(--bt-bar) + 8px); display: flex; flex-direction: column; gap: 2px; max-width: 38%; }
+.bh-meter.l { left: max(6px, env(safe-area-inset-left)); align-items: flex-start; }
+.bh-meter.r { right: max(6px, env(safe-area-inset-right)); align-items: flex-end; }
+.bh-row { display: flex; align-items: center; gap: 4px; height: var(--bt-row); padding: 0 8px 0 2px; border-radius: 12px; background: rgba(10, 16, 38, 0.58); font: 800 11px/1 var(--f-title); color: #fff; white-space: nowrap; text-shadow: 0 1px 0 #0a0e1e; }
+.bh-row.s1 { flex-direction: row-reverse; padding: 0 2px 0 8px; }
+.bh-p { flex: none; width: calc(var(--bt-row) - 4px); height: calc(var(--bt-row) - 4px); border-radius: 50%; border: 2px solid #ffd23f; object-fit: cover; background: #142046; }
+.bh-row.s1 .bh-p { border-color: #ff8a7a; }
+.bh-d { font-weight: 800; }
+.bh-r { font-style: normal; font-size: 10px; color: #ff6a6a; }
+.bh-row.dead { opacity: 0.45; filter: grayscale(1); }
+
+/* thanh máu boss LỚN ở đầu đấu trường */
+.bh-boss { position: absolute; left: 50%; top: var(--bt-boss-top); transform: translateX(-50%); width: min(86%, 420px); display: none; flex-direction: column; align-items: center; gap: 1px; }
+.bh-boss.on { display: flex; }
+.bh-boss b { font: 900 13px/1.1 var(--f-title); color: #ffe27a; -webkit-text-stroke: 3px #1a2140; paint-order: stroke fill; letter-spacing: 1px; }
+.bh-bbar { position: relative; width: 100%; height: 14px; overflow: hidden; border: 3px solid #1a2140; border-radius: 9px; background: rgba(10, 14, 34, 0.75); }
+.bh-bbar i { position: absolute; inset: 0 auto 0 0; width: 100%; }
+.bh-bbar .ghost { background: #fff; opacity: 0.75; }
+.bh-bbar .fill { background: linear-gradient(#ff8a8a, #e8394f); transition: width 0.15s; }
+.bh-boss em { font: 800 10px/1 var(--f-title); font-style: normal; color: #fff; text-shadow: 0 1px 0 #1a2140, 0 0 3px #1a2140; }
+.battle .gld-bbar { top: calc(var(--bt-boss-top) + 36px); }
+.battle .ubar.nobar { display: none; }
+.battle .ubar { width: 44px; }
+.battle .bt-chips { max-width: 66px; }
+
+/* biển tên kỹ năng (mỗi phe một cái) + dòng chạy phía trên thẻ tướng */
+.bh-sk { position: absolute; opacity: 0; padding: 1px 9px; border: 2px solid var(--c, #fff); border-radius: 10px; background: rgba(14, 20, 46, 0.85); font: 900 12px/16px var(--f-title); letter-spacing: 0.5px; color: #fff; white-space: nowrap; text-shadow: 0 1px 0 #0a0e1e; }
+.bh-ticker { position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; max-width: 78%; bottom: calc(var(--bt-cards) + max(6px, env(safe-area-inset-bottom)) + 4px); height: 18px; padding: 0 14px; opacity: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 2px solid var(--c, #fff); background: linear-gradient(90deg, rgba(10, 16, 38, 0), rgba(10, 16, 38, 0.72) 14%, rgba(10, 16, 38, 0.72) 86%, rgba(10, 16, 38, 0)); font: 700 11px/18px var(--f-title); color: #dfe8ff; }
+.bh-ticker.ult { color: #fff7c2; }
+.bh-ticker.foe { color: #ffd6d6; }
+
+/* hàng thẻ tướng: hồi chiêu ở trên, khung theo độ hiếm, thanh năng lượng mảnh ở dưới */
+.bt-cards { position: absolute; left: 0; right: 0; margin: 0 auto; width: fit-content; max-width: calc(100% - 12px); bottom: max(6px, env(safe-area-inset-bottom)); display: flex; justify-content: center; gap: 5px; z-index: 6; }
+.bt-card { position: relative; flex: none; width: var(--bt-cw); padding: 0; border: 0; background: none; display: flex; flex-direction: column; gap: 2px; cursor: pointer; font-family: var(--f-title); --rc: #8fb0d6; }
+.bt-card.r-SR { --rc: #b57cff; }
+.bt-card.r-SSR { --rc: #ffc83d; }
+.bt-card.r-UR { --rc: #ff6ad5; }
+.bc-cd { height: 14px; text-align: center; font: 900 11px/14px var(--f-title); color: #fff; text-shadow: -1px 0 #0a0e1e, 1px 0 #0a0e1e, 0 -1px #0a0e1e, 0 1px #0a0e1e; }
+.bc-cd.full { color: #ffe27a; animation: bt-tag2 0.9s ease-in-out infinite; }
+@keyframes bt-tag2 { 50% { transform: scale(1.18); } }
+.bc-frame { position: relative; aspect-ratio: 1; overflow: hidden; border: 3px solid var(--rc); border-radius: 10px; background: #101a3a; box-shadow: 0 2px 0 #0a0e1e; }
+.bc-face { position: absolute; inset: 0; display: block; }
+.bc-face .portrait { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bc-lv { position: absolute; left: 2px; top: 2px; padding: 0 3px; border-radius: 6px; background: rgba(10, 16, 38, 0.82); font: 800 9px/12px var(--f-title); color: #fff; }
+.bc-stars { position: absolute; left: 0; right: 0; bottom: 5px; display: flex; justify-content: center; gap: 0; pointer-events: none; }
+.bc-hp { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(10, 14, 34, 0.85); }
+.bc-hp i { display: block; height: 100%; background: linear-gradient(#8be85c, #35b84a); }
+.bc-en { height: 6px; overflow: hidden; border: 1.5px solid #0a0e1e; border-radius: 4px; background: rgba(10, 16, 38, 0.85); }
+.bc-en i { display: block; height: 100%; background: linear-gradient(#7fd4ff, #2f8fe8); transition: width 0.2s ease-out; }
+.bt-card.ready .bc-en i { background: linear-gradient(#fff6a8, #ffb62b); }
+.bt-card.ready .bc-frame { box-shadow: 0 0 0 2px #ffe14d, 0 0 12px 3px #ff9a1f; animation: bt-cardpulse 0.9s ease-in-out infinite; }
+@keyframes bt-cardpulse { 50% { transform: scale(1.06); } }
+.bt-card.dead { filter: grayscale(1); opacity: 0.5; }
+.bt-card kbd { display: none; position: absolute; right: 2px; top: 17px; padding: 0 4px; border-radius: 6px; background: rgba(255, 255, 255, 0.85); font: 800 10px/13px var(--f-title); color: #1a2140; }
+@media (pointer: fine) { .bt-card kbd { display: block; } }
+
+/* nút tròn nhỏ ở mép trái/phải, ngay trên thanh dòng chạy */
+.bt-rail { position: absolute; z-index: 6; display: flex; flex-direction: column; gap: 6px; pointer-events: none; bottom: calc(var(--bt-cards) + max(6px, env(safe-area-inset-bottom)) + 30px); }
+.bt-rail.l { left: max(8px, env(safe-area-inset-left)); }
+.bt-rail.r { right: max(8px, env(safe-area-inset-right)); }
+.bt-rb { pointer-events: auto; width: 40px; height: 40px; padding: 0; display: grid; place-items: center; border: 3px solid #1a2140; border-radius: 50%; background: linear-gradient(#fff, #cfdcf2); box-shadow: 0 3px 0 #1a2140; font: 900 12px/1 var(--f-title); color: #1a2140; cursor: pointer; }
+.bt-rb:active { transform: translateY(2px); box-shadow: 0 1px 0 #1a2140; }
+.bt-rb.auto.on { background: linear-gradient(#8be85c, #35b84a); }
+.bt-rb.speed.s2 { background: linear-gradient(#ffe27a, #ffb52e); }
+.bt-rb.speed.s3 { background: linear-gradient(#ff9a6a, #ff5c3a); color: #fff; }
+.bt-rb b { font-weight: 900; }
+
+/* ---------- màn ngang / máy tính: khung rộng, thanh trên ở giữa, bảng sát thương ra hai mép, thẻ tướng ở giữa ---------- */
+@media (orientation: landscape) {
+  .battle { --bt-bar: 46px; --bt-row: 20px; --bt-cw: min(82px, 14vh); }
+  .bh-top { left: 50%; right: auto; transform: translateX(-50%); width: min(760px, 60%); }
+  .bh-name { font-size: 12px; }
+  .bh-ava { width: 36px; height: 36px; }
+  .bh-meter { top: calc(var(--bt-safe-t) + 4px); max-width: 21%; }
+  .bh-row { font-size: 10px; }
+  .bh-boss { top: calc(var(--bt-safe-t) + var(--bt-bar) + 30px); width: min(36%, 420px); }
+  .battle .gld-bbar { top: calc(var(--bt-safe-t) + var(--bt-bar) + 64px); }
+  .battle .ubar { width: 40px; }
+}
+@media (max-height: 520px) {
+  .bt-rb { width: 34px; height: 34px; }
+  .bh-sk { font-size: 11px; }
+}
+@media (min-width: 1100px) and (orientation: landscape) {
+  .battle { --bt-bar: 56px; --bt-row: 26px; }
+  .bh-name { font-size: 15px; }
+  .bh-row { font-size: 12px; }
+  .bt-rb { width: 46px; height: 46px; }
 }

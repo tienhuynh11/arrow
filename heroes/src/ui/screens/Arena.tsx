@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ARENA_TRIES, type ArenaOpponent } from '@shared/heroes/arena';
 import type { ArenaRes, ArenaTopRow } from '@shared/heroes/api';
-import { SQUAD_COUNT } from '@shared/heroes/config';
+import { SQUAD_COUNT, SQUAD_SIZE } from '@shared/heroes/config';
 import { HERO_BY_ID } from '@shared/heroes/heroes';
 import { api, me } from '../../api';
-import { arenaOf, powerOfOwned, squadPower } from '../../game';
+import { arenaOf, powerOfOwned, slotsOpenOf, squadPower, squadsOpenOf } from '../../game';
 import { fmt, fmtDur, go, errToast, returnTo, toast, useBusy } from '../../state';
 import { Btn, Modal, Portrait, Spinner } from '../common';
 import { Icon, Medal } from '../icons';
-import { pad, Roster, SquadBoard, useSquadOps } from '../squadkit';
+import { fitSquad, Roster, SquadBoard, useSquadOps } from '../squadkit';
+import { PublicProfileModal } from './PublicProfile';
 import { ActHead, ResetChip, useDayReset } from './activity';
 
 export function verdictOf(mine: number, theirs: number, empty: boolean): { t: string; c: string } {
@@ -19,12 +20,19 @@ export function verdictOf(mine: number, theirs: number, empty: boolean): { t: st
   return ratio >= 1.15 ? { t: 'Thắng thế', c: 'good' } : ratio >= 0.85 ? { t: 'Cân tài', c: 'mid' } : { t: 'Yếu thế', c: 'bad' };
 }
 
-/** dải chân dung nhỏ của một đội (id '' = ô trống) */
-export function MiniRow({ heroes, size }: { heroes: { id: string; level?: number }[]; size?: 'sm' | 'md' }) {
+/** dải chân dung nhỏ của một đội, 6 ô (id '' = ô trống; `open` = số ô đang mở, ô khoá hiện ổ khoá hẹp) */
+export function MiniRow({ heroes, size, open }: { heroes: { id: string; level?: number }[]; size?: 'sm' | 'md'; open?: number }) {
   return (
     <div class={`ar-mini${size === 'md' ? ' md' : ''}`}>
-      {Array.from({ length: 5 }, (_, i) => {
+      {Array.from({ length: SQUAD_SIZE }, (_, i) => {
         const h = heroes[i];
+        if (open !== undefined && i >= open) {
+          return (
+            <div key={i} class="ar-mh sq6-mlock" title="Ô đang khoá">
+              <Icon n="lock" size={12} />
+            </div>
+          );
+        }
         const d = h?.id ? HERO_BY_ID[h.id] : undefined;
         return (
           <div key={i} class={`ar-mh${d ? ` r-${d.rarity}` : ' none'}`} title={d?.name}>
@@ -63,6 +71,7 @@ function OppCard({ o, mine, empty, blocked, busy, onFight }: { o: ArenaOpponent;
 }
 
 function TopList({ rows, name }: { rows: ArenaTopRow[] | null; name: string }) {
+  const [who, setWho] = useState<string | null>(null);
   if (!rows)
     return (
       <div class="ar-wait">
@@ -72,10 +81,11 @@ function TopList({ rows, name }: { rows: ArenaTopRow[] | null; name: string }) {
   if (!rows.length) return <p class="muted ar-none">Chưa có ai trên bảng xếp hạng.</p>;
   return (
     <div class="ar-top">
+      {who && <PublicProfileModal name={who} onClose={() => setWho(null)} />}
       {rows.map((r) => (
         <div key={r.rank} class={`ar-row${r.username === name ? ' me' : ''}${r.rank <= 3 ? ` top${r.rank}` : ''}`}>
           <span class="ar-rk">{r.rank <= 3 ? <Medal rank={r.rank as 1 | 2 | 3} size={30} /> : r.rank}</span>
-          <b class="ar-name">{r.username}</b>
+          <button type="button" class="ar-name" style={{ all: 'unset', cursor: 'pointer', fontWeight: 800, flex: 1, minWidth: 0 }} onClick={() => setWho(r.username)}>{r.username}</button>
           <span class="ar-wins" title="Số trận thắng">
             <Icon n="check" size={14} /> {r.wins}
           </span>
@@ -101,9 +111,9 @@ export function Arena() {
   const [defOpen, setDefOpen] = useState(false);
   const alive = useRef(true);
 
-  const base = pad(m.squads[m.activeSquad]);
+  const base = fitSquad(m, m.squads[m.activeSquad]);
   const [slots, setSlots] = useState<string[]>(base);
-  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true });
+  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true, open: slotsOpenOf(m) });
   const count = slots.filter(Boolean).length;
   const dirty = slots.join('|') !== base.join('|');
   const mine = squadPower(m, slots);
@@ -170,7 +180,7 @@ export function Arena() {
       toast(`Đã đặt đội ${i + 1} làm đội phòng thủ`, 'ok');
     });
 
-  const defIds = pad(m.squads[a.defense]);
+  const defIds = fitSquad(m, m.squads[a.defense]);
   const defPower = squadPower(m, defIds);
   const opps = data?.opponents ?? [];
   const rank = data?.rank ?? 0;
@@ -185,7 +195,7 @@ export function Arena() {
             Lực <b>{fmt(defPower)}</b>
           </span>
         </div>
-        <MiniRow heroes={defIds.map((id) => ({ id }))} size="md" />
+        <MiniRow heroes={defIds.map((id) => ({ id }))} size="md" open={slotsOpenOf(m)} />
         <Btn kind="blue" small class="ar-def-b" onClick={() => setDefOpen(true)}>
           Đổi đội phòng thủ
         </Btn>
@@ -269,19 +279,20 @@ export function Arena() {
 
       {defOpen && (
         <Modal title="Chọn đội phòng thủ" onClose={() => setDefOpen(false)}>
-          <small class="hint">Người khác sẽ đánh đội này khi bạn không online (AI tự điều khiển).</small>
+          <small class="hint">Người khác sẽ đánh đội này khi bạn không online (AI tự điều khiển). Chỉ liệt kê đội đã mở và có tướng.</small>
           <div class="ar-dpick">
             {Array.from({ length: SQUAD_COUNT }, (_, i) => {
-              const ids = pad(m.squads[i]);
+              const ids = fitSquad(m, m.squads[i]);
               const n = ids.filter(Boolean).length;
+              if (i >= squadsOpenOf(m) || n === 0) return null; // chỉ liệt kê đội đã mở và không trống
               return (
                 <button type="button" key={i} class={`ar-dsq${a.defense === i ? ' on' : ''}`} disabled={n === 0 || busy} onClick={() => void setDefense(i)}>
                   <b>
                     Đội {i + 1}
                     {a.defense === i && <Icon n="shield" size={14} />}
                   </b>
-                  <MiniRow heroes={ids.map((id) => ({ id }))} />
-                  <small>{n === 0 ? 'Trống' : `Lực ${fmt(squadPower(m, ids))}`}</small>
+                  <MiniRow heroes={ids.map((id) => ({ id }))} open={slotsOpenOf(m)} />
+                  <small>{`Lực ${fmt(squadPower(m, ids))}`}</small>
                 </button>
               );
             })}

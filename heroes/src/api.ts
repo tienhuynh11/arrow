@@ -47,6 +47,10 @@ import {
   type MutateRes,
   type NewbieLoginClaimRes,
   type NewbieMilestoneClaimRes,
+  type AchievementClaimRes,
+  type AchievementsRes,
+  type LevelClaimRes,
+  type PublicProfileRes,
   type NewbieRes,
   type NewbieStarterSummonRes,
   type SetSquadReq,
@@ -90,6 +94,10 @@ function applyMe(m: MeResponse): MeResponse {
   // server cũ chưa có cờ Tân thủ: mặc định 0 / false (ẩn nút)
   if (typeof m.newbieBadge !== 'number') m.newbieBadge = 0;
   if (typeof m.newbieDone !== 'boolean') m.newbieDone = false;
+  // server cũ chưa có cấp độ/thành tựu: mặc định
+  if (!m.levels) m.levels = { level: m.profile.level, claimedUpTo: m.profile.level, slotsBought: 0 };
+  if (typeof m.levelBadge !== 'number') m.levelBadge = 0;
+  if (typeof m.achBadge !== 'number') m.achBadge = 0;
   clockOffset.value = m.now - Date.now();
   me.value = m;
   preloadHeroModels(m.heroes.map((h) => h.id)); // tải sớm model glTF của tướng đang sở hữu
@@ -393,6 +401,14 @@ export const api = {
     newbieView.value = r.view;
     return r;
   },
+  /** mở SỚM ô đội hình kế tiếp bằng kim cương (server trừ tiền; slot = số ô đang mở) */
+  slotUnlock: (slot: number, key: string) => mutate<MutateRes>(ROUTES.slotUnlock, { slot, key }),
+  /** nhận thưởng mọi cấp chưa nhận (claimedUpTo+1 .. level) */
+  levelClaim: () => mutate<LevelClaimRes>(ROUTES.levelClaim, {}),
+  achievements: () => req<AchievementsRes>(ROUTES.achievements),
+  achievementClaim: (id: string) => mutate<AchievementClaimRes>(ROUTES.achievementClaim, { id }),
+  /** hồ sơ công khai của người chơi khác */
+  profile: (name: string) => req<PublicProfileRes>(`${ROUTES.profile}?name=${encodeURIComponent(name)}`),
   async leaderboard(): Promise<LeaderRow[]> {
     const r = await req<LeaderRow[] | { rows?: LeaderRow[] }>(ROUTES.leaderboard);
     return Array.isArray(r) ? r : (r?.rows ?? []);

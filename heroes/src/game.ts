@@ -1,5 +1,6 @@
 // Hàm tiện ích dữ liệu game cho UI (đọc từ `me` + dữ liệu dùng chung).
 import { AFK_CAP_MS, BATTLE_HZ, MAX_LEVEL, SQUAD_SIZE } from '@shared/heroes/config';
+import { slotsOpen, squadsOpen } from '@shared/heroes/progression';
 import { levelCapOf, powerOf, statsAt } from '@shared/heroes/formulas';
 import { HERO_BY_ID, HEROES } from '@shared/heroes/heroes';
 import { afkReward, STAGES, type StageDef } from '@shared/heroes/stages';
@@ -111,6 +112,13 @@ export function afkNow(m: MeResponse): { gold: number; exp: number; elapsed: num
   const r = afkReward(highestIndex(m), elapsed);
   return { gold: Math.max(r.gold, m.afk.pending.gold), exp: Math.max(r.exp, m.afk.pending.exp), elapsed: Math.min(elapsed, AFK_CAP_MS) };
 }
+/** số ô đội hình ĐANG MỞ (theo cấp + ô đã mua) và số đội đang mở */
+export function slotsOpenOf(m: MeResponse): number {
+  return slotsOpen(m.profile.level, m.levels?.slotsBought ?? 0);
+}
+export function squadsOpenOf(m: MeResponse): number {
+  return squadsOpen(m.profile.level);
+}
 /** đội hình đang dùng: id tướng thật (đã lọc ô trống) */
 export function activeSquadIds(m: MeResponse): string[] {
   return (m.squads[m.activeSquad] ?? []).filter((id) => id && HERO_BY_ID[id]).slice(0, SQUAD_SIZE);
@@ -200,11 +208,12 @@ export function eventsClaimable(m: MeResponse): number {
   return Math.max(0, m.eventsClaimable ?? 0);
 }
 /** chấm đỏ ở Hub: Tháp còn lượt, nhiệm vụ có thể nhận, sự kiện có thể nhận (cửa hàng/bang không có chấm) */
-export function hubBadges(m: MeResponse): { tower: boolean; arena: boolean; quests: number; events: number; newbie: number; total: number } {
+export function hubBadges(m: MeResponse): { tower: boolean; arena: boolean; quests: number; events: number; newbie: number; profile: number; total: number } {
   const tower = towerPlayable(m);
   const arena = arenaPlayable(m);
   const quests = questClaimable(m);
   const events = eventsClaimable(m);
   const newbie = m.newbieDone ? 0 : Math.max(0, m.newbieBadge ?? 0); // server cũ: không có cờ -> ẩn
-  return { tower, arena, quests, events, newbie, total: (tower ? 1 : 0) + (arena ? 1 : 0) + quests + events + newbie };
+  const profile = Math.max(0, m.levelBadge ?? 0) + Math.max(0, m.achBadge ?? 0); // thưởng lên cấp + bậc thành tựu nhận được
+  return { tower, arena, quests, events, newbie, profile, total: (tower ? 1 : 0) + (arena ? 1 : 0) + quests + events + newbie + profile };
 }

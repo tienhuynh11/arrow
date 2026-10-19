@@ -6,6 +6,8 @@ import type { PityState, Pull } from './gacha.js';
 import type { GearInst } from './gear.js';
 import type { ArenaOpponent, ArenaState } from './arena.js';
 import type { EventDef, EventView } from './events.js';
+import type { AchState } from './achievements.js';
+import type { LevelView } from './progression.js';
 import type { NewbieView } from './newbie.js';
 import type { GuildBrief, GuildChatMsg, GuildInfo } from './guild.js';
 import type { QuestsView } from './quests.js';
@@ -54,6 +56,11 @@ export const ROUTES = {
   newbieLoginClaim: 'newbie-login-claim',
   newbieMilestoneClaim: 'newbie-milestone-claim',
   newbieStarterSummon: 'newbie-starter-summon',
+  slotUnlock: 'slot-unlock',
+  levelClaim: 'level-claim',
+  achievements: 'achievements',
+  achievementClaim: 'achievement-claim',
+  profile: 'profile',
   adminEvents: 'admin/events',
   adminEventSave: 'admin/event-save',
   adminEventDelete: 'admin/event-delete',
@@ -99,6 +106,11 @@ export interface MeResponse {
   eventsClaimable: number;
   /** số mục Tân thủ có thể nhận ngay (chấm đỏ) và đã xong hết chưa (ẩn nút) */
   newbieBadge: number;
+  /** cấp độ: cấp đã nhận thưởng + số ô đã mua; số ô/đội ĐANG MỞ tính bằng progression.ts (slotsOpen/squadsOpen) từ profile.level */
+  levels: LevelView;
+  /** số thưởng lên cấp có thể nhận + số bậc thành tựu có thể nhận (chấm đỏ Hồ sơ) */
+  levelBadge: number;
+  achBadge: number;
   newbieDone: boolean;
   /** SQUAD_COUNT đội, mỗi đội SQUAD_SIZE ô chứa id tướng ('' = trống) */
   squads: string[][];
@@ -411,4 +423,52 @@ export interface NewbieStarterSummonReq {
 }
 export interface NewbieStarterSummonRes extends SummonRes {
   view: NewbieView;
+}
+
+/* ------------------------------ CẤP / Ô ĐỘI HÌNH / THÀNH TỰU / HỒ SƠ ------------------------------ */
+/** mua mở SỚM ô đội hình kế tiếp bằng kim cương (chỉ ô ngay sau ô đang mở; cấp đủ thì mở miễn phí, không cần mua). `key` chống gửi trùng. */
+export interface SlotUnlockReq {
+  /** chỉ số ô muốn mở (phải đúng bằng số ô đang mở) */
+  slot: number;
+  key: string;
+}
+/** nhận thưởng lên cấp: tất cả cấp (claimedUpTo+1 .. profile.level) một lần; thưởng cộng dồn */
+export interface LevelClaimRes extends MutateRes {
+  /** các cấp vừa nhận */
+  levels: number[];
+  reward: Partial<Wallet>;
+}
+/** GET achievements: tiến trình mọi thành tựu (tính tại thời điểm gọi) */
+export interface AchievementsRes {
+  list: AchState[];
+}
+export interface AchievementClaimReq {
+  id: string;
+}
+/** nhận BẬC kế tiếp của thành tựu (mỗi lần một bậc; gọi lại để nhận bậc tiếp nếu đủ) */
+export interface AchievementClaimRes extends MutateRes {
+  tier: number;
+  reward: { wallet: Partial<Wallet>; shards?: { hero: string; n: number }; gear: string[] };
+  list: AchState[];
+}
+/** GET profile?name=<username>: hồ sơ CÔNG KHAI của một người chơi (không lộ ví/kho đồ) */
+export interface PublicProfile {
+  username: string;
+  level: number;
+  /** lực chiến đội đang dùng */
+  power: number;
+  /** đội đang dùng: id tướng theo ô + cấp + sao */
+  squad: { id: string; level: number; star: number }[];
+  /** ải đã qua (index cao nhất + 1), tầng tháp, điểm + thắng đấu trường */
+  stage: number;
+  tower: number;
+  arenaRating: number;
+  arenaWins: number;
+  guild: string | null;
+  heroCount: number;
+  /** số thành tựu đã nhận hết mọi bậc */
+  achDone: number;
+}
+export interface PublicProfileRes {
+  profile: PublicProfile;
 }

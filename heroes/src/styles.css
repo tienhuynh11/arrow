@@ -1927,3 +1927,94 @@ div.gtile { cursor: inherit; }
   .nb-pool { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; padding: 12px; }
   .nb-cta b { font-size: 20px; }
 }
+
+/* ===== sq6: đội hình 6 ô / 3 hàng, ô khoá theo cấp, xem trước địch 1 đợt ===== */
+.sq6-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; flex: 1; min-height: 0; min-width: 0; }
+.sq6-wrap.compact { flex: none; gap: 4px; }
+.sq6-board { --sw: clamp(44px, min(calc((100vw - 110px) / 3), 9dvh), 84px); display: flex; justify-content: center; align-items: flex-start; gap: 12px; }
+.sq6-row { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.sq6-row.r1 { margin-top: calc(var(--sw) * 0.22); }
+.sq6-row.r2 { margin-top: calc(var(--sw) * 0.44); }
+.sq6-slots { display: flex; flex-direction: column; gap: 8px; }
+.sq6-board .l-short { display: none; }
+.sq6-board.compact { --sw: clamp(34px, min(calc((100vw - 120px) / 6), 9dvh), 60px); gap: 8px; align-items: flex-end; }
+.sq6-board.compact .sq6-row { margin-top: 0; gap: 2px; }
+.sq6-board.compact .sq6-slots { flex-direction: row; gap: 3px; }
+.sq6-board.compact .l-long { display: none; }
+.sq6-board.compact .l-short { display: inline; }
+.sq6-board.compact .row-label { font-size: 10px; }
+.sq6-board .slot .hc-elem, .sq6-board .slot .hc-rar { display: none; }
+.sq6-board .slot { min-width: 44px; }
+.sq6-board .slot-n { top: -7px; left: -5px; width: 18px; height: 18px; font-size: 10px; }
+/* ô khoá */
+.sq6-lock { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 2px; background: rgba(30, 42, 74, 0.12); color: var(--ink-soft); font: inherit; border-style: dashed; cursor: pointer; text-align: center; line-height: 1.1; }
+.sq6-lock.next { border-color: #ffb52e; background: #fff3c4; color: var(--ink); }
+.sq6-lv { display: none; }
+.sq6-lvl { font-size: 10px; font-weight: 800; }
+.sq6-board.compact .sq6-lock { min-width: 0; width: max(30px, calc(var(--sw) * 0.72)); }
+.sq6-board.compact .sq6-lvl { display: none; }
+.sq6-board.compact .sq6-lv { display: block; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.sq6-buy { display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; max-width: 100%; min-height: 44px; padding: 4px 12px; border: 3px solid var(--ink); border-radius: 12px; background: #e0fbd5; color: var(--ink); font: 800 13px/1.2 var(--f-title); cursor: pointer; text-align: center; }
+.sq6-buy.short { background: #ffd9dc; color: #b3202f; }
+.sq6-short { color: #d12a3c; font-weight: 800; }
+.sq6-info { flex: 1 0 100%; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+/* tab đội khoá */
+.sq6-tablock { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1.1; opacity: 0.65; cursor: not-allowed; }
+.sq6-tablock small { font-size: 10px; font-weight: 800; }
+/* xem trước địch */
+.sq6-enemy { --mw: clamp(32px, min(calc((100vw - 130px) / 6), 8dvh), 54px); display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.sq6-en-rows { display: flex; justify-content: center; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.sq6-enemy .sq6-row { margin-top: 0; gap: 2px; }
+.sq6-enemy .sq6-slots { flex-direction: row; gap: 3px; }
+.sq6-enemy .row-label { font-size: 10px; }
+.sq6-mon { position: relative; flex: none; width: var(--mw); height: var(--mw); border: 2px solid var(--ink); border-radius: 10px; background: #e9f3ff; overflow: hidden; }
+.sq6-mon.boss { border-color: #b3202f; box-shadow: 0 0 0 2px #ffd23f; }
+.sq6-crown { position: absolute; top: 0; left: 0; padding: 1px 2px; border-radius: 0 0 8px 0; background: #d12a3c; color: #ffe27a; display: grid; place-items: center; }
+.sq6-ribbon { display: inline-flex; align-items: center; gap: 4px; padding: 1px 14px; border: 2px solid var(--ink); border-radius: 999px; background: linear-gradient(#ff7a85, #d12a3c); color: #fff; font: 800 13px/20px var(--f-title); letter-spacing: 1px; }
+.sq6-ribbon .ic { color: #ffe27a; }
+/* đấu trường: 6 ô nhỏ, ô khoá hẹp */
+.ar-mini .ar-mh:nth-child(2), .ar-mini .ar-mh:nth-child(4) { margin-right: 3px; }
+.ar-mini .ar-mh.sq6-mlock { width: 18px; display: grid; place-items: center; background: rgba(30, 42, 74, 0.12); border-style: dashed; border-color: rgba(30, 42, 74, 0.35); color: var(--ink-soft); }
+.ar-opp-b { flex-wrap: wrap; }
+@media (max-width: 400px) {
+  .ar-mh { width: 24px; height: 24px; }
+  .ar-mini.md .ar-mh { width: 30px; height: 30px; }
+  .ar-mini .ar-mh.sq6-mlock { width: 16px; }
+}
+/* màn Đội hình: điện thoại dọc / ngang thấp => 3 hàng xếp thành một dòng để chừa chỗ cho danh sách tướng */
+@media (max-aspect-ratio: 1/1) {
+  .squad .sq6-board { --sw: clamp(40px, min(calc((100vw - 96px) / 6), 14dvh), 72px); gap: 8px; align-items: flex-end; }
+  .squad .sq6-row { margin-top: 0; gap: 2px; }
+  .squad .sq6-slots { flex-direction: row; gap: 3px; }
+  .squad .sq6-board .l-long { display: none; }
+  .squad .sq6-board .l-short { display: inline; }
+}
+@media (min-aspect-ratio: 1/1) and (max-height: 520px) {
+  .squad .sq6-board { --sw: clamp(36px, min(14dvh, calc((38vw - 40px) / 6)), 64px); gap: 8px; align-items: flex-end; }
+  .squad .sq6-row { margin-top: 0; gap: 2px; }
+  .squad .sq6-slots { flex-direction: row; gap: 3px; }
+  .squad .sq6-board .l-long { display: none; }
+  .squad .sq6-board .l-short { display: inline; }
+  .squad .sq6-buy { display: none; }
+  .sq6-info { font-size: 11px; }
+}
+@media (min-width: 900px) and (min-height: 560px) {
+  .sq6-board { --sw: clamp(64px, min(12vh, 5.5vw), 140px); gap: clamp(14px, 2vw, 32px); }
+  .squad .sq6-board { --sw: clamp(72px, min(13vh, 6vw), 150px); }
+  .sq6-board .slot { border-width: 2px; border-radius: 18px; }
+  .sq6-board .slot-n { width: 24px; height: 24px; font-size: 12px; }
+  .sq6-board .row-label { font-size: 14px; }
+  .sq6-lvl { font-size: 13px; }
+  .sq6-buy { min-height: 52px; font-size: 16px; padding: 6px 18px; }
+  .sq6-info { font-size: 14px; }
+  .sq6-tablock small { font-size: 12px; }
+  .sq6-board.compact { --sw: clamp(40px, min(6.5vh, 3.2vw), 80px); gap: 12px; }
+  .sq6-board.compact .row-label { font-size: 12px; }
+  .sq6-board.compact .sq6-slots { gap: 5px; }
+  .sq6-enemy { --mw: clamp(40px, min(7vh, 3.4vw), 76px); }
+  .sq6-en-rows { gap: 16px; }
+  .sq6-enemy .sq6-slots { gap: 5px; }
+  .sq6-enemy .row-label { font-size: 12px; }
+  .sq6-ribbon { font-size: 16px; line-height: 26px; padding: 2px 18px; }
+  .ar-mini .ar-mh.sq6-mlock { width: clamp(22px, 2.8vh, 28px); }
+}

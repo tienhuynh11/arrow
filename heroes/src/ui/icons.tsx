@@ -11,7 +11,7 @@ type IconName =
   | 'clock' | 'up' | 'down' | 'leaf' | 'rock' | 'drop' | 'sun' | 'moon' | 'wand' | 'bow' | 'plus' | 'note' | 'crown'
   | 'sparkle' | 'logout' | 'info' | 'chest' | 'skip' | 'user' | 'sound' | 'mute' | 'filter' | 'search'
   | 'gWeapon' | 'gArmor' | 'gHelmet' | 'gAccessory' | 'bag' | 'tower' | 'quest' | 'shop' | 'grid' | 'arena'
-  | 'events' | 'guild' | 'boss' | 'chat' | 'gift' | 'calendar';
+  | 'events' | 'guild' | 'boss' | 'chat' | 'gift' | 'calendar' | 'trophy' | 'unlock' | 'book' | 'edit';
 
 const PATHS: Record<IconName, JSX.Element> = {
   gold: (
@@ -360,6 +360,34 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M8 3v4M16 3v4" stroke={INK} stroke-width="2" stroke-linecap="round" />
       <path d="M8 13.500l1.800 1.800 3.400-3.600" fill="none" stroke="#35b84a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       <circle cx="16" cy="16.500" r="1.200" fill={INK} />
+    </>
+  ),
+  trophy: (
+    <>
+      <path d="M7 4h10v5a5 5 0 0 1-10 0z" fill="#ffcb2e" {...st} />
+      <path d="M7 6H4.500v1.500A3.500 3.500 0 0 0 8 11M17 6h2.500v1.500A3.500 3.500 0 0 1 16 11" fill="none" {...st} />
+      <path d="M12 14v3.500M8.500 20.500h7l-.8-3H9.300z" fill="#ffb52e" {...st} />
+      <path d="M9.500 6.500v2" stroke="#fff" stroke-width="1.600" stroke-linecap="round" />
+    </>
+  ),
+  unlock: (
+    <>
+      <path d="M8.500 11V8a3.500 3.500 0 0 1 6.800-1.200" fill="none" {...st} />
+      <rect x="5" y="11" width="14" height="9.500" rx="2.500" fill="#ffcb2e" {...st} />
+      <circle cx="12" cy="15.500" r="1.400" fill={INK} />
+    </>
+  ),
+  book: (
+    <>
+      <path d="M4 5.500a2 2 0 0 1 2-2h12v14H6a2 2 0 0 0-2 2z" fill="#7fd4ff" {...st} />
+      <path d="M6 17.500h12v3H6a2 2 0 0 1 0-3z" fill="#fff" {...st} />
+      <path d="M8 7h6" stroke="#fff" stroke-width="1.600" stroke-linecap="round" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M4 20l1-4.500L16 4.500l3.500 3.500L8.500 19z" fill="#ffe27a" {...st} />
+      <path d="M14 6.500l3.500 3.500" fill="none" {...st} />
     </>
   ),
 };

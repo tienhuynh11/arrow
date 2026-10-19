@@ -1,43 +1,53 @@
 // Màn trận đánh: xin seed -> chạy Battle dùng chung theo thời gian thực -> nộp seed + inputs để server chạy lại chấm.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { heroUnit, type UnitInit } from '@shared/heroes/battle';
+import { powerOf } from '@shared/heroes/formulas';
 import type { ArenaOpponent } from '@shared/heroes/arena';
 import { arenaSetup } from '@shared/heroes/arena';
 import { HERO_BY_ID } from '@shared/heroes/heroes';
-import { BATTLE_HZ } from '@shared/heroes/config';
 import { stageOf, stageSetup } from '@shared/heroes/stages';
 import { BOSS_UID, bossSetup, type GuildInfo } from '@shared/heroes/guild';
 import { towerStage } from '@shared/heroes/tower';
 import { api, me } from '../../api';
 import { music } from '../../audio';
-import { BattleOverlay } from '../../battle/overlay';
+import { BattleOverlay, type BattleInfo } from '../../battle/overlay';
 import { BattleSession, type HudUnit } from '../../battle/session';
 import { defOf, gearBonus, ownedMap, starsOfStage, towerOf } from '../../game';
 import { BattleScene } from '../../render/battle-scene';
 import { runLive, type LiveHandle } from '../../render/live';
 import { autoPref, saveSettings, speedPref } from '../../settings';
 import { errToast, fmt, go, toast } from '../../state';
-import { Btn, IconBtn, Modal, Portrait, Spinner } from '../common';
+import { Btn, Modal, Portrait, Spinner } from '../common';
 import { Icon } from '../icons';
 import { BossHp } from './Guild';
 
-function UltBtn({ u, hot, onUlt }: { u: HudUnit; hot: number; onUlt: () => void }) {
+/** nhãn hồi chiêu phía trên thẻ: "8.2s" tới lượt kế, "ĐẦY" khi đủ năng lượng (chạm để tung), "--" khi choáng */
+const cdLabel = (u: HudUnit) => (!u.alive ? '' : u.ready ? 'ĐẦY' : u.cd < 0 ? '--' : `${u.cd.toFixed(1)}s`);
+
+function UltBtn({ u, hot, lv, star, onUlt }: { u: HudUnit; hot: number; lv: number; star: number; onUlt: () => void }) {
   const d = defOf(u.key);
   return (
     <button
       type="button"
-      class={`ult r-${d.rarity}${u.ready ? ' ready' : ''}${u.alive ? '' : ' dead'}`}
-      style={{ '--p': `${u.energy}%` } as any}
+      class={`bt-card r-${d.rarity}${u.ready ? ' ready' : ''}${u.alive ? '' : ' dead'}`}
       disabled={!u.alive}
       onClick={onUlt}
       aria-label={`Tuyệt kỹ ${u.name}`}
     >
-      <span class="ult-ring" />
-      <span class="ult-face">
-        <Portrait id={u.key} rarity={d.rarity} />
+      <span class={`bc-cd${u.ready ? ' full' : ''}`}>{cdLabel(u)}</span>
+      <span class="bc-frame">
+        <span class="bc-face">
+          <Portrait id={u.key} rarity={d.rarity} />
+        </span>
+        <span class="bc-lv">Lv{lv}</span>
+        <span class="bc-stars">
+          {Array.from({ length: Math.min(5, star) }, (_, i) => (
+            <Icon key={i} n="star" size={9} />
+          ))}
+        </span>
+        <span class="bc-hp"><i style={{ width: `${u.hpPct}%` }} /></span>
       </span>
-      <span class="ult-hp"><i style={{ width: `${u.hpPct}%` }} /></span>
-      {u.ready && <span class="bt-full">ĐẦY</span>}
+      <span class="bc-en"><i style={{ width: `${u.energy}%` }} /></span>
       <kbd>{hot}</kbd>
     </button>
   );
@@ -60,6 +70,7 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
   const [exit, setExit] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const [lvOf] = useState(() => ownedMap(m0));
   const cleared = !isTower && !isArena && !isGuildBoss && starsOfStage(m0, stage) > 0;
 
   useEffect(() => {
@@ -159,12 +170,30 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
       }
       const setup = isGuildBoss ? bossSetup(gi!.guild.level, gi!.boss.cycle, seed, units) : isArena ? arenaSetup(units, foe, seed) : stageSetup(def!, units, seed);
       overlay = new BattleOverlay(overlayRef.current);
-      const scene = new BattleScene(overlay, def ? def.element : (foe[0]?.element ?? setup.waves[0]?.[0]?.element ?? 'light'));
+      // chủ đề sảnh theo chương của ải (1 Đền Rừng / 2 Làng Ven Sông / 3 Mỏ Đá); tháp, đấu trường, boss bang dùng chủ đề 1
+      const scene = new BattleScene(overlay, def && !isTower ? def.chapter : 1);
       overlay.scene = scene;
+      // thanh trên cùng: hai chỉ huy (tên, lực chiến, avatar)
+      const topMe = units.reduce((a, b) => (powerOf(b.stats) > powerOf(a.stats) ? b : a), units[0]);
+      const foes = setup.waves.flat();
+      const topFoe = foes[0];
+      const foeBoss = foes.some((f) => f.boss);
+      const info: BattleInfo = {
+        meName: m0.profile.username,
+        mePower: units.reduce((a, u) => a + powerOf(u.stats), 0),
+        meKey: topMe.key,
+        meRarity: HERO_BY_ID[topMe.key]?.rarity ?? 'R',
+        foeName: isGuildBoss ? (gi?.boss.name ?? 'Boss bang') : isArena ? (opp?.name ?? 'Đối thủ') : (def?.name ?? ''),
+        foePower: isArena && opp ? opp.power : foes.reduce((a, u) => a + powerOf(u.stats), 0),
+        foeKey: foeBoss ? 'mk_chua' : (topFoe?.key ?? 'mk_con'),
+        foeRarity: foeBoss ? 'SSR' : (HERO_BY_ID[topFoe?.key ?? '']?.rarity ?? 'R'),
+      };
+      overlay.setInfo(info);
       overlay.onWave = (n) => {
         if (!def) return;
-        // banner do GSAP trong overlay lo (bám timeScale/tạm dừng, tự dọn khi rời trận)
-        overlay?.waveBanner(def.boss && n === def.waves.length - 1 ? `BOSS!` : `ĐỢT ${n + 1}`);
+        // chỉ còn MỘT đợt: chỉ báo BOSS khi là ải boss (banner do GSAP trong overlay lo, bám timeScale/tạm dừng)
+        if (def.waves.length > 1) overlay?.waveBanner(`ĐỢT ${n + 1}`);
+        else if (def.boss) overlay?.waveBanner('BOSS!');
       };
       const session = new BattleSession(setup, scene, overlay, autoPref.value, speedPref.value, () => submit(session));
       scene.onTick = (dt, sdt) => session.advance(dt, sdt);
@@ -184,12 +213,12 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
     // eslint-disable-next-line
   }, []);
 
-  // phím tắt PC: 1-5 tuyệt kỹ, A tự động, Space tạm dừng
+  // phím tắt PC: 1-6 tuyệt kỹ, A tự động, Space tạm dừng
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (!sess || phase !== 'fight') return;
       const n = Number(e.key);
-      if (n >= 1 && n <= 5) {
+      if (n >= 1 && n <= 6) {
         const u = sess.hud.value.units[n - 1];
         if (u) sess.ult(u.uid);
       } else if (e.key === 'a' || e.key === 'A') toggleAuto();
@@ -225,7 +254,6 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
     speedPref.value = s;
     saveSettings();
   };
-  const secs = hud ? Math.ceil(hud.ticksLeft / BATTLE_HZ) : 0;
 
   return (
     <div class="battle">
@@ -248,31 +276,26 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
 
       {sess && hud && phase === 'fight' && (
         <>
-          <div class="b-top">
-            <IconBtn n="back" label="Rời trận" onClick={() => { sess.setPaused(true); setExit(true); }} />
-            <div class="b-info">
-              <b>{isGuildBoss ? `Boss bang · ${pool?.name ?? ''}` : isArena ? `Đấu trường · vs ${opp?.name ?? ''}` : def?.name}</b>
-              {!isArena && !isGuildBoss && <span>Đợt {hud.wave}/{hud.waves}</span>}
-              <span class={secs <= 15 ? 'warn' : ''}>
-                <Icon n="clock" size={14} /> {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}
-              </span>
-            </div>
-            <div class="b-ctrl">
-              <button type="button" class={`pill speed s${hud.speed}`} onClick={cycleSpeed} aria-label="Tốc độ">
-                <Icon n="ffwd" size={18} /> x{hud.speed}
+          <div class="bt-rail l">
+            <button type="button" class="bt-rb" onClick={() => { sess.setPaused(true); setExit(true); }} aria-label="Rời trận">
+              <Icon n="back" size={20} />
+            </button>
+          </div>
+          <div class="bt-rail r">
+            <button type="button" class="bt-rb" onClick={() => sess.setPaused(!hud.paused)} aria-label="Tạm dừng">
+              <Icon n={hud.paused ? 'play' : 'pause'} size={20} />
+            </button>
+            {cleared && (
+              <button type="button" class="bt-rb" onClick={() => sess.skip()} aria-label="Bỏ qua">
+                <Icon n="skip" size={20} />
               </button>
-              <button type="button" class={`pill auto${hud.auto ? ' on' : ''}`} onClick={toggleAuto} aria-pressed={hud.auto}>
-                <Icon n="auto" size={18} /> Auto
-              </button>
-              {cleared && (
-                <button type="button" class="pill" onClick={() => sess.skip()} aria-label="Bỏ qua">
-                  <Icon n="skip" size={18} /> <span class="pl">Bỏ qua</span>
-                </button>
-              )}
-              <button type="button" class="pill" onClick={() => sess.setPaused(!hud.paused)} aria-label="Tạm dừng">
-                <Icon n={hud.paused ? 'play' : 'pause'} size={18} />
-              </button>
-            </div>
+            )}
+            <button type="button" class={`bt-rb auto${hud.auto ? ' on' : ''}`} onClick={toggleAuto} aria-pressed={hud.auto} aria-label="Tự động">
+              <Icon n="auto" size={20} />
+            </button>
+            <button type="button" class={`bt-rb speed s${hud.speed}`} onClick={cycleSpeed} aria-label="Tốc độ">
+              <b>x{hud.speed}</b>
+            </button>
           </div>
 
           {isGuildBoss && pool && (
@@ -281,9 +304,9 @@ export function BattleScreen({ stage, opp }: { stage: string; opp?: ArenaOpponen
               <small>Sát thương trận này: <b>{fmt(dealt)}</b></small>
             </div>
           )}
-          <div class="b-ults">
+          <div class="bt-cards">
             {hud.units.map((u, i) => (
-              <UltBtn key={u.uid} u={u} hot={i + 1} onUlt={() => sess.ult(u.uid)} />
+              <UltBtn key={u.uid} u={u} hot={i + 1} lv={lvOf.get(u.key)?.level ?? 1} star={lvOf.get(u.key)?.star ?? 1} onUlt={() => sess.ult(u.uid)} />
             ))}
           </div>
           {hud.paused && !exit && (

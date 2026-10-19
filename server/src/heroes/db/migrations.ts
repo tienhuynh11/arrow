@@ -209,6 +209,19 @@ CREATE TABLE ${S}h_newbie (
   pulls_total     integer NOT NULL DEFAULT 0 CHECK (pulls_total >= 0)
 );
 `,
+  // v7 — Đội hình 6 ô (đệm '' cho đội cũ 5 ô), thưởng lên cấp + ô đã mua (cột của h_profile), thành tựu (hàng tạo lười).
+  (S) => `
+UPDATE ${S}h_squads SET slots = slots || to_jsonb(array_fill(''::text, ARRAY[6 - jsonb_array_length(slots)]))
+  WHERE jsonb_array_length(slots) < 6;
+ALTER TABLE ${S}h_profile ADD COLUMN level_claimed integer NOT NULL DEFAULT 1 CHECK (level_claimed >= 1);
+ALTER TABLE ${S}h_profile ADD COLUMN slots_bought integer NOT NULL DEFAULT 0 CHECK (slots_bought BETWEEN 0 AND 6);
+CREATE TABLE ${S}h_ach (
+  account_id  integer NOT NULL REFERENCES ${S}accounts(id) ON DELETE CASCADE,
+  ach_id      text NOT NULL,
+  claimed     integer NOT NULL DEFAULT 0 CHECK (claimed >= 0),
+  PRIMARY KEY (account_id, ach_id)
+);
+`,
 ];
 
 /** chạy các migration còn thiếu, một giao dịch có khoá advisory (khác khoá của Bầy Khỉ) */

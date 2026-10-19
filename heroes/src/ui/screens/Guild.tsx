@@ -24,12 +24,13 @@ import {
 import { dayKey, nextDayStart } from '@shared/heroes/quests';
 import type { Element, Wallet } from '@shared/heroes/types';
 import { api, me, serverNow } from '../../api';
-import { powerOfOwned, squadPower } from '../../game';
+import { powerOfOwned, slotsOpenOf, squadPower } from '../../game';
 import { errToast, fmt, go, returnTo, toast, useBusy } from '../../state';
 import { Btn, ElemChip, Modal, Portrait, Spinner, useDesktopLand } from '../common';
 import { Icon } from '../icons';
-import { pad, Roster, SquadBoard, useSquadOps } from '../squadkit';
+import { fitSquad, Roster, SquadBoard, useSquadOps } from '../squadkit';
 import { fmtCountdown } from './Events';
+import { PublicProfileModal } from './PublicProfile';
 import { ActHead, ResetChip, useDayReset, WalletChips } from './activity';
 
 type Tab = 'members' | 'boss' | 'acts' | 'chat';
@@ -377,9 +378,11 @@ function Members({ info, onReload }: { info: GuildInfo; onReload: () => void }) 
   const m = me.value!;
   const leader = info.mine.role === 'leader';
   const [ask, setAsk] = useState<{ kind: 'kick' | 'transfer'; who: GuildMember } | null>(null);
+  const [who, setWho] = useState<string | null>(null);
   return (
     <div class="fade-wrap gld-fw">
       <div class="gld-members scroll">
+        {who && <PublicProfileModal name={who} onClose={() => setWho(null)} />}
         {info.members.map((u, i) => {
           const mine = u.username === m.profile.username;
           return (
@@ -387,7 +390,7 @@ function Members({ info, onReload }: { info: GuildInfo; onReload: () => void }) 
               <span class="gld-rk">{i + 1}</span>
               <div class="gld-minfo">
                 <div class="gld-mtop">
-                  <b class="gld-uname">{u.username}</b>
+                  <b class="gld-uname" style={{ cursor: 'pointer' }} onClick={() => setWho(u.username)}>{u.username}</b>
                   {mine && <small class="gld-you">Bạn</small>}
                   {u.role === 'leader' && (
                     <span class="gld-role" title="Bang chủ">
@@ -438,9 +441,9 @@ function BossPane({ info }: { info: GuildInfo }) {
   const m = me.value!;
   const [busy, run] = useBusy();
   const b: GuildBossState = info.boss;
-  const base = pad(m.squads[m.activeSquad]);
+  const base = fitSquad(m, m.squads[m.activeSquad]);
   const [slots, setSlots] = useState<string[]>(base);
-  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true });
+  const ops = useSquadOps(slots, setSlots, { closeWhenFull: true, open: slotsOpenOf(m) });
   const count = slots.filter(Boolean).length;
   const dirty = slots.join('|') !== base.join('|');
   const mine = squadPower(m, slots);

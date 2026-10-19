@@ -26,6 +26,9 @@ import { Shop } from './screens/Shop';
 import { Events } from './screens/Events';
 import { Newbie } from './screens/Newbie';
 import { Guild } from './screens/Guild';
+import { Profile } from './screens/Profile';
+import { AvatarFace, avatarRarity } from './avatar';
+import { LevelUpHost } from './levelup';
 import { GuildBossResult } from './screens/GuildBossResult';
 import { InstallHint, UpdateToast } from '../pwa';
 import { tutRestart } from '../tutorial-state';
@@ -43,7 +46,7 @@ const TABS: { n: Screen['n']; label: string; icon: IconName }[] = [
 function Nav() {
   const n = screen.value.n;
   // 3 màn Hoạt động (Tháp/Đấu trường/Nhiệm vụ/Cửa hàng) nằm dưới tab Thành
-  const cur = n === 'tower' || n === 'arena' || n === 'quests' || n === 'shop' || n === 'events' || n === 'guild' || n === 'newbie' ? 'hub' : n;
+  const cur = n === 'tower' || n === 'arena' || n === 'quests' || n === 'shop' || n === 'events' || n === 'guild' || n === 'newbie' || n === 'profile' ? 'hub' : n;
   const tickets = me.value?.wallet.tickets ?? 0;
   const act = me.value ? hubBadges(me.value).total : 0;
   return (
@@ -109,9 +112,10 @@ export function TopBar() {
   const w = m.wallet;
   return (
     <header class="topbar">
-      <button type="button" class="avatar" onClick={() => setOpen(true)} aria-label="Cài đặt tài khoản">
-        <span class="av-face">{m.profile.username.slice(0, 1).toUpperCase()}</span>
+      <button type="button" class={`avatar pf-tb-av r-${avatarRarity(m) ?? 'R'}`} onClick={() => go({ n: 'profile' })} aria-label={`Hồ sơ người chơi${m.levelBadge + m.achBadge > 0 ? ', có thưởng chưa nhận' : ''}`}>
+        <AvatarFace m={m} />
         <span class="av-lv">{m.profile.level}</span>
+        {m.levelBadge + m.achBadge > 0 && <i class="hb-badge hb-badge-dot pf-tb-dot" />}
       </button>
       <div class="who">
         <b class="who-name">{m.profile.username}</b>
@@ -153,6 +157,7 @@ function Body() {
     case 'shop': return <Shop />;
     case 'events': return <Events />;
     case 'newbie': return <Newbie />;
+    case 'profile': return <Profile tab={s.tab} />;
     case 'guild': return <Guild tab={s.tab} />;
     case 'guildBossResult': return <GuildBossResult res={s.res} />;
   }
@@ -182,6 +187,7 @@ export function App() {
       <Toasts />
       <UpdateToast />
       <TutorialHost />
+      <LevelUpHost />
     </div>
   );
 }

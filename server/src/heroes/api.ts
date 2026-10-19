@@ -5,7 +5,7 @@
 
 import { randomInt } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { ROUTES, type ArenaRes, type ArenaTopRes, type AuthRes, type EventsRes, type GuildBossRes, type GuildChatRes, type GuildRes, type GuildSearchRes, type LeaderRow, type MeResponse, type NewbieRes } from '../../../shared/heroes/api.js';
+import { ROUTES, type ArenaRes, type ArenaTopRes, type AuthRes, type EventsRes, type GuildBossRes, type GuildChatRes, type GuildRes, type GuildSearchRes, type LeaderRow, type MeResponse, type NewbieRes, type AchievementsRes, type PublicProfileRes } from '../../../shared/heroes/api.js';
 import { GUILD_CHAT_MAX } from '../../../shared/heroes/guild.js';
 import { ARENA_OPPONENTS, ARENA_TOP_N, type ArenaOpponent } from '../../../shared/heroes/arena.js';
 import { dayKey } from '../../../shared/heroes/quests.js';
@@ -18,6 +18,7 @@ import { storeReady } from '../monkey/db/index.js';
 import { StoreError, heroStoreReady, type HState, type HeroStore } from './db/index.js';
 import type { GuildCtx } from './db/store.js';
 import { newbieView, opNewbieLoginClaim, opNewbieMilestoneClaim, opNewbieStarterSummon } from './newbie.js';
+import { achList, opAchClaim, opLevelClaim, opSlotUnlock, publicProfile } from './progress.js';
 import { eventViews, opEventClaim, validateEventInput } from './events.js';
 import {
   cleanText, foldName, guildInfoOf, briefOf, opGuildBoss, opGuildCheckin, opGuildCreate, opGuildDonate, opGuildJoin, opGuildKick, opGuildLeave, opGuildNotice, opGuildTransfer,
@@ -287,6 +288,23 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
     const now = nowDate();
     return json(res, 200, { view: await store.view(id, now, (s) => newbieView(s, now.getTime())) } satisfies NewbieRes);
   }
+  if (r === ROUTES.achievements && method === 'GET') {
+    const id = await auth(req);
+    const now = nowDate();
+    return json(res, 200, { list: await store.view(id, now, (s) => achList(s)) } satisfies AchievementsRes);
+  }
+  if (r === ROUTES.profile && method === 'GET') {
+    await auth(req); // phải đăng nhập (chống cào hồ sơ hàng loạt)
+    const name = new URL(req.url ?? '/', 'http://x').searchParams.get('name');
+    if (typeof name !== 'string' || name.trim().length < 1 || name.length > 64) throw new HttpError(400, 'Tên người chơi không hợp lệ');
+    const acc = await (await storeReady()).findAccount(name.normalize('NFC').trim());
+    if (!acc) throw new HttpError(404, 'Không tìm thấy người chơi');
+    const got = await store.peek(acc.id, (s) => ({ s: structuredClone(s) as HState }));
+    if (!got) throw new HttpError(404, 'Không tìm thấy người chơi');
+    let guildName: string | null = null;
+    if (got.s.guildId !== null) guildName = (await store.guildList(2000)).find((x) => x.guild.id === got.s.guildId)?.guild.name ?? null;
+    return json(res, 200, { profile: publicProfile(got.s, acc.username, guildName) } satisfies PublicProfileRes);
+  }
   if (r === ROUTES.guild && method === 'GET') {
     const id = await auth(req);
     await settle(store, id);
@@ -416,6 +434,27 @@ async function route(req: IncomingMessage, res: ServerResponse, r: string, metho
       const pulls = await store.mutate(id, now, 'newbie', (s) => opNewbieStarterSummon(s, (n) => randomInt(n)), { idem: { key, tag: 'newbie-starter' } });
       const me = await meOf(store, id);
       return json(res, 200, { me, pulls, view: await store.view(id, now, (s) => newbieView(s, now.getTime())) });
+    }
+    case ROUTES.slotUnlock: {
+      const id = await auth(req);
+      const b = await read();
+      const slot = int(b.slot, 'Ô đội hình', 0, 100);
+      const key = str(b.key, 'Khoá yêu cầu', 64, 8);
+      if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new HttpError(400, 'Khoá yêu cầu không hợp lệ');
+      // cùng key → trả lại kết quả đã lưu (không trừ kim cương lần nữa), như triệu hồi
+      await store.mutate(id, nowDate(), 'slot', (s) => (opSlotUnlock(s, slot), {}), { idem: { key, tag: `slot|${slot}` } });
+      return json(res, 200, { me: await meOf(store, id) });
+    }
+    case ROUTES.levelClaim: {
+      const id = await auth(req);
+      await read();
+      return json(res, 200, await act(store, id, 'level', (s) => opLevelClaim(s)));
+    }
+    case ROUTES.achievementClaim: {
+      const id = await auth(req);
+      const aid = str((await read()).id, 'Thành tựu', 40, 1);
+      const r = await act(store, id, 'ach', (s) => opAchClaim(s, aid));
+      return json(res, 200, { ...r, list: await store.view(id, nowDate(), (s) => achList(s)) });
     }
     case ROUTES.levelUp: {
       const id = await auth(req);

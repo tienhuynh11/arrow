@@ -77,6 +77,12 @@ export interface HState {
   events: EventState[];
   /** gói Tân thủ (PG: bảng h_newbie, tạo lười ở lần ghi đầu tiên khác mặc định) */
   newbie: NewbieState;
+  /** cấp tài khoản cao nhất đã nhận thưởng lên cấp (cấp 1 không có thưởng nên mặc định 1; PG: h_profile.level_claimed) */
+  levelClaimed: number;
+  /** số ô đội hình đã mua sớm bằng kim cương (PG: h_profile.slots_bought); số ô mở thật = slotsOpen(level, slotsBought) */
+  slotsBought: number;
+  /** số bậc thành tựu đã nhận theo id (PG: h_ach, hàng tạo lười khi nhận bậc đầu tiên) */
+  ach: Record<string, number>;
 }
 
 /** trạng thái gói Tân thủ của một tài khoản */

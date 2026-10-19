@@ -6,7 +6,7 @@
 // được phát NGAY và song song (mỗi đơn vị tự hoạt hoá). Đầu vào ult/auto ghi `battle.tick` hiện tại (tick đã chạy xong)
 // và áp ở step kế tiếp — y hệt vòng lặp simulate().
 import { signal } from '@preact/signals';
-import { Battle, ENERGY_MAX, type BattleInput, type BattleSetup } from '@shared/heroes/battle';
+import { Battle, ENERGY_MAX, GAUGE_MAX, type BattleInput, type BattleSetup, type Unit } from '@shared/heroes/battle';
 import { BATTLE_HZ, BATTLE_MAX_TICKS } from '@shared/heroes/config';
 import type { BattleScene } from '../render/battle-scene';
 import type { BattleOverlay } from './overlay';
@@ -20,6 +20,8 @@ export interface HudUnit {
   ready: boolean;
   alive: boolean;
   hpPct: number;
+  /** giây (thời gian trận) tới lượt hành động kế tiếp của tướng này; -1 = đang choáng/đã gục */
+  cd: number;
 }
 export interface HudState {
   units: HudUnit[];
@@ -167,6 +169,16 @@ export class BattleSession {
     this.onEnd(this.battle.win);
   }
 
+  /** giây tới lượt hành động kế: (GAUGE_MAX - gauge) / spd hiệu dụng / 20Hz — giống cách engine đổ thanh hành động */
+  private cdOf(u: Unit): number {
+    const b = this.battle;
+    if (!u.alive || b.stunned(u)) return -1;
+    let pct = 100;
+    for (const e of u.effs) if (e.type === 'spdUp' && e.until > b.tick) pct += e.value;
+    const spd = Math.max(1, Math.floor((u.init.stats.spd * pct) / 100));
+    return Math.max(0, (GAUGE_MAX - u.gauge) / spd / BATTLE_HZ);
+  }
+
   private publish() {
     const b = this.battle;
     const units: HudUnit[] = b.units
@@ -176,6 +188,7 @@ export class BattleSession {
         energy: Math.min(100, Math.floor((u.energy * 100) / ENERGY_MAX)),
         ready: b.canUlt(u.uid), alive: u.alive,
         hpPct: Math.max(0, Math.floor((u.hp * 100) / Math.max(1, u.maxHp))),
+        cd: this.cdOf(u),
       }));
     this.hud.value = {
       units, wave: Math.max(1, b.wave + 1), waves: this.setup.waves.length,

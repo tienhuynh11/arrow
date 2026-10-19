@@ -232,7 +232,10 @@ export class HeroMemStore implements HeroStore {
 
   async peek<T>(accountId: number, fn: (s: Readonly<HState>) => T): Promise<T | null> {
     const cur = this.states.get(accountId);
-    return cur ? fn(structuredClone(cur)) : null;
+    if (!cur) return null;
+    const s = structuredClone(cur);
+    s.guildId = this.members.get(accountId)?.guildId ?? null; // như PG: bang nạp từ bảng thành viên
+    return fn(s);
   }
 
   private arenaRows(): ArenaRank[] {

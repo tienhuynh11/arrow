@@ -74,7 +74,7 @@ export class HeroPgStore implements HeroStore {
     const S = this.S;
     const pr = await c.query(
       `SELECT gold, gems, tickets, exp, stones, level, xp, stamina, ${msOf('stamina_at')} AS stamina_at, ${msOf('afk_since')} AS afk_since, active_squad, pity,
-              tower_floor, tower_day, tower_tries, guild_left_at::float8 AS guild_left_at,
+              tower_floor, tower_day, tower_tries, guild_left_at::float8 AS guild_left_at, level_claimed, slots_bought,
               (SELECT m.guild_id FROM ${S}h_guild_member m WHERE m.account_id = $1) AS guild_id
        FROM ${S}h_profile WHERE account_id = $1${lock ? ' FOR UPDATE' : ''}`,
       [id],
@@ -85,14 +85,16 @@ export class HeroPgStore implements HeroStore {
     const hs = await c.query(`SELECT hero_id, level, star, shards FROM ${S}h_heroes WHERE account_id = $1 ORDER BY seq`, [id]);
     const sq = await c.query(`SELECT idx, slots FROM ${S}h_squads WHERE account_id = $1`, [id]);
     const none = { rows: [] as any[] };
-    // light (đọc đội phòng thủ của người khác): bỏ qua tiến trình ải / nhiệm vụ / cửa hàng
-    const sp = light ? none : await c.query(`SELECT stage, stars, clears FROM ${S}h_stage_progress WHERE account_id = $1`, [id]);
+    // light (đọc đội phòng thủ / hồ sơ công khai của người khác): bỏ qua nhiệm vụ / cửa hàng (vẫn nạp tiến trình ải cho hồ sơ công khai)
+    const sp = await c.query(`SELECT stage, stars, clears FROM ${S}h_stage_progress WHERE account_id = $1`, [id]);
     const gr = await c.query(`SELECT uid::int AS uid, def_id, level, hero_id FROM ${S}h_gear WHERE account_id = $1 ORDER BY uid`, [id]);
     const qr = light ? none : await c.query(`SELECT day, quest_id, progress, claimed FROM ${S}h_quest WHERE account_id = $1`, [id]);
     const sh = light ? none : await c.query(`SELECT day, item_id, count FROM ${S}h_shop_buy WHERE account_id = $1`, [id]);
     const ar = await c.query(`SELECT rating, day, tries, defense_squad, wins, losses FROM ${S}h_arena WHERE account_id = $1`, [id]);
     const squads: string[][] = Array.from({ length: SQUAD_COUNT }, () => Array<string>(SQUAD_SIZE).fill(''));
-    for (const r of sq.rows) if (r.idx >= 0 && r.idx < SQUAD_COUNT) squads[r.idx] = r.slots as string[];
+    // đội cũ ngắn hơn SQUAD_SIZE (trước v7 / dữ liệu lệch) → đệm '' cho đủ ô
+    for (const r of sq.rows) if (r.idx >= 0 && r.idx < SQUAD_COUNT) squads[r.idx] = [...(r.slots as string[]), ...Array<string>(SQUAD_SIZE).fill('')].slice(0, Math.max(SQUAD_SIZE, (r.slots as string[]).length));
+    const ac = await c.query(`SELECT ach_id, claimed FROM ${S}h_ach WHERE account_id = $1`, [id]);
     const s: HState = {
       accountId: id,
       wallet: { gold: p.gold, gems: p.gems, tickets: p.tickets, exp: p.exp, stones: p.stones },
@@ -102,7 +104,9 @@ export class HeroPgStore implements HeroStore {
       towerFloor: p.tower_floor, towerDay: p.tower_day, towerTries: p.tower_tries, day: 0, quests: {}, questBonus: false, shop: {},
       arenaOn: false, arenaRating: ARENA_START_RATING, arenaDay: 0, arenaTries: 0, arenaDefense: 0, arenaWins: 0, arenaLosses: 0,
       guildLeftAt: p.guild_left_at, guildId: p.guild_id ?? null, events: light ? [] : await this.loadEvents(c, id, nowMs), newbie: newNewbie(),
+      levelClaimed: p.level_claimed, slotsBought: p.slots_bought, ach: {},
     };
+    for (const r of ac.rows) s.ach[r.ach_id] = r.claimed;
     if (!light) {
       const nb = await c.query(`SELECT login_claimed, login_day, starter_used, milestones, pulls_total FROM ${S}h_newbie WHERE account_id = $1`, [id]);
       if (nb.rows.length) {
@@ -182,9 +186,9 @@ export class HeroPgStore implements HeroStore {
     await c.query(
       `UPDATE ${S}h_profile SET gold=$2, gems=$3, tickets=$4, exp=$5, stones=$6, level=$7, xp=$8, stamina=$9,
          stamina_at=to_timestamp($10::float8 / 1000.0), afk_since=to_timestamp($11::float8 / 1000.0), active_squad=$12, pity=$13::jsonb,
-         tower_floor=$14, tower_day=$15, tower_tries=$16, guild_left_at=$17
+         tower_floor=$14, tower_day=$15, tower_tries=$16, guild_left_at=$17, level_claimed=$18, slots_bought=$19
        WHERE account_id=$1`,
-      [id, s.wallet.gold, s.wallet.gems, s.wallet.tickets, s.wallet.exp, s.wallet.stones, s.level, s.xp, s.stamina, s.staminaAt, s.afkSince, s.activeSquad, JSON.stringify(s.pity), s.towerFloor, s.towerDay, s.towerTries, s.guildLeftAt],
+      [id, s.wallet.gold, s.wallet.gems, s.wallet.tickets, s.wallet.exp, s.wallet.stones, s.level, s.xp, s.stamina, s.staminaAt, s.afkSince, s.activeSquad, JSON.stringify(s.pity), s.towerFloor, s.towerDay, s.towerTries, s.guildLeftAt, s.levelClaimed, s.slotsBought],
     );
     // đấu trường: chỉ ghi khi đã có hàng (tạo lười ở lần đầu chạm đấu trường)
     if (s.arenaOn) {
@@ -281,6 +285,16 @@ export class HeroPgStore implements HeroStore {
          ON CONFLICT (account_id) DO UPDATE SET login_claimed = EXCLUDED.login_claimed, login_day = EXCLUDED.login_day,
            starter_used = EXCLUDED.starter_used, milestones = EXCLUDED.milestones, pulls_total = EXCLUDED.pulls_total`,
         [id, nb.loginClaimed, nb.loginDay, nb.starterUsed, nb.milestones, nb.pullsTotal],
+      );
+    }
+    // thành tựu: hàng tạo lười, chỉ ghi các id đã nhận ít nhất một bậc
+    const achs = Object.entries(s.ach).filter(([, n]) => n > 0);
+    if (achs.length) {
+      await c.query(
+        `INSERT INTO ${S}h_ach (account_id, ach_id, claimed)
+         SELECT $1, t.a, t.n FROM unnest($2::text[], $3::int[]) AS t(a, n)
+         ON CONFLICT (account_id, ach_id) DO UPDATE SET claimed = EXCLUDED.claimed`,
+        [id, achs.map(([a]) => a), achs.map(([, n]) => n)],
       );
     }
     for (const r of s.runs) {
