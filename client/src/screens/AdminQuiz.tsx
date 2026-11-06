@@ -12,7 +12,7 @@ interface Question {
   note?: string;
 }
 
-const BASE = import.meta.env.BASE_URL;
+const BASE = import.meta.env.VITE_API_BASE ?? import.meta.env.BASE_URL;
 const KEY_STORE = 'arrow.adminKey';
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const blank = (): Question => ({ id: uid(), text: '', answers: [], seconds: 25, ignoreAccents: true });

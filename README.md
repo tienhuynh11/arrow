@@ -454,6 +454,43 @@ trên màn hình countdown và leaderboard.
 
 ---
 
+## 8. Build app iOS (Capacitor)
+
+`client/` đã được bọc thành app iOS thật bằng [Capacitor](https://capacitorjs.com) — vẫn là cùng
+một codebase React/Three.js, chỉ chạy trong WKWebView thay vì Safari, và nối WebSocket thẳng tới
+server production thay vì cùng-origin. Project Xcode nằm ở `client/ios/App`.
+
+**Lần đầu setup (trên máy Mac có Xcode):**
+
+```bash
+cd client
+npm install
+sudo gem install cocoapods      # nếu chưa có `pod`
+npm run ios:sync                # build web (mode "ios") + cap sync ios + pod install
+npm run ios:open                # mở client/ios/App/App.xcworkspace trong Xcode
+```
+
+Trong Xcode: chọn team ký (Signing & Capabilities), cắm iPhone qua cáp, chọn thiết bị ở thanh
+scheme, bấm ▶ Run. Lần đầu cần vào **Settings → General → VPN & Device Management** trên điện
+thoại để tin cậy certificate developer.
+
+**Mỗi lần sửa code client xong, trước khi build lại trong Xcode:**
+
+```bash
+cd client && npm run ios:sync
+```
+
+(Chỉ cần `npm run ios:open` lại nếu bạn vừa `npm install` thêm plugin Capacitor mới.)
+
+**Cấu hình nối server:** `client/.env.ios` đặt `VITE_WS_URL` / `VITE_API_BASE` trỏ tới server
+production (`https://arrow-npuk.onrender.com/arrow`). Đổi 2 biến này nếu deploy sang domain khác —
+không cần sửa code.
+
+**Đổi icon/splash:** sửa emblem trong `client/scripts/gen-app-icon.mjs`, chạy
+`node scripts/gen-app-icon.mjs` rồi `npx capacitor-assets generate --ios`.
+
+---
+
 ## Cấu trúc project
 
 ```

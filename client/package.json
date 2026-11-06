@@ -7,19 +7,30 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview --port 4173 --host",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:ios": "tsc -p tsconfig.json --noEmit && vite build --mode ios --base ./ --outDir dist-ios",
+    "ios:sync": "npm run build:ios && npx cap sync ios",
+    "ios:open": "npx cap open ios",
+    "ios:assets": "npx capacitor-assets generate --ios"
   },
   "dependencies": {
+    "@capacitor/core": "^7.4.4",
+    "@capacitor/ios": "^7.4.4",
+    "@capacitor/splash-screen": "^7.0.3",
+    "@capacitor/status-bar": "^7.0.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^7.4.4",
     "@types/node": "^26.5.1",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
     "@types/three": "^0.180.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "sharp": "^0.35.5",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }
